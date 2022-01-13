@@ -2,6 +2,7 @@ from datetime import date, datetime
 import discord
 import pprint
 import logging
+from discord import player
 
 from discord.ext import commands
 
@@ -18,6 +19,7 @@ intents.members = True
 bot = commands.Bot(command_prefix='!!', intents=intents)
 
 users_who_reacted = set()
+users_five_stack_only = set()
 latest_bot_message_time = datetime.now()
 
 
@@ -32,9 +34,11 @@ async def on_message(message):
     if message.author == bot.user:
         latest_bot_message_time = message.created_at
         await message.add_reaction('\N{THUMBS UP SIGN}')
+        await message.add_reaction('5️⃣')
 
     if message.content.startswith('$shooty'):
         users_who_reacted.clear
+        users_five_stack_only.clear
 
         #shooty_role = discord.utils.get(message.channel.guild.roles, name="shooty shooty")
         await message.channel.send(DEFAULT_MSG)
@@ -50,24 +54,36 @@ async def on_reaction_add(reaction, user):
             "Ignore react since it is not on the latest shootyBot message")
         return
 
+    # handle main group of players
     if reaction.emoji == '\N{THUMBS UP SIGN}':
-        users_who_reacted.add(user.name)
-        logging.info(users_who_reacted)
+        # case: user was in the 5 stack only group
+        # remove them from 5 stack group and put them in the regular stack instead
+        if user.name in users_five_stack_only:
+            users_five_stack_only.remove(user.name)
 
-        if users_who_reacted:
-            new_message = DEFAULT_MSG + "\n\n"\
-                + str(len(users_who_reacted)) + "/5"\
-                + "\n" + pp.pformat(users_who_reacted)
-        else:
-            new_message = "" + DEFAULT_MSG + "\n\n"\
-                + "sadge/5"
+        users_who_reacted.add(user.name)
+        logging.info("stack:" + str(users_who_reacted))
+
+        new_message = party_status_message(
+            users_who_reacted, users_five_stack_only)
+
+        await reaction.message.edit(content=new_message)
+
+    # handle 5 stack only players
+    elif reaction.emoji == '5️⃣':
+        if user.name not in users_who_reacted:
+            users_five_stack_only.add(user.name)
+            logging.info("5stack:" + str(users_five_stack_only))
+
+        new_message = party_status_message(
+            users_who_reacted, users_five_stack_only)
 
         await reaction.message.edit(content=new_message)
 
 
 @bot.event
 async def on_reaction_remove(reaction, user):
-    if user.bot or reaction.message.author != bot.user or user.name not in users_who_reacted:
+    if user.bot or reaction.message.author != bot.user:
         return
 
     if reaction.message.created_at < latest_bot_message_time:
@@ -75,20 +91,85 @@ async def on_reaction_remove(reaction, user):
             "Ignore react since it is not on the latest shootyBot message")
         return
 
-    if reaction.emoji == '\N{THUMBS UP SIGN}':
+    # handle main group of players
+    if reaction.emoji == '\N{THUMBS UP SIGN}' and user.name in users_who_reacted:
         users_who_reacted.remove(user.name)
 
-        logging.info("Removed [" + user.name + "] from shooty session.")
-        logging.info(users_who_reacted)
+        logging.info("Removed [" + user.name + "] from stack.")
+        logging.info("stack:" + str(users_who_reacted))
 
-        if users_who_reacted:
-            new_message = "" + DEFAULT_MSG + "\n\n"\
-                + str(len(users_who_reacted)) + "/5"\
-                + "\n" + pp.pformat(users_who_reacted)
-        else:
-            new_message = "" + DEFAULT_MSG + "\n\n"\
-                + "sadge/5"
+        # check if user has a 5 stack emoji, if so add them back to that set
+        if user in await reaction.message.reactions[1].users().flatten():
+            users_five_stack_only.add(user.name)
+            logging.info("5stack:" + str(users_who_reacted))
+
+        new_message = party_status_message(
+            users_who_reacted, users_five_stack_only)
 
         await reaction.message.edit(content=new_message)
+
+    # handle 5 stack only players
+    elif reaction.emoji == '5️⃣' and user.name in users_five_stack_only:
+        users_five_stack_only.remove(user.name)
+        logging.info("Removed [" + user.name + "] from 5 stack.")
+        logging.info("5stack:" + str(users_five_stack_only))
+
+        new_message = party_status_message(
+            users_who_reacted, users_five_stack_only)
+
+        await reaction.message.edit(content=new_message)
+
+
+def party_status_message(player_set, five_stack_set):
+    if len(player_set)+len(five_stack_set) >= 5:
+        new_message = DEFAULT_MSG + "\n\n"\
+            + bold(str(len(player_set)+len(five_stack_set))) + bold("/5")\
+            + "\n" + pretty_player_sets(player_set, five_stack_set)
+    elif player_set and five_stack_set:
+        new_message = DEFAULT_MSG + "\n\n"\
+            + bold(str(len(player_set))) + "(" + str(len(five_stack_set)) + ")" + bold("/5")\
+            + "\n" + pretty_player_sets(player_set, five_stack_set)
+    elif player_set:
+        new_message = DEFAULT_MSG + "\n\n"\
+            + bold(str(len(player_set)) + "/5")\
+            + "\n" + pretty_player_sets(player_set, five_stack_set)
+    elif five_stack_set:
+        new_message = DEFAULT_MSG + "\n\n"\
+            + "(" + str(len(five_stack_set)) + ")" + bold("/5")\
+            + "\n" + pretty_player_sets(player_set, five_stack_set)
+    else:
+        new_message = "" + DEFAULT_MSG + "\n\n"\
+            + "sadge/5"
+
+    return new_message
+
+
+def pretty_player_sets(player_set, five_stack_set):
+    result_string = ''
+
+    for index, player in enumerate(player_set):
+        result_string += bold(player)
+
+        # if it's not the last player, add a comma
+        if index + 1 < len(player_set) + len(five_stack_set):
+            result_string += ", "
+
+    for index, player in enumerate(five_stack_set):
+        result_string += italics(player)
+
+        # if it's not the last player, add a comma
+        if index + 1 < len(player_set) + len(five_stack_set):
+            result_string += ", "
+
+    return result_string
+
+
+def bold(input):
+    return "**" + input + "**"
+
+
+def italics(input):
+    return "*" + input + "*"
+
 
 bot.run(BOT_TOKEN)
