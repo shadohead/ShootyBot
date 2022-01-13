@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 pp = pprint.PrettyPrinter(indent=4)
 
 # set bot token here to run
-BOT_TOKEN = ''
+BOT_TOKEN = 'OTMxMDgxNjUzNjE3NTc4MDA3.Yd_PXA.4q2LTLbM6iinp9sKopoCfZt-BP0'
 DEFAULT_MSG = "<@&773770148070424657>"  # shooty role code
 
 intents = discord.Intents.default()
@@ -31,17 +31,28 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     global latest_bot_message_time
-    if message.author == bot.user:
+    if message.author == bot.user and message.content != help_message():
         latest_bot_message_time = message.created_at
         await message.add_reaction('\N{THUMBS UP SIGN}')
         await message.add_reaction('5️⃣')
 
-    if message.content.startswith('$shooty'):
+    # default mode: create new session
+    if message.content == ('$shooty') or message.content == ('$s'):
         users_who_reacted.clear
         users_five_stack_only.clear
 
-        #shooty_role = discord.utils.get(message.channel.guild.roles, name="shooty shooty")
         await message.channel.send(DEFAULT_MSG)
+
+    # display status
+    elif message.content == ('$shooty status') or message.content == ('$ss'):
+        await message.channel.send(party_status_message(users_who_reacted, users_five_stack_only))
+
+    elif message.content == ('$shooty clear') or message.content == ('$sc'):
+        users_who_reacted.clear
+        users_five_stack_only.clear
+
+    elif message.content.startswith('$shooty') or message.content.startswith('$s'):
+        await message.channel.send(help_message())
 
 
 @bot.event
@@ -151,14 +162,14 @@ def pretty_player_sets(player_set, five_stack_set):
         result_string += bold(player)
 
         # if it's not the last player, add a comma
-        if index + 1 < len(player_set) + len(five_stack_set):
+        if index < len(player_set) + len(five_stack_set) - 1:
             result_string += ", "
 
     for index, player in enumerate(five_stack_set):
         result_string += italics(player)
 
         # if it's not the last player, add a comma
-        if index + 1 < len(player_set) + len(five_stack_set):
+        if index < len(five_stack_set) - 1:
             result_string += ", "
 
     return result_string
@@ -170,6 +181,13 @@ def bold(input):
 
 def italics(input):
     return "*" + input + "*"
+
+
+def help_message():
+    return "ShootyBot help:" + "\n\n"\
+        + "*$shooty* or *$s* -- Starts new Shooty session \n" \
+        + "*$shooty status* or *$ss* -- Shows current Shooty session status \n"\
+        + "*$shooty clear* or *$sc* -- Clears current Shooty session"
 
 
 bot.run(BOT_TOKEN)
