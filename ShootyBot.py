@@ -53,6 +53,7 @@ async def on_message(message):
     elif message.content == ('$shooty clear') or message.content == ('$stc'):
         user_set.clear
         user_5_set.clear
+        await message.channel.send("Cleared shooty session.")
 
     # mention all reactors
     elif message.content == ('$shooty mention') or message.content == ('$stm'):
@@ -140,11 +141,9 @@ async def on_reaction_remove(reaction, user):
         await reaction.message.edit(content=new_message)
 
 # Sends message mentioning everyone in the shooty crew
-
-
 async def mention_reactors(message):
     if not user_set and not user_5_set:
-        await message.channel.send("Nobody to mention here.")
+        await message.channel.send("No shooty boys to mention.")
         return
 
     mention_message = ''
