@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 pp = pprint.PrettyPrinter(indent=4)
 
 # set bot token here to run
-BOT_TOKEN = 'OTMxMDgxNjUzNjE3NTc4MDA3.Yd_PXA.4q2LTLbM6iinp9sKopoCfZt-BP0'
+BOT_TOKEN = 'OTMxMDgxNjUzNjE3NTc4MDA3.Yd_PXA.c5EEXeRvP_qXEMzLVQUXBFchMzo'
 DEFAULT_MSG = "<@&773770148070424657>"  # shooty role code
 
 intents = discord.Intents.default()
@@ -18,10 +18,9 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='!!', intents=intents)
 
-users_who_reacted = set()
-users_five_stack_only = set()
+user_set = set() # set with all the users in the shooty crew
+user_5_set = set() # set with all the 5 stack only users in the shooty crew
 latest_bot_message_time = datetime.now()
-
 
 @bot.event
 async def on_ready():
@@ -31,26 +30,34 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     global latest_bot_message_time
-    if message.author == bot.user and message.content != help_message():
+
+    # ensure bot only adds reaction emojis to messages by itself and containing the default message 
+    if message.author == bot.user and message.content.startswith(DEFAULT_MSG):
         latest_bot_message_time = message.created_at
         await message.add_reaction('\N{THUMBS UP SIGN}')
         await message.add_reaction('5️⃣')
 
     # default mode: create new session
     if message.content == ('$shooty') or message.content == ('$s'):
-        users_who_reacted.clear
-        users_five_stack_only.clear
+        user_set.clear
+        user_5_set.clear
 
         await message.channel.send(DEFAULT_MSG)
 
     # display status
     elif message.content == ('$shooty status') or message.content == ('$ss'):
-        await message.channel.send(party_status_message(users_who_reacted, users_five_stack_only))
+        await message.channel.send(party_status_message(user_set, user_5_set))
 
+    # clear the user sets
     elif message.content == ('$shooty clear') or message.content == ('$sc'):
-        users_who_reacted.clear
-        users_five_stack_only.clear
+        user_set.clear
+        user_5_set.clear
 
+    # mention all reactors
+    elif message.content == ('$shooty mention') or message.content == ('$sm'):
+        await mention_reactors(message)
+
+    # display help message
     elif message.content.startswith('$shooty') or message.content.startswith('$s'):
         await message.channel.send(help_message())
 
@@ -67,27 +74,27 @@ async def on_reaction_add(reaction, user):
 
     # handle main group of players
     if reaction.emoji == '\N{THUMBS UP SIGN}':
-        # case: user was in the 5 stack only group
-        # remove them from 5 stack group and put them in the regular stack instead
-        if user.name in users_five_stack_only:
-            users_five_stack_only.remove(user.name)
+        # case: user was in the 5 stack only group and wanted to join the regular group
+        # remove them from 5 stack group and put them in the regular group instead
+        if user in user_5_set:
+            user_5_set.remove(user)
 
-        users_who_reacted.add(user.name)
-        logging.info("stack:" + str(users_who_reacted))
+        user_set.add(user)
+        logging.info("stack:" + str(names_list(user_set)))
 
         new_message = party_status_message(
-            users_who_reacted, users_five_stack_only)
+            user_set, user_5_set)
 
         await reaction.message.edit(content=new_message)
 
     # handle 5 stack only players
     elif reaction.emoji == '5️⃣':
-        if user.name not in users_who_reacted:
-            users_five_stack_only.add(user.name)
-            logging.info("5stack:" + str(users_five_stack_only))
+        if user not in user_set:
+            user_5_set.add(user)
+            logging.info("5stack:" + str(names_list(user_5_set)))
 
         new_message = party_status_message(
-            users_who_reacted, users_five_stack_only)
+            user_set, user_5_set)
 
         await reaction.message.edit(content=new_message)
 
@@ -103,58 +110,76 @@ async def on_reaction_remove(reaction, user):
         return
 
     # handle main group of players
-    if reaction.emoji == '\N{THUMBS UP SIGN}' and user.name in users_who_reacted:
-        users_who_reacted.remove(user.name)
+    if reaction.emoji == '\N{THUMBS UP SIGN}' and user in user_set:
+        user_set.remove(user)
 
         logging.info("Removed [" + user.name + "] from stack.")
-        logging.info("stack:" + str(users_who_reacted))
+        logging.info("stack:" + str(names_list(user_set)))
 
-        # check if user has a 5 stack emoji, if so add them back to that set
+        # case: user removed themselves from the regular group, but still has a react for the 5 stack 
+        # check if user has a 5 stack emoji react, if so add them back to that set
         if user in await reaction.message.reactions[1].users().flatten():
-            users_five_stack_only.add(user.name)
-            logging.info("5stack:" + str(users_who_reacted))
+            user_5_set.add(user)
+            logging.info("5stack:" + str(names_list(user_set)))
 
         new_message = party_status_message(
-            users_who_reacted, users_five_stack_only)
+            user_set, user_5_set)
 
         await reaction.message.edit(content=new_message)
 
     # handle 5 stack only players
-    elif reaction.emoji == '5️⃣' and user.name in users_five_stack_only:
-        users_five_stack_only.remove(user.name)
+    elif reaction.emoji == '5️⃣' and user in user_5_set:
+        user_5_set.remove(user)
         logging.info("Removed [" + user.name + "] from 5 stack.")
-        logging.info("5stack:" + str(users_five_stack_only))
+        logging.info("5stack:" + str(names_list(user_5_set)))
 
         new_message = party_status_message(
-            users_who_reacted, users_five_stack_only)
+            user_set, user_5_set)
 
         await reaction.message.edit(content=new_message)
 
+#Sends message mentioning everyone in the shooty crew
+async def mention_reactors(message):
+    if not user_set and not user_5_set:
+        await message.channel.send("Nobody to mention here.")
+        return
 
+    mention_message = ''
+    regular_stack_reactors = user_set
+    five_stack_reactors = user_5_set
+    for user in regular_stack_reactors.union(five_stack_reactors):
+        if not user.bot:
+            mention_message += user.mention + " "
+
+    await message.channel.send(mention_message)
+
+
+#String formatted with status of the shooty crew
 def party_status_message(player_set, five_stack_set):
+
     if len(player_set)+len(five_stack_set) >= 5:
         new_message = DEFAULT_MSG + "\n\n"\
             + bold(str(len(player_set)+len(five_stack_set))) + bold("/5")\
-            + "\n" + pretty_player_sets(player_set, five_stack_set)
+            + "\n" + pretty_player_sets(names_list(player_set), names_list(five_stack_set))
     elif player_set and five_stack_set:
         new_message = DEFAULT_MSG + "\n\n"\
             + bold(str(len(player_set))) + "(" + str(len(five_stack_set)) + ")" + bold("/5")\
-            + "\n" + pretty_player_sets(player_set, five_stack_set)
+            + "\n" + pretty_player_sets(names_list(player_set), names_list(five_stack_set))
     elif player_set:
         new_message = DEFAULT_MSG + "\n\n"\
             + bold(str(len(player_set)) + "/5")\
-            + "\n" + pretty_player_sets(player_set, five_stack_set)
+            + "\n" + pretty_player_sets(names_list(player_set), names_list(five_stack_set))
     elif five_stack_set:
         new_message = DEFAULT_MSG + "\n\n"\
             + "(" + str(len(five_stack_set)) + ")" + bold("/5")\
-            + "\n" + pretty_player_sets(player_set, five_stack_set)
+            + "\n" + pretty_player_sets(names_list(player_set), names_list(five_stack_set))
     else:
         new_message = "" + DEFAULT_MSG + "\n\n"\
             + "sadge/5"
 
     return new_message
 
-
+#Returns pretty print formatted player sets
 def pretty_player_sets(player_set, five_stack_set):
     result_string = ''
 
@@ -174,6 +199,13 @@ def pretty_player_sets(player_set, five_stack_set):
 
     return result_string
 
+#Returns list of usernames(str) from input of a User collection
+def names_list(users):
+    result_list = []
+    for user in users:
+        result_list.append(user.name)
+    return result_list
+
 
 def bold(input):
     return "**" + input + "**"
@@ -187,6 +219,7 @@ def help_message():
     return "ShootyBot help:" + "\n\n"\
         + "*$shooty* or *$s* -- Starts new Shooty session \n" \
         + "*$shooty status* or *$ss* -- Shows current Shooty session status \n"\
+        + "*$shooty mention* or *$sm* -- Mentions all session members (5 stackers included)\n"\
         + "*$shooty clear* or *$sc* -- Clears current Shooty session"
 
 
