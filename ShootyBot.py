@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 pp = pprint.PrettyPrinter(indent=4)
 
 # set bot token here to run
-BOT_TOKEN = ''
+BOT_TOKEN = 'OTMxMDgxNjUzNjE3NTc4MDA3.Yd_PXA.lQaUfe4NCl5rPpnQw8BpMHZhdlQ'
 DEFAULT_MSG = "<@&773770148070424657>"  # shooty role code
 
 intents = discord.Intents.default()
@@ -40,19 +40,24 @@ async def on_message(message):
 
     # default mode: create new session
     if message.content == ('$shooty') or message.content == ('$st'):
-        user_set.clear
-        user_5_set.clear
+        logging.info("Starting new shooty session")
+        user_set.clear()
+        user_5_set.clear()
 
         await message.channel.send(DEFAULT_MSG)
 
     # display status
     elif message.content == ('$shooty status') or message.content == ('$sts'):
+        logging.info("Printing Status")
         await message.channel.send(party_status_message(user_set, user_5_set))
 
     # clear the user sets
     elif message.content == ('$shooty clear') or message.content == ('$stc'):
-        user_set.clear
-        user_5_set.clear
+        logging.info("Clearing user sets: " +
+                     str(to_names_list(user_set.union(user_5_set))))
+        user_set.clear()
+        user_5_set.clear()
+
         await message.channel.send("Cleared shooty session.")
 
     # mention all reactors
@@ -82,7 +87,7 @@ async def on_reaction_add(reaction, user):
             user_5_set.remove(user)
 
         user_set.add(user)
-        logging.info("stack:" + str(names_list(user_set)))
+        logging.info("stack:" + str(to_names_list(user_set)))
 
         new_message = party_status_message(
             user_set, user_5_set)
@@ -93,7 +98,7 @@ async def on_reaction_add(reaction, user):
     elif reaction.emoji == '5️⃣':
         if user not in user_set:
             user_5_set.add(user)
-            logging.info("5stack:" + str(names_list(user_5_set)))
+            logging.info("5stack:" + str(to_names_list(user_5_set)))
 
         new_message = party_status_message(
             user_set, user_5_set)
@@ -116,13 +121,13 @@ async def on_reaction_remove(reaction, user):
         user_set.remove(user)
 
         logging.info("Removed [" + user.name + "] from stack.")
-        logging.info("stack:" + str(names_list(user_set)))
+        logging.info("stack:" + str(to_names_list(user_set)))
 
         # case: user removed themselves from the regular group, but still has a react for the 5 stack
         # check if user has a 5 stack emoji react, if so add them back to that set
         if user in await reaction.message.reactions[1].users().flatten():
             user_5_set.add(user)
-            logging.info("5stack:" + str(names_list(user_set)))
+            logging.info("5stack:" + str(to_names_list(user_set)))
 
         new_message = party_status_message(
             user_set, user_5_set)
@@ -133,7 +138,7 @@ async def on_reaction_remove(reaction, user):
     elif reaction.emoji == '5️⃣' and user in user_5_set:
         user_5_set.remove(user)
         logging.info("Removed [" + user.name + "] from 5 stack.")
-        logging.info("5stack:" + str(names_list(user_5_set)))
+        logging.info("5stack:" + str(to_names_list(user_5_set)))
 
         new_message = party_status_message(
             user_set, user_5_set)
@@ -141,6 +146,8 @@ async def on_reaction_remove(reaction, user):
         await reaction.message.edit(content=new_message)
 
 # Sends message mentioning everyone in the shooty crew
+
+
 async def mention_reactors(message):
     if not user_set and not user_5_set:
         await message.channel.send("No shooty boys to mention.")
@@ -158,31 +165,33 @@ async def mention_reactors(message):
 
 # String formatted with status of the shooty crew
 def party_status_message(player_set, five_stack_set):
+    num_players = len(player_set)
+    num_5players = len(five_stack_set)
 
-    if len(player_set)+len(five_stack_set) >= 5:
+    if num_players+num_5players >= 5:
         new_message = DEFAULT_MSG + "\n\n"\
-            + bold(str(len(player_set)+len(five_stack_set))) + bold("/5")\
+            + bold(str(num_players+num_5players) + "/5")\
             + "\n" + \
-            pretty_player_sets(names_list(player_set),
-                               names_list(five_stack_set))
+            pretty_player_sets(to_names_list(player_set),
+                               to_names_list(five_stack_set))
     elif player_set and five_stack_set:
         new_message = DEFAULT_MSG + "\n\n"\
-            + bold(str(len(player_set))) + "(" + str(len(five_stack_set)) + ")" + bold("/5")\
+            + bold(str(num_players)) + "(" + str(num_players+num_5players) + ")" + bold("/5")\
             + "\n" + \
-            pretty_player_sets(names_list(player_set),
-                               names_list(five_stack_set))
+            pretty_player_sets(to_names_list(player_set),
+                               to_names_list(five_stack_set))
     elif player_set:
         new_message = DEFAULT_MSG + "\n\n"\
-            + bold(str(len(player_set)) + "/5")\
+            + bold(str(num_players) + "/5")\
             + "\n" + \
-            pretty_player_sets(names_list(player_set),
-                               names_list(five_stack_set))
+            pretty_player_sets(to_names_list(player_set),
+                               to_names_list(five_stack_set))
     elif five_stack_set:
         new_message = DEFAULT_MSG + "\n\n"\
-            + "(" + str(len(five_stack_set)) + ")" + bold("/5")\
+            + "(" + str(num_5players) + ")" + bold("/5")\
             + "\n" + \
-            pretty_player_sets(names_list(player_set),
-                               names_list(five_stack_set))
+            pretty_player_sets(to_names_list(player_set),
+                               to_names_list(five_stack_set))
     else:
         new_message = "" + DEFAULT_MSG + "\n\n"\
             + "sadge/5"
@@ -214,7 +223,7 @@ def pretty_player_sets(player_set, five_stack_set):
 # Returns list of usernames(str) from input of a User collection
 
 
-def names_list(users):
+def to_names_list(users):
     result_list = []
     for user in users:
         result_list.append(user.name)
