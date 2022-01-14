@@ -10,8 +10,9 @@ logging.basicConfig(level=logging.INFO)
 pp = pprint.PrettyPrinter(indent=4)
 
 # set bot token here to run
-BOT_TOKEN = 'OTMxMDgxNjUzNjE3NTc4MDA3.Yd_PXA.lQaUfe4NCl5rPpnQw8BpMHZhdlQ'
-DEFAULT_MSG = "<@&773770148070424657>"  # shooty role code
+BOT_TOKEN = ''
+DEFAULT_MSG = "‎"  # Invisible character magic (this is terrible lol)
+SHOOTY_ROLE_CODE = "<@&773770148070424657>"
 
 intents = discord.Intents.default()
 intents.members = True
@@ -20,6 +21,7 @@ bot = commands.Bot(command_prefix='!!', intents=intents)
 
 user_set = set()  # set with all the users in the shooty crew
 user_5_set = set()  # set with all the 5 stack only users in the shooty crew
+ready_set = set()  # set with all players who said they're ready to play right now
 latest_bot_message_time = datetime.now()
 
 
@@ -37,6 +39,7 @@ async def on_message(message):
         latest_bot_message_time = message.created_at
         await message.add_reaction('\N{THUMBS UP SIGN}')
         await message.add_reaction('5️⃣')
+        await message.add_reaction('✅')
 
     # default mode: create new session
     if message.content == ('$shooty') or message.content == ('$st'):
@@ -44,12 +47,12 @@ async def on_message(message):
         user_set.clear()
         user_5_set.clear()
 
-        await message.channel.send(DEFAULT_MSG)
+        await message.channel.send(DEFAULT_MSG+SHOOTY_ROLE_CODE)
 
     # display status
     elif message.content == ('$shooty status') or message.content == ('$sts'):
         logging.info("Printing Status")
-        await message.channel.send(party_status_message(user_set, user_5_set))
+        await message.channel.send(party_status_message(user_set, user_5_set, True))
 
     # clear the user sets
     elif message.content == ('$shooty clear') or message.content == ('$stc'):
@@ -63,6 +66,42 @@ async def on_message(message):
     # mention all reactors
     elif message.content == ('$shooty mention') or message.content == ('$stm'):
         await mention_reactors(message)
+
+    # remove the person from both groups
+    elif message.content.startswith('$shooty kick'):
+        split_message = message.content.split()
+        kick_users_names = split_message[2:]
+        actually_kicked_usernames = []
+        for username in kick_users_names:
+            for user in user_set.copy():
+                if user.name.startswith(username):
+                    user_set.remove(user)
+                    actually_kicked_usernames.append(user.name)
+
+            for user in user_5_set.copy():
+                if user.name.startswith(username):
+                    user_5_set.remove(user)
+                    actually_kicked_usernames.append(user.name)
+
+        await message.channel.send("Kicked: " + str(actually_kicked_usernames))
+
+    elif message.content.startswith('$stk'):
+        split_message = message.content.split()
+        kick_users_names = split_message[1:]
+        actually_kicked_usernames = []
+
+        for username in kick_users_names:
+            for user in user_set.copy():
+                if user.name.startswith(username):
+                    user_set.remove(user)
+                    actually_kicked_usernames.append(user.name)
+
+            for user in user_5_set.copy():
+                if user.name.startswith(username):
+                    user_5_set.remove(user)
+                    actually_kicked_usernames.append(user.name)
+
+        await message.channel.send("Kicked: " + str(actually_kicked_usernames))
 
     # display help message
     elif message.content.startswith('$shooty') or message.content.startswith('$st'):
@@ -90,7 +129,7 @@ async def on_reaction_add(reaction, user):
         logging.info("stack:" + str(to_names_list(user_set)))
 
         new_message = party_status_message(
-            user_set, user_5_set)
+            user_set, user_5_set, True)
 
         await reaction.message.edit(content=new_message)
 
@@ -101,7 +140,16 @@ async def on_reaction_add(reaction, user):
             logging.info("5stack:" + str(to_names_list(user_5_set)))
 
         new_message = party_status_message(
-            user_set, user_5_set)
+            user_set, user_5_set, True)
+
+        await reaction.message.edit(content=new_message)
+
+    elif reaction.emoji == '✅':
+        ready_set.add(user)
+        logging.info("ready_set:" + str(to_names_list(ready_set)))
+
+        new_message = party_status_message(
+            user_set, user_5_set, True)
 
         await reaction.message.edit(content=new_message)
 
@@ -130,7 +178,7 @@ async def on_reaction_remove(reaction, user):
             logging.info("5stack:" + str(to_names_list(user_set)))
 
         new_message = party_status_message(
-            user_set, user_5_set)
+            user_set, user_5_set, True)
 
         await reaction.message.edit(content=new_message)
 
@@ -141,7 +189,16 @@ async def on_reaction_remove(reaction, user):
         logging.info("5stack:" + str(to_names_list(user_5_set)))
 
         new_message = party_status_message(
-            user_set, user_5_set)
+            user_set, user_5_set, True)
+
+        await reaction.message.edit(content=new_message)
+
+    elif reaction.emoji == '✅':
+        ready_set.remove(user)
+        logging.info("ready_set:" + str(to_names_list(ready_set)))
+
+        new_message = party_status_message(
+            user_set, user_5_set, True)
 
         await reaction.message.edit(content=new_message)
 
@@ -164,55 +221,58 @@ async def mention_reactors(message):
 
 
 # String formatted with status of the shooty crew
-def party_status_message(player_set, five_stack_set):
+def party_status_message(player_set, five_stack_set, isPing):
     num_players = len(player_set)
     num_5players = len(five_stack_set)
 
+    if isPing:
+        msg = DEFAULT_MSG + SHOOTY_ROLE_CODE
+    else:
+        msg = DEFAULT_MSG
+
     if num_players+num_5players >= 5:
-        new_message = DEFAULT_MSG + "\n\n"\
+        new_message = msg + "\n\n"\
             + bold(str(num_players+num_5players) + "/5")\
             + "\n" + \
-            pretty_player_sets(to_names_list(player_set),
-                               to_names_list(five_stack_set))
+            pretty_player_sets(player_set, five_stack_set)
     elif player_set and five_stack_set:
-        new_message = DEFAULT_MSG + "\n\n"\
+        new_message = msg + "\n\n"\
             + bold(str(num_players)) + "(" + str(num_players+num_5players) + ")" + bold("/5")\
             + "\n" + \
-            pretty_player_sets(to_names_list(player_set),
-                               to_names_list(five_stack_set))
+            pretty_player_sets(player_set, five_stack_set)
+
     elif player_set:
-        new_message = DEFAULT_MSG + "\n\n"\
+        new_message = msg + "\n\n"\
             + bold(str(num_players) + "/5")\
             + "\n" + \
-            pretty_player_sets(to_names_list(player_set),
-                               to_names_list(five_stack_set))
+            pretty_player_sets(player_set, five_stack_set)
+
     elif five_stack_set:
-        new_message = DEFAULT_MSG + "\n\n"\
+        new_message = msg + "\n\n"\
             + "(" + str(num_5players) + ")" + bold("/5")\
             + "\n" + \
-            pretty_player_sets(to_names_list(player_set),
-                               to_names_list(five_stack_set))
+            pretty_player_sets(player_set, five_stack_set)
     else:
-        new_message = "" + DEFAULT_MSG + "\n\n"\
+        new_message = "" + msg + "\n\n"\
             + "sadge/5"
 
     return new_message
 
-# Returns pretty print formatted player sets
+# Returns pretty print formatted player sets with input names list
 
 
 def pretty_player_sets(player_set, five_stack_set):
     result_string = ''
 
-    for index, player in enumerate(player_set):
-        result_string += bold(player)
+    for index, player_user in enumerate(player_set):
+        result_string += bold_ready_user(player_user)
 
         # if it's not the last player, add a comma
         if index < len(player_set) + len(five_stack_set) - 1:
             result_string += ", "
 
-    for index, player in enumerate(five_stack_set):
-        result_string += italics(player)
+    for index, player_user in enumerate(five_stack_set):
+        result_string += italics(bold_ready_user(player_user))
 
         # if it's not the last player, add a comma
         if index < len(five_stack_set) - 1:
@@ -233,6 +293,15 @@ def to_names_list(users):
 def bold(input):
     return "**" + input + "**"
 
+# Returns bold username if the user is ready
+
+
+def bold_ready_user(input_user):
+    if input_user in ready_set:
+        return "**" + input_user.name + "**"
+    else:
+        return input_user.name
+
 
 def italics(input):
     return "*" + input + "*"
@@ -243,6 +312,7 @@ def help_message():
         + "*$shooty* or *$st* -- Starts new Shooty session \n" \
         + "*$shooty status* or *$sts* -- Shows current Shooty session status \n"\
         + "*$shooty mention* or *$stm* -- Mentions all session members (5 stackers included)\n"\
+        + "*$shooty kick* or *$stk* -- Kick the shooter(s) from session\n"\
         + "*$shooty clear* or *$stc* -- Clears current Shooty session"
 
 
