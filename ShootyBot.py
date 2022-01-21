@@ -27,7 +27,7 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     global latest_bot_message_time
-    global get_party_max_size()
+    global party_max_size
 
     # ensure bot only adds reaction emojis to messages by itself and containing the default message
     if message.author == bot.user and message.content.startswith(DEFAULT_MSG):
