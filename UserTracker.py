@@ -4,7 +4,7 @@ bot_soloq_user_set = set()  # set with all the users in the shooty crew
 bot_fullstack_user_set = set()  # set with all the full stack only users in the shooty crew
 bot_ready_user_set = set()  # set with all players who said they're ready to play right now
 
-get_party_max_size() = DEFAULT_PARTY_SIZE
+party_max_size = DEFAULT_PARTY_SIZE
 
 def get_user_list_string():
     result_string = ''
@@ -38,12 +38,12 @@ def add_fullstack_user(user):
     bot_fullstack_user_set.add(user)
 
 def set_party_max_size(size):
-    global get_party_max_size()
-    get_party_max_size() = size
+    global party_max_size
+    party_max_size = size
 
 def get_party_max_size():
-    global get_party_max_size()
-    return get_party_max_size()
+    global party_max_size
+    return party_max_size
 
 def reset_users():
     bot_soloq_user_set.clear()
