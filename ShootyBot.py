@@ -15,10 +15,11 @@ pp = pprint.PrettyPrinter(indent=4)
 intents = discord.Intents.default()
 intents.members = True
 
-bot = commands.Bot(command_prefix='!!', intents=intents)
+bot = commands.Bot(command_prefix=['$'], intents=intents)
 
 latest_bot_message_time = datetime.now()
 latest_shooty_session_time = 0
+
 
 @bot.event
 async def on_ready():
@@ -30,62 +31,70 @@ async def on_message(message):
     global latest_bot_message_time
     global party_max_size
 
+    await bot.process_commands(message)
+
     # ensure bot only adds reaction emojis to messages by itself and containing the default message
     if message.author == bot.user and message.content.startswith(DEFAULT_MSG):
         latest_bot_message_time = message.created_at
         await add_react_options(message)
 
-    # default mode: create new session
-    if message.content == ('$shooty') or message.content == ('$st'):
-        logging.info("Starting new shooty session")
-        latest_shooty_session_time = datetime.now()
-        reset_users()
-        await ping_shooty(message.channel)
 
-    # display status
-    elif message.content == ('$shooty status') or message.content == ('$sts'):
-        logging.info("Printing Status")
-        await send_party_status_message(message.channel)
+@bot.command(name='shooty', aliases=['st'])
+async def cmd_start_session(ctx):
+    logging.info("Starting new shooty session")
+    latest_shooty_session_time = datetime.now()
+    reset_users()
+    await ping_shooty(ctx.channel)
 
-    # clear the user sets
-    elif message.content == ('$shooty clear') or message.content == ('$stc'):
-        logging.info("Clearing user sets: " +
-                     str(to_names_list(bot_soloq_user_set.union(bot_fullstack_user_set))))
-        reset_users()
-        await message.channel.send("Cleared shooty session.")
 
-    # mention all reactors
-    elif message.content == ('$shooty mention') or message.content == ('$stm'):
-        await mention_reactors(message)
+@bot.command(name='shootystatus', aliases=['sts'])
+async def cmd_session_status(ctx):
+    logging.info("Printing Status")
+    await send_party_status_message(ctx.channel)
 
-    # remove the person from both groups
-    elif message.content.startswith('$shooty kick'):
-        split_message = message.content.split()
-        user_names_list = split_message[2:]
-        kicked_usernames_list = remove_user_from_everything(user_names_list)
-        
-        await send_kicked_user_message(message.channel, kicked_usernames_list)
 
-    elif message.content.startswith('$stk'):
-        split_message = message.content.split()
-        user_names_list = split_message[1:]
-        kicked_usernames_list = remove_user_from_everything(user_names_list)
+@bot.command(name='shootymention', aliases=['stm'])
+async def cmd_mention_session(ctx):
+    await mention_reactors(ctx.channel)
 
-        await send_kicked_user_message(message.channel, kicked_usernames_list)
-    
-    elif message.content.startswith('$shooty size'):
-        split_message = message.content.split()
 
-        if len(split_message) >= 3 and split_message[2].isdigit():
-            logging.info("Changing size to: " + str(split_message[2]))
-            new_party_max_size = int(split_message[2])
-            set_party_max_size(new_party_max_size)
+@bot.command(name='shootykick', aliases=['stk'])
+async def cmd_kick_user(ctx, *args):
+    potential_user_names_list = args
+    kicked_usernames_list = remove_user_from_everything(
+        potential_user_names_list)
 
-        await send_max_party_size_message(message.channel)
+    await send_kicked_user_message(ctx.channel, kicked_usernames_list)
 
-    # display help message
-    elif message.content.startswith('$shooty') or message.content.startswith('$st'):
-        await send_help_message(message.channel)
+
+@bot.command(name='shootysize')
+async def cmd_set_session_size(ctx, arg):
+    if arg.isdigit():
+        logging.info("Changing size to: " + arg)
+        new_party_max_size = int(arg)
+        set_party_max_size(new_party_max_size)
+
+    await send_max_party_size_message(ctx.channel)
+
+
+@bot.command(name='shootyclear', aliases=['stc'])
+async def cmd_clear_session(ctx):
+    logging.info("Clearing user sets: " +
+                 str(to_names_list(bot_soloq_user_set.union(bot_fullstack_user_set))))
+    reset_users()
+    await ctx.channel.send("Cleared shooty session.")
+
+
+@bot.command(name='shootyhelp', aliases=['sth'])
+async def cmd_show_help(ctx, *args):
+    await send_help_message(ctx.channel)
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, discord.ext.commands.errors.CommandNotFound):
+        await ctx.send("Command not found. Use *$shootyhelp* for list of commands.")
+
 
 @bot.event
 async def on_reaction_add(reaction, user):
@@ -112,7 +121,8 @@ async def on_reaction_add(reaction, user):
     elif reaction.emoji == '5️⃣':
         if not is_soloq_user(user):
             add_fullstack_user(user)
-            logging.info("fullstack:" + str(to_names_list(bot_fullstack_user_set)))
+            logging.info("fullstack:" +
+                         str(to_names_list(bot_fullstack_user_set)))
 
         new_message = party_status_message(True)
 
@@ -173,6 +183,8 @@ async def on_reaction_remove(reaction, user):
         await reaction.message.edit(content=new_message)
 
 # Logger helper
+
+
 def to_names_list(user_set):
     result_list = []
     for user in user_set:
