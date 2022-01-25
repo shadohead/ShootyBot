@@ -18,6 +18,7 @@ intents.members = True
 bot = commands.Bot(command_prefix='!!', intents=intents)
 
 latest_bot_message_time = datetime.now()
+latest_shooty_session_time = 0
 
 @bot.event
 async def on_ready():
@@ -37,6 +38,7 @@ async def on_message(message):
     # default mode: create new session
     if message.content == ('$shooty') or message.content == ('$st'):
         logging.info("Starting new shooty session")
+        latest_shooty_session_time = datetime.now()
         reset_users()
         await ping_shooty(message.channel)
 
@@ -108,8 +110,8 @@ async def on_reaction_add(reaction, user):
 
     # handle full stack only players
     elif reaction.emoji == '5️⃣':
-        if user not in bot_soloq_user_set:
-            add_soloq_user(user)
+        if not is_soloq_user(user):
+            add_fullstack_user(user)
             logging.info("fullstack:" + str(to_names_list(bot_fullstack_user_set)))
 
         new_message = party_status_message(True)
@@ -136,8 +138,8 @@ async def on_reaction_remove(reaction, user):
         return
 
     # handle main group of players
-    if reaction.emoji == '\N{THUMBS UP SIGN}' and user in bot_soloq_user_set:
-        bot_soloq_user_set.remove(user)
+    if reaction.emoji == '\N{THUMBS UP SIGN}' and is_soloq_user(user):
+        remove_soloq_user(user)
 
         logging.info("Removed [" + user.name + "] from stack.")
         logging.info("stack:" + str(to_names_list(bot_soloq_user_set)))
