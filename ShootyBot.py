@@ -140,6 +140,9 @@ async def cmd_cancel_scheduled_session(ctx):
    # timer.cancel()
     await ctx.send(f"Canceled scheduled session - {scheduled_time.strftime('%H:%M %p')}")
 
+@bot.command(name='shootydm', aliases=['stdm'])
+async def cmd_dm_party_members(ctx):
+    await dm_all_users_except_caller(ctx.author)
 
 @bot.event
 async def on_command_error(ctx, error):

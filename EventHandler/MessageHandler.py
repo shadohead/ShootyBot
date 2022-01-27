@@ -34,7 +34,9 @@ async def send_help_message(channel):
                        + "*$shootymention* or *$stm* -- Mentions all session members (full stackers included)\n"
                        + "*$shootykick user1 ...* or *$stk user1 ...* -- Kick the shooter(s) from session\n"
                        + "*$shootysize N*  -- Set the max party size\n"
-                       + "*$shootyclear* or *$stc* -- Clears current Shooty session")
+                       + "*$shootyclear* or *$stc* -- Clears current Shooty session\n"
+                       + "*$shootytime HH:MM(AM/PM)* or *$stt HH:MM(AM/PM)* -- Schedules a new Shooty session for the input time\n"
+                       + "*$shootydm* or *$stdm* -- DMs all other users who are in the Shooty session\n")
 
 
 async def mention_reactors(channel):
