@@ -2,10 +2,10 @@ from datetime import date, datetime
 import discord
 import pprint
 import logging
-import pytz
+import pytz  # pip install pytz
 import threading
 import asyncio
-from dateutil import parser
+from dateutil import parser  # pip install python-dateutil
 from discord import player
 from DiscordConfig import *
 from EventHandler.MessageHandler import *
@@ -25,6 +25,8 @@ latest_bot_message_time = datetime.now()
 latest_shooty_session_time = 0
 
 global timer
+
+
 @bot.event
 async def on_ready():
     logging.info('We have logged in as {0.user}'.format(bot))
@@ -93,11 +95,12 @@ async def cmd_clear_session(ctx):
 async def cmd_show_help(ctx, *args):
     await send_help_message(ctx.channel)
 
+
 @bot.command(name='shootytime', aliases=['stt'])
 async def cmd_scheduled_session(ctx, input_time):
-    #parse input time
-    #await difference of scheduled and current time
-    #conditions: input must be greater than current
+    # parse input time
+    # await difference of scheduled and current time
+    # conditions: input must be greater than current
 
     try:
         scheduled_time = parser.parse(input_time)
@@ -108,14 +111,15 @@ async def cmd_scheduled_session(ctx, input_time):
         # two-step process to convert input time to UTC
         localized_timestamp = old_timezone.localize(scheduled_time)
         utc_scheduled_time = localized_timestamp.astimezone(new_timezone)
-        
-        seconds_to_wait = (utc_scheduled_time - datetime.now(pytz.UTC)).total_seconds()
-        
+
+        seconds_to_wait = (utc_scheduled_time -
+                           datetime.now(pytz.UTC)).total_seconds()
+
         if seconds_to_wait < 0:
             await ctx.send("Shooty session cannot be scheduled in the past.")
             return
-        elif seconds_to_wait > 7200: #2 hrs
-            await ctx.send ("Shooty session can only be scheduled up to 2 hrs in advance.")
+        elif seconds_to_wait > 7200:  # 2 hrs
+            await ctx.send("Shooty session can only be scheduled up to 2 hrs in advance.")
             return
 
         message = await ctx.send(f"Shooty at {scheduled_time.strftime('%I:%M %p')}?")
@@ -129,6 +133,7 @@ async def cmd_scheduled_session(ctx, input_time):
     except ValueError:
         await ctx.send("Must be a valid time. Try format HH:MM")
 
+
 @bot.command(name='shootytimecancel', aliases=['sttc'])
 async def cmd_cancel_scheduled_session(ctx):
 
@@ -138,7 +143,7 @@ async def cmd_cancel_scheduled_session(ctx):
 
 @bot.event
 async def on_command_error(ctx, error):
-    if isinstance(error, discord.ext.commands.errors.CommandNotFound):
+    if ctx.message.content.startswith("$shooty") or ctx.message.content.startswith("$st") and isinstance(error, discord.ext.commands.errors.CommandNotFound):
         await ctx.send("Command not found. Use *$shootyhelp* for list of commands.")
 
 
