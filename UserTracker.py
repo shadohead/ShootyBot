@@ -111,6 +111,12 @@ def remove_user_from_everything(user_names_list):
 
     return kicked_usernames_list
 
+
+async def dm_all_users_except_caller(user_who_called_command):
+    for user in bot_soloq_user_set.union(bot_fullstack_user_set).discard(user_who_called_command):
+        await user.send(f"You have been summoned by {user_who_called_command}.")
+
+
 ###
 # Formatting Functions
 ###
