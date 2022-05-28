@@ -45,7 +45,7 @@ async def on_message(message):
         await add_react_options(message)
 
 
-@bot.command(name='shooty', aliases=['st'])
+@bot.command(name='daboys', aliases=['db'])
 async def cmd_start_session(ctx):
     logging.info("Starting new shooty session")
     latest_shooty_session_time = datetime.now()
@@ -53,18 +53,18 @@ async def cmd_start_session(ctx):
     await ping_shooty(ctx.channel)
 
 
-@bot.command(name='shootystatus', aliases=['sts'])
+@bot.command(name='daboysstatus', aliases=['dbs'])
 async def cmd_session_status(ctx):
     logging.info("Printing Status")
     await send_party_status_message(ctx.channel)
 
 
-@bot.command(name='shootymention', aliases=['stm'])
+@bot.command(name='daboysmention', aliases=['dbm'])
 async def cmd_mention_session(ctx):
     await mention_reactors(ctx.channel)
 
 
-@bot.command(name='shootykick', aliases=['stk'])
+@bot.command(name='daboyskick', aliases=['dbk'])
 async def cmd_kick_user(ctx, *args):
     potential_user_names_list = args
     kicked_usernames_list = remove_user_from_everything(
@@ -73,7 +73,7 @@ async def cmd_kick_user(ctx, *args):
     await send_kicked_user_message(ctx.channel, kicked_usernames_list)
 
 
-@bot.command(name='shootysize')
+@bot.command(name='daboyssize')
 async def cmd_set_session_size(ctx, arg):
     if arg.isdigit():
         logging.info("Changing size to: " + arg)
@@ -83,7 +83,7 @@ async def cmd_set_session_size(ctx, arg):
     await send_max_party_size_message(ctx.channel)
 
 
-@bot.command(name='shootyclear', aliases=['stc'])
+@bot.command(name='daboysclear', aliases=['dbc'])
 async def cmd_clear_session(ctx):
     logging.info("Clearing user sets: " +
                  str(to_names_list(bot_soloq_user_set.union(bot_fullstack_user_set))))
@@ -91,12 +91,12 @@ async def cmd_clear_session(ctx):
     await ctx.channel.send("Cleared shooty session.")
 
 
-@bot.command(name='shootyhelp', aliases=['sth'])
+@bot.command(name='daboyshelp', aliases=['dbh'])
 async def cmd_show_help(ctx, *args):
     await send_help_message(ctx.channel)
 
 
-@bot.command(name='shootytime', aliases=['stt'])
+@bot.command(name='daboystime', aliases=['dbt'])
 async def cmd_scheduled_session(ctx, input_time):
     # parse input time
     # await difference of scheduled and current time
@@ -116,10 +116,10 @@ async def cmd_scheduled_session(ctx, input_time):
                            datetime.now(pytz.UTC)).total_seconds()
 
         if seconds_to_wait < 0:
-            await ctx.send("Shooty session cannot be scheduled in the past.")
+            await ctx.send("Daboys session cannot be scheduled in the past.")
             return
         elif seconds_to_wait > 7200:  # 2 hrs
-            await ctx.send("Shooty session can only be scheduled up to 2 hrs in advance.")
+            await ctx.send("Daboys session can only be scheduled up to 2 hrs in advance.")
             return
 
         message = await ctx.send(f"Shooty at {scheduled_time.strftime('%I:%M %p')}?")
@@ -128,25 +128,25 @@ async def cmd_scheduled_session(ctx, input_time):
         # global timer
         # timer = threading.Timer(seconds_to_wait, send_party_status_message(ctx.channel))
         # timer.start()
-        await ctx.send(f"Shooty time now! - {scheduled_time.strftime('%I:%M %p')}")
+        await ctx.send(f"Da boys time now! - {scheduled_time.strftime('%I:%M %p')}")
         await send_party_status_message(ctx.channel)
     except ValueError:
         await ctx.send("Must be a valid time. Try format HH:MM")
 
 
-@bot.command(name='shootytimecancel', aliases=['sttc'])
+@bot.command(name='daboystimecancel', aliases=['dbtc'])
 async def cmd_cancel_scheduled_session(ctx):
 
    # timer.cancel()
     await ctx.send(f"Canceled scheduled session - {scheduled_time.strftime('%H:%M %p')}")
 
-@bot.command(name='shootydm', aliases=['stdm'])
+@bot.command(name='dbdm', aliases=['dbdm'])
 async def cmd_dm_party_members(ctx):
     await dm_all_users_except_caller(ctx.author)
 
 @bot.event
 async def on_command_error(ctx, error):
-    if ctx.message.content.startswith("$shooty") or ctx.message.content.startswith("$st") and isinstance(error, discord.ext.commands.errors.CommandNotFound):
+    if ctx.message.content.startswith("$daboys") or ctx.message.content.startswith("$db") and isinstance(error, discord.ext.commands.errors.CommandNotFound):
         await ctx.send("Command not found. Use *$shootyhelp* for list of commands.")
 
 

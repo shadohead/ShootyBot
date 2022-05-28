@@ -28,20 +28,20 @@ async def send_max_party_size_message(channel):
 
 
 async def send_help_message(channel):
-    await channel.send("ShootyBot help:" + "\n\n"
-                       + "*$shooty* or *$st* -- Starts new Shooty session \n"
-                       + "*$shootystatus* or *$sts* -- Shows current Shooty session status \n"
-                       + "*$shootymention* or *$stm* -- Mentions all session members (full stackers included)\n"
-                       + "*$shootykick user1 ...* or *$stk user1 ...* -- Kick the shooter(s) from session\n"
-                       + "*$shootysize N*  -- Set the max party size\n"
-                       + "*$shootyclear* or *$stc* -- Clears current Shooty session\n"
-                       + "*$shootytime HH:MM(AM/PM)* or *$stt HH:MM(AM/PM)* -- Schedules a new Shooty session for the input time\n"
-                       + "*$shootydm* or *$stdm* -- DMs all other users who are in the Shooty session\n")
+    await channel.send("DaboysBot help:" + "\n\n"
+                       + "*$daboys* or *$db* -- Starts new daboys session \n"
+                       + "*$daboysstatus* or *$dbs* -- Shows current daboys session status \n"
+                       + "*$daboysmention* or *dbm* -- Mentions all session members (full stackers included)\n"
+                       + "*$daboyskick user1 ...* or *$dtk user1 ...* -- Kick the shooter(s) from session\n"
+                       + "*$daboyssize N*  -- Set the max party size\n"
+                       + "*$daboysclear* or *$stc* -- Clears current daboys session\n"
+                       + "*$daboystime HH:MM(AM/PM)* or *$stt HH:MM(AM/PM)* -- Schedules a new daboys session for the input time\n"
+                       + "*$daboysdm* or *$stdm* -- DMs all other users who are in the daboys session\n")
 
 
 async def mention_reactors(channel):
     if not bot_soloq_user_set and not bot_fullstack_user_set:
-        await channel.send("No shooty boys to mention.")
+        await channel.send("No boys to mention.")
         return
 
     mention_message = ''
