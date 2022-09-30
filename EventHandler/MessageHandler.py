@@ -65,7 +65,7 @@ def party_status_message(isPing):
 
     if num_soloq_users + num_fullstack_users >= get_party_max_size():
         new_message = msg + "\n\n"\
-            + bold(str(num_soloq_users + num_fullstack_users) + "/" + str(get_party_max_size()))\
+            + bold(str(num_soloq_users + num_fullstack_users) + "/" + str(get_party_max_size())) <:jettpog:724145370023591937>\
             + "\n" + \
             get_user_list_string()
     elif num_soloq_users > 0 and num_fullstack_users > 0:
