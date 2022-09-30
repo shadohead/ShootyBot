@@ -87,6 +87,6 @@ def party_status_message(isPing):
             get_user_list_string()
     else:
         new_message = "" + msg + "\n\n"\
-            + ":sadgelens: /" + str(get_party_max_size())
+            + "<:viper:725612569716326422> /" + str(get_party_max_size())
 
     return new_message
