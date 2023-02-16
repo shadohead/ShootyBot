@@ -1,6 +1,7 @@
 from DiscordConfig import *
 from UserTracker import *
 from EventHandler.MessageFormatter import *
+from UserSets import *
 
 DEFAULT_MSG = "‎"  # Invisible character magic (this is terrible lol)
 
@@ -15,8 +16,8 @@ async def ping_shooty(channel):
     await channel.send(DEFAULT_MSG+SHOOTY_ROLE_CODE)
 
 
-async def send_party_status_message(channel):
-    await channel.send(party_status_message(True))
+async def send_party_status_message(channel, user_sets: UserSets):
+    await channel.send(party_status_message(True, user_sets))
 
 
 async def send_kicked_user_message(channel, kicked_usernames_list):
@@ -39,13 +40,13 @@ async def send_help_message(channel):
                        + "*$shootydm* or *$stdm* -- DMs all other users who are in the Shooty session\n")
 
 
-async def mention_reactors(channel):
-    if not bot_soloq_user_set and not bot_fullstack_user_set:
+async def mention_reactors(channel, user_sets: UserSets):
+    if not user_sets.user_setbot_soloq_user_set and not user_sets.bot_fullstack_user_set:
         await channel.send("No shooty boys to mention.")
         return
 
     mention_message = ''
-    for user in bot_soloq_user_set.union(bot_fullstack_user_set):
+    for user in user_sets.bot_soloq_user_set.union(user_sets.bot_fullstack_user_set):
         if not user.bot:
             mention_message += user.mention + " "
 
@@ -54,37 +55,40 @@ async def mention_reactors(channel):
 # String formatted with status of the shooty crew
 
 
-def party_status_message(isPing):
-    num_soloq_users = get_soloq_user_count()
-    num_fullstack_users = get_fullstack_user_count()
+def party_status_message(is_ping, user_sets: UserSets):
+    num_soloq_users = user_sets.get_soloq_user_count()
+    num_fullstack_users = user_sets.get_fullstack_user_count()
+    num_unique_users = user_sets.get_unique_user_count()
 
-    if isPing:
+    all_users_set = user_sets.bot_soloq_user_set.union(user_sets.bot_fullstack_user_set)
+
+    if is_ping:
         msg = DEFAULT_MSG + SHOOTY_ROLE_CODE
     else:
         msg = DEFAULT_MSG
 
-    if num_soloq_users + num_fullstack_users >= get_party_max_size():
+    if num_unique_users >= get_party_max_size():
         new_message = msg + "\n\n"\
-            + bold(str(num_soloq_users + num_fullstack_users) + "/" + str(get_party_max_size())) + " <:jettpog:724145370023591937>"\
+            + bold(str(num_unique_users) + "/" + str(get_party_max_size())) + " <:jettpog:724145370023591937>"\
             + "\n" + \
-            get_user_list_string()
-    elif num_soloq_users > 0 and num_fullstack_users > 0:
+            user_sets.get_user_list_string()
+    elif num_soloq_users > 0 and num_unique_users > num_soloq_users:
         new_message = msg + "\n\n"\
-            + bold(str(num_soloq_users)) + "(" + str(num_soloq_users + num_fullstack_users) + ")" + bold("/" + str(get_party_max_size()))\
+            + bold(str(num_soloq_users)) + "(" + str(num_unique_users) + ")" + bold("/" + str(get_party_max_size()))\
             + "\n" + \
-            get_user_list_string()
+            user_sets.get_user_list_string()
 
     elif num_soloq_users > 0:
         new_message = msg + "\n\n"\
             + bold(str(num_soloq_users) + "/" + str(get_party_max_size()))\
             + "\n" + \
-            get_user_list_string()
+           user_sets.get_user_list_string()
 
     elif num_fullstack_users > 0:
         new_message = msg + "\n\n"\
             + "(" + str(num_fullstack_users) + ")" + bold("/" + str(get_party_max_size()))\
             + "\n" + \
-            get_user_list_string()
+            user_sets.get_user_list_string()
     else:
         new_message = "" + msg + "\n\n"\
             + "sadge/" + str(get_party_max_size()) + " <:viper:725612569716326422>"
