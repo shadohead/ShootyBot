@@ -52,7 +52,7 @@ async def cmd_start_session(ctx):
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
 
     shooty_context.reset_users()
-    await ping_shooty(ctx.channel)
+    await ping_shooty(ctx.channel, shooty_context.role_code)
 
 
 @bot.command(name='shootystatus', aliases=['sts'])
@@ -169,6 +169,16 @@ async def cmd_dm_party_members(ctx):
 
     await shooty_context.dm_all_users_except_caller(ctx.author)
 
+@bot.command(name="shootysetrole", aliases=['stsr'])
+async def cmd_set_role_code(ctx, role_code):
+    channel_id = ctx.channel.id
+    shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
+
+    shooty_context.role_code = role_code
+
+    await ctx.send(f"Set this channel's role code for pings to {role_code}")
+
+
 @bot.event
 async def on_command_error(ctx, error):
     if ctx.message.content.startswith("$shooty") or ctx.message.content.startswith("$st") and isinstance(error, discord.ext.commands.errors.CommandNotFound):
@@ -270,10 +280,11 @@ def to_names_list(user_set):
     return result_list
 
 
-def get_shooty_context_from_channel_id(channel_id, user_set_dict: dict[str, ShootyContext]) -> ShootyContext:
-    if not user_set_dict.has_key(channel_id):
-        user_set_dict[channel_id] = ShootyContext()
+def get_shooty_context_from_channel_id(channel_id, shooty_context_dict: dict[str, ShootyContext]) -> ShootyContext:
+    logging.info(f"channel_id: {channel_id}")
+    if channel_id not in shooty_context_dict:
+        shooty_context_dict[channel_id] = ShootyContext()
 
-    return user_set_dict[channel_id]
+    return shooty_context_dict[channel_id]
 
 bot.run(BOT_TOKEN)

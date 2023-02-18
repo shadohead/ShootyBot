@@ -12,8 +12,8 @@ async def add_react_options(message):
     await message.add_reaction('✅')
 
 
-async def ping_shooty(channel):
-    await channel.send(DEFAULT_MSG+SHOOTY_ROLE_CODE)
+async def ping_shooty(channel, role_code):
+    await channel.send(DEFAULT_MSG+role_code)
 
 
 async def send_party_status_message(channel, user_sets: ShootyContext):
@@ -63,7 +63,7 @@ def party_status_message(is_ping, user_sets: ShootyContext):
     all_users_set = user_sets.bot_soloq_user_set.union(user_sets.bot_fullstack_user_set)
 
     if is_ping:
-        msg = DEFAULT_MSG + SHOOTY_ROLE_CODE
+        msg = DEFAULT_MSG + user_sets.role_code
     else:
         msg = DEFAULT_MSG
 

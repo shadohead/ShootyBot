@@ -15,6 +15,8 @@ class ShootyContext:
         #message_id of the most recent sts or st message 
         self.current_st_message_id = None
 
+        #role_id of the desired role to ping
+        self.role_code = None
         
     ###
     # Solo Q User Functions
