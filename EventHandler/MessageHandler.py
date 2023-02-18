@@ -40,7 +40,9 @@ async def send_help_message(channel):
                        + "*$shootysize N*  -- Set the max party size\n"
                        + "*$shootyclear* or *$stc* -- Clears current Shooty session\n"
                        + "*$shootytime HH:MM(AM/PM)* or *$stt HH:MM(AM/PM)* -- Schedules a new Shooty session for the input time\n"
-                       + "*$shootydm* or *$stdm* -- DMs all other users who are in the Shooty session\n")
+                       + "*$shootylfg* or *$stlfg* -- Shows all players queued for the current game across all channels\n"
+                       + "*$shootybeacon* or *$stb* -- Ping every other channel associated with the current game\n"
+                       + "*$shootysetgame* or *$stsg* -- Set the game for this channel needed for LFG features\n")
 
 
 async def mention_reactors(channel, user_sets: ShootyContext):

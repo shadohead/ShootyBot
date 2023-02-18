@@ -21,7 +21,8 @@ class ShootyContext:
         #game name set for lfg
         self.game_name = None
         
-        self.channel_name = None
+        #channel associated for lfg
+        self.channel = None
     ###
     # Solo Q User Functions
     ###
@@ -99,6 +100,8 @@ class ShootyContext:
 
         if user in self.bot_ready_user_set:
             user_name = "**" + user.name + "**"
+        elif display_hashtag and user in self.bot_ready_user_set:
+            user_name = f"**{str(user)}**" #shows hashtag
         elif display_hashtag:
             user_name = str(user) #shows hashtag
         else:
