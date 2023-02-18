@@ -17,7 +17,11 @@ class ShootyContext:
 
         #role_id of the desired role to ping
         self.role_code = None
+
+        #game name set for lfg
+        self.game_name = None
         
+        self.channel_name = None
     ###
     # Solo Q User Functions
     ###
@@ -90,11 +94,17 @@ class ShootyContext:
     ###
 
 
-    def bold_readied_user(self, user):
+    def bold_readied_user(self, user, display_hashtag = False):
+        user_name = ""
+
         if user in self.bot_ready_user_set:
-            return "**" + user.name + "**"
+            user_name = "**" + user.name + "**"
+        elif display_hashtag:
+            user_name = str(user) #shows hashtag
         else:
-            return user.name
+            user_name = user.name
+
+        return user_name
 
 
     def italics(self, input_str):
@@ -117,6 +127,23 @@ class ShootyContext:
                 result_string += italics(self.bold_readied_user(user))
             else:
                 result_string += self.bold_readied_user(user)
+            if index < len(all_users_set) - 1:
+                result_string += ", "
+
+        return result_string
+
+    def get_user_list_string_with_hashtag(self):
+        result_string = ''
+
+        # join both sets, print once based on which set the user came from
+
+        all_users_set = self.bot_soloq_user_set.union(self.bot_fullstack_user_set)
+
+        for index, user in enumerate(all_users_set):
+            if user in self.bot_fullstack_user_set and user not in self.bot_soloq_user_set:
+                result_string += italics(self.bold_readied_user(user, True))
+            else:
+                result_string += self.bold_readied_user(user, True)
             if index < len(all_users_set) - 1:
                 result_string += ", "
 
