@@ -13,7 +13,10 @@ async def add_react_options(message):
 
 
 async def ping_shooty(channel, role_code):
-    await channel.send(DEFAULT_MSG+role_code)
+    if role_code is None:
+        await channel.send("First set the role for the bot to ping with ```$stsr <Role>```")
+    else:
+        await channel.send(DEFAULT_MSG+role_code)
 
 
 async def send_party_status_message(channel, user_sets: ShootyContext):
