@@ -203,7 +203,7 @@ async def cmd_set_game_name(ctx, game_name):
 
     shooty_context.game_name = game_name.upper()
 
-    await ctx.send(f"Set this channel's role code for pings to {shooty_context.game_name}")
+    await ctx.send(f"Set this channel's game for LFG to {shooty_context.game_name}")
 
 @bot.event
 async def on_command_error(ctx, error):
