@@ -46,7 +46,7 @@ async def send_help_message(channel):
 
 
 async def mention_reactors(channel, user_sets: ShootyContext):
-    if not user_sets.user_setbot_soloq_user_set and not user_sets.bot_fullstack_user_set:
+    if not user_sets.bot_soloq_user_set and not user_sets.bot_fullstack_user_set:
         await channel.send("No shooty boys to mention.")
         return
 
