@@ -52,6 +52,7 @@ async def cmd_start_session(ctx):
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
 
     shooty_context.reset_users()
+
     await ping_shooty(ctx.channel, shooty_context.role_code)
 
 
@@ -176,6 +177,9 @@ async def cmd_set_role_code(ctx, role_code):
 
     shooty_context.role_code = role_code
 
+    #save the channel_data to json locally
+    shooty_context.set_channel_data(role_code=shooty_context.role_code, game_name=shooty_context.game_name, channel=channel_id)
+
     await ctx.send(f"Set this channel's role code for pings to {role_code}")
 
     
@@ -221,6 +225,9 @@ async def cmd_set_game_name(ctx, game_name):
 
     shooty_context.game_name = game_name.upper()
     shooty_context.channel = ctx.channel
+
+    #save the channel_data to json locally
+    shooty_context.set_channel_data(role_code=shooty_context.role_code, game_name=shooty_context.game_name, channel=channel_id)
 
     await ctx.send(f"Set this channel's game for LFG to {shooty_context.game_name}")
 
@@ -327,8 +334,12 @@ def to_names_list(user_set):
 
 def get_shooty_context_from_channel_id(channel_id, shooty_context_dict: dict[str, ShootyContext]) -> ShootyContext:
     logging.info(f"channel_id: {channel_id}")
+
     if channel_id not in shooty_context_dict:
-        shooty_context_dict[channel_id] = ShootyContext()
+        #first try loading from json file
+        shooty_context_dict[channel_id] = ShootyContext(channel_id)
+
+        shooty_context_dict[channel_id].load_channel_data
 
     return shooty_context_dict[channel_id]
 

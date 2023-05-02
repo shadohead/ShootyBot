@@ -1,10 +1,12 @@
 from DiscordConfig import *
 from EventHandler.MessageFormatter import *
+import json
+import os
 
 # Class which holds all user data sets and setter/getters and associated message formatting requiring the user sets
 class ShootyContext:
 
-    def __init__(self) -> None:
+    def __init__(self, channel_id) -> None:
         # set with all the users in the shooty crew
         self.bot_soloq_user_set = set() 
         # set with all the full stack only users in the shooty crew
@@ -13,16 +15,76 @@ class ShootyContext:
         self.bot_ready_user_set = set()
 
         #message_id of the most recent sts or st message 
-        self.current_st_message_id = None
-
-        #role_id of the desired role to ping
+        self.current_st_message_id = None                
+        
+        # role_id of the desired role to ping
         self.role_code = None
 
-        #game name set for lfg
+        # game name set for lfg
         self.game_name = None
         
-        #channel associated for lfg
-        self.channel = None
+        # channel associated for lfg
+        self.channel = channel_id
+
+        # Load channel_data from a local JSON file
+        self.channel_data = self.load_channel_data()
+
+        print("Loaded json contents:" + str(self.channel_data))
+        self.load_variables()
+
+    def load_channel_data(self):
+        if os.path.exists("channel_data.json"):
+            with open("channel_data.json", "r") as file:
+                return json.load(file)
+        else:
+            return {}
+
+    def save_channel_data(self):
+        with open("channel_data.json", "w") as file:
+            json.dump(self.channel_data, file)
+
+    def load_variables(self):
+        if self.channel_data and self.channel:
+            data = self.channel_data.get(str(self.channel))
+
+            print("Loaded data contents:" + str(data))
+
+            if data:
+                self.role_code = self.get_role_code(str(self.channel))
+                self.game_name = self.get_game_name(str(self.channel))
+                print(f"set role_code:{self.role_code}, game_name:{self.game_name}")
+
+    def set_channel_data(self, channel, role_code, game_name):
+        self.role_code = role_code
+        self.game_name = game_name
+        self.channel = channel
+
+        if self.channel not in self.channel_data:
+            self.channel_data[self.channel] = {}
+
+        self.channel_data[self.channel].update({
+            'role_code': self.role_code,
+            'game_name': self.game_name
+        })
+        self.save_channel_data()
+
+    def get_channel_data(self, channel):
+        if channel in self.channel_data:
+            return self.channel_data[channel]
+        return None
+
+    def get_role_code(self, channel):
+        data = self.get_channel_data(channel)
+        if data:
+            return data['role_code']
+        return None
+
+    def get_game_name(self, channel):
+        data = self.get_channel_data(channel)
+        if data:
+            return data['game_name']
+        return None
+
     ###
     # Solo Q User Functions
     ###
