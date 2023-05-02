@@ -2,7 +2,7 @@ from DiscordConfig import *
 from EventHandler.MessageFormatter import *
 
 # Class which holds all user data sets and setter/getters and associated message formatting requiring the user sets
-class UserSets:
+class ShootyContext:
 
     def __init__(self) -> None:
         # set with all the users in the shooty crew
@@ -12,6 +12,11 @@ class UserSets:
         # set with all players who said they're ready to play right now
         self.bot_ready_user_set = set()
 
+        #message_id of the most recent sts or st message 
+        self.current_st_message_id = None
+
+        #role_id of the desired role to ping
+        self.role_code = None
         
     ###
     # Solo Q User Functions

@@ -1,7 +1,7 @@
 from DiscordConfig import *
 from UserTracker import *
 from EventHandler.MessageFormatter import *
-from UserSets import *
+from ShootyContext import *
 
 DEFAULT_MSG = "‎"  # Invisible character magic (this is terrible lol)
 
@@ -12,11 +12,14 @@ async def add_react_options(message):
     await message.add_reaction('✅')
 
 
-async def ping_shooty(channel):
-    await channel.send(DEFAULT_MSG+SHOOTY_ROLE_CODE)
+async def ping_shooty(channel, role_code):
+    if role_code is None:
+        await channel.send("First set the role for the bot to ping with ```$stsr <Role>```")
+    else:
+        await channel.send(DEFAULT_MSG+role_code)
 
 
-async def send_party_status_message(channel, user_sets: UserSets):
+async def send_party_status_message(channel, user_sets: ShootyContext):
     await channel.send(party_status_message(True, user_sets))
 
 
@@ -40,7 +43,7 @@ async def send_help_message(channel):
                        + "*$shootydm* or *$stdm* -- DMs all other users who are in the Shooty session\n")
 
 
-async def mention_reactors(channel, user_sets: UserSets):
+async def mention_reactors(channel, user_sets: ShootyContext):
     if not user_sets.user_setbot_soloq_user_set and not user_sets.bot_fullstack_user_set:
         await channel.send("No shooty boys to mention.")
         return
@@ -55,7 +58,7 @@ async def mention_reactors(channel, user_sets: UserSets):
 # String formatted with status of the shooty crew
 
 
-def party_status_message(is_ping, user_sets: UserSets):
+def party_status_message(is_ping, user_sets: ShootyContext):
     num_soloq_users = user_sets.get_soloq_user_count()
     num_fullstack_users = user_sets.get_fullstack_user_count()
     num_unique_users = user_sets.get_unique_user_count()
@@ -63,7 +66,7 @@ def party_status_message(is_ping, user_sets: UserSets):
     all_users_set = user_sets.bot_soloq_user_set.union(user_sets.bot_fullstack_user_set)
 
     if is_ping:
-        msg = DEFAULT_MSG + SHOOTY_ROLE_CODE
+        msg = DEFAULT_MSG + user_sets.role_code
     else:
         msg = DEFAULT_MSG
 
