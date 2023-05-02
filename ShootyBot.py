@@ -167,7 +167,7 @@ async def cmd_dm_party_members(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
 
-    await shooty_context.dm_all_users_except_caller(ctx.author)
+    await shooty_context.dm_all_users_except_caller(None)
 
 @bot.command(name="shootysetrole", aliases=['stsr'])
 async def cmd_set_role_code(ctx, role_code):
@@ -178,6 +178,51 @@ async def cmd_set_role_code(ctx, role_code):
 
     await ctx.send(f"Set this channel's role code for pings to {role_code}")
 
+    
+@bot.command(name="shootylfg", aliases=['stlfg'])
+async def cmd_lfg(ctx):
+    channel_id = ctx.channel.id
+    shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
+
+    if shooty_context.game_name is None:
+        await ctx.send(f"Set this channel's game name to see other queues with the same name ```$stsg <game name>```")
+        return
+    
+    lobby_members_str = ""
+    context:ShootyContext
+    for context in shooty_context_dict.values():
+        if context.game_name == shooty_context.game_name:
+            lobby_members_str += f"{context.get_user_list_string_with_hashtag()}\n"
+
+    await ctx.send(f"Cross channel users queued for {shooty_context.game_name}:\n{lobby_members_str}")
+
+@bot.command(name="shootybeacon", aliases=['stb'])
+async def cmd_beacon(ctx):
+    channel_id = ctx.channel.id
+    shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)    \
+
+    if shooty_context.game_name is None:
+        await ctx.send(f"Set this channel's game name to see other queues with the same name ```$stsg <game name>```")
+        return
+
+    context:ShootyContext
+    channels_pinged_str = ""
+    for context in shooty_context_dict.values():
+        if context.game_name == shooty_context.game_name and context.channel is not shooty_context.channel:
+            await context.channel.send(f"{context.role_code}\nBeacon from Server: *{shooty_context.channel.guild.name}*\n Channel: *{shooty_context.channel.name}*")
+            channels_pinged_str += f"Server: *{context.channel.guild.name}*, Channel: *{context.channel.name}*\n"
+        
+    await ctx.send(f"Sent beacon ping to {channels_pinged_str}")
+    
+@bot.command(name="shootysetgame", aliases=['stsg'])
+async def cmd_set_game_name(ctx, game_name):
+    channel_id = ctx.channel.id
+    shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
+
+    shooty_context.game_name = game_name.upper()
+    shooty_context.channel = ctx.channel
+
+    await ctx.send(f"Set this channel's game for LFG to {shooty_context.game_name}")
 
 @bot.event
 async def on_command_error(ctx, error):
