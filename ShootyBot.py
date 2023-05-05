@@ -64,9 +64,9 @@ def backup_user_sets(channel_id, old_shooty_context: ShootyContext):
     #backup in case of undo needed
     logging.info("trying backup")
     backup_shooty_context = ShootyContext(channel_id)
-    backup_shooty_context.bot_ready_user_set = copy.copy(old_shooty_context.bot_ready_user_set)
-    backup_shooty_context.bot_fullstack_user_set = copy.copy(old_shooty_context.bot_fullstack_user_set)
-    backup_shooty_context.bot_soloq_user_set = copy.copy(old_shooty_context.bot_soloq_user_set)
+    backup_shooty_context.bot_ready_user_set = set(old_shooty_context.bot_ready_user_set)
+    backup_shooty_context.bot_fullstack_user_set = set(old_shooty_context.bot_fullstack_user_set)
+    backup_shooty_context.bot_soloq_user_set = set(old_shooty_context.bot_soloq_user_set)
 
     shooty_context_backup_dict[channel_id] = backup_shooty_context
     
@@ -134,10 +134,12 @@ async def cmd_restore(ctx):
 
     #restore backup
     shooty_context = shooty_context_backup_dict[channel_id]
+    shooty_context_dict[channel_id] = shooty_context
+
     logging.info("Restoring shooty_context: " +
             str(to_names_list(shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set))))
 
-    await ctx.channel.send("Restoring previous shooty session.")
+    await ctx.channel.send("Restoring shooty session to before it was cleared.")
     await send_party_status_message(ctx.channel, shooty_context)
 
 @bot.command(name='shootyhelp', aliases=['sth'])
