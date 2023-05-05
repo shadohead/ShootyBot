@@ -42,7 +42,7 @@ async def send_help_message(channel):
                        + "*$shootytime HH:MM(AM/PM)* or *$stt HH:MM(AM/PM)* -- Schedules a new Shooty session for the input time\n"
                        + "*$shootylfg* or *$stlfg* -- Shows all players queued for the current game across all channels\n"
                        + "*$shootybeacon* or *$stb* -- Ping every other channel associated with the current game\n"
-                       + "*$shootysetgame* or *$stsg* -- Set the game for this channel needed for LFG features\n")
+                       + "*$shootysetgame* or *$stsg* -- Set the game for this channel needed for LFG features\n"
                        + "*$shootyrestore* or *$str* -- Restore a previous session in case of accidental delete\n")
 
 
