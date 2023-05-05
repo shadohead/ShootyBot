@@ -5,24 +5,24 @@ import os
 
 # Class which holds all user data sets and setter/getters and associated message formatting requiring the user sets
 class ShootyContext:
+    # set with all the users in the shooty crew
+    bot_soloq_user_set = set() 
+    # set with all the full stack only users in the shooty crew
+    bot_fullstack_user_set = set()
+    # set with all players who said they're ready to play right now
+    bot_ready_user_set = set()
+
+    #message_id of the most recent sts or st message 
+    current_st_message_id = None                
+    
+    # role_id of the desired role to ping
+    role_code = None
+
+    # game name set for lfg
+    game_name = None
+    
 
     def __init__(self, channel_id) -> None:
-        # set with all the users in the shooty crew
-        self.bot_soloq_user_set = set() 
-        # set with all the full stack only users in the shooty crew
-        self.bot_fullstack_user_set = set()
-        # set with all players who said they're ready to play right now
-        self.bot_ready_user_set = set()
-
-        #message_id of the most recent sts or st message 
-        self.current_st_message_id = None                
-        
-        # role_id of the desired role to ping
-        self.role_code = None
-
-        # game name set for lfg
-        self.game_name = None
-        
         # channel associated for lfg
         self.channel = channel_id
 
