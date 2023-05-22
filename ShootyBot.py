@@ -9,7 +9,6 @@ from dateutil import parser  # pip install python-dateutil
 from discord import player
 from DiscordConfig import *
 from EventHandler.MessageHandler import *
-from UserTracker import *
 from ShootyContext import *
 from discord.ext import commands
 import copy
@@ -31,6 +30,7 @@ global timer
 async def on_ready():
     logging.info('We have logged in as {0.user}'.format(bot))
 
+
 @bot.event
 async def on_message(message):
     global party_max_size
@@ -46,7 +46,7 @@ async def on_message(message):
         await add_react_options(message)
 
 
-@bot.command(name='shooty', aliases=['st'])
+@bot.hybrid_command(name='shooty', with_app_command=True)
 async def cmd_start_session(ctx):
     logging.info("Starting new shooty session")
 
@@ -57,7 +57,8 @@ async def cmd_start_session(ctx):
 
     shooty_context.reset_users()
 
-    await ping_shooty(ctx.channel, shooty_context.role_code)
+    response_string = get_ping_shooty_message(shooty_context.role_code)
+    await ctx.send(response_string)
 
 
 def backup_user_sets(channel_id, old_shooty_context: ShootyContext):
@@ -70,26 +71,34 @@ def backup_user_sets(channel_id, old_shooty_context: ShootyContext):
 
     shooty_context_backup_dict[channel_id] = backup_shooty_context
     
-@bot.command(name='shootystatus', aliases=['sts'])
+@bot.hybrid_command(name='shootystatus')
 async def cmd_session_status(ctx):
     logging.info("Printing Status")
 
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
+    await ctx.reply(party_status_message(ctx.channel, shooty_context))
 
-    await send_party_status_message(ctx.channel, shooty_context)
 
-
-@bot.command(name='shootymention', aliases=['stm'])
+@bot.hybrid_command(name='shootymention')
 async def cmd_mention_session(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
 
-    await mention_reactors(ctx.channel, shooty_context)
+    if not shooty_context.bot_soloq_user_set and not shooty_context.bot_fullstack_user_set:
+        await ctx.send("No shooty boys to mention.")
+        return
+
+    mention_message = ''
+    for user in shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set):
+        if not user.bot:
+            mention_message += user.mention + " "
+
+    await ctx.send(mention_message)
 
 
-@bot.command(name='shootykick', aliases=['stk'])
-async def cmd_kick_user(ctx, *args):
+@bot.hybrid_command(name='shootykick')
+async def cmd_kick_user(ctx, args):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
 
@@ -97,11 +106,11 @@ async def cmd_kick_user(ctx, *args):
     kicked_usernames_list = shooty_context.remove_user_from_everything(
         potential_user_names_list)
 
-    await send_kicked_user_message(ctx.channel, kicked_usernames_list)
+    await ctx.reply(get_kicked_user_message(ctx.channel, kicked_usernames_list))
 
 
 #TODO: fix this with shooty_context
-@bot.command(name='shootysize')
+@bot.hybrid_command(name='shootysize')
 async def cmd_set_session_size(ctx, arg):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -109,12 +118,12 @@ async def cmd_set_session_size(ctx, arg):
     if arg.isdigit():
         logging.info("Changing size to: " + arg)
         new_party_max_size = int(arg)
-        set_party_max_size(new_party_max_size)
+        shooty_context.set_party_max_size(new_party_max_size)
 
-    await send_max_party_size_message(ctx.channel)
+    await ctx.reply(get_max_party_size_message(new_party_max_size))
 
 
-@bot.command(name='shootyclear', aliases=['stc'])
+@bot.hybrid_command(name='shootyclear')
 async def cmd_clear_session(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -125,9 +134,9 @@ async def cmd_clear_session(ctx):
     logging.info("Clearing user sets: " +
                  str(to_names_list(shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set))))
     shooty_context.reset_users()
-    await ctx.channel.send("Cleared shooty session.")
+    await ctx.send("Cleared shooty session.")
 
-@bot.command(name='shootyrestore', aliases=['str'])
+@bot.hybrid_command(name='shootyrestore')
 async def cmd_restore(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -140,14 +149,14 @@ async def cmd_restore(ctx):
             str(to_names_list(shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set))))
 
     await ctx.channel.send("Restoring shooty session to before it was cleared.")
-    await send_party_status_message(ctx.channel, shooty_context)
+    await ctx.reply(party_status_message(ctx.channel, shooty_context))
 
-@bot.command(name='shootyhelp', aliases=['sth'])
-async def cmd_show_help(ctx, *args):
+@bot.hybrid_command(name='shootyhelp')
+async def cmd_show_help(ctx):
     await send_help_message(ctx.channel)
 
 
-@bot.command(name='shootytime', aliases=['stt'])
+@bot.hybrid_command(name='shootytime')
 async def cmd_scheduled_session(ctx, input_time):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -183,25 +192,23 @@ async def cmd_scheduled_session(ctx, input_time):
         # timer = threading.Timer(seconds_to_wait, send_party_status_message(ctx.channel))
         # timer.start()
         await ctx.send(f"Shooty time now! - {scheduled_time.strftime('%I:%M %p')}")
-        await send_party_status_message(ctx.channel, shooty_context)
+        await ctx.reply(party_status_message(ctx.channel, shooty_context))
     except ValueError:
         await ctx.send("Must be a valid time. Try format HH:MM")
 
 #This function doesn't work yet
-@bot.command(name='shootytimecancel', aliases=['sttc'])
 async def cmd_cancel_scheduled_session(ctx):
 
    # timer.cancel()
     await ctx.send(f"Canceled scheduled session - {scheduled_time.strftime('%H:%M %p')}")
 
-@bot.command(name='shootydm', aliases=['stdm'])
 async def cmd_dm_party_members(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
 
     await shooty_context.dm_all_users_except_caller(None)
 
-@bot.command(name="shootysetrole", aliases=['stsr'])
+@bot.hybrid_command(name="shootysetrole")
 async def cmd_set_role_code(ctx, role_code):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -214,7 +221,7 @@ async def cmd_set_role_code(ctx, role_code):
     await ctx.send(f"Set this channel's role code for pings to {role_code}")
 
     
-@bot.command(name="shootylfg", aliases=['stlfg'])
+@bot.hybrid_command(name="shootylfg")
 async def cmd_lfg(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -231,7 +238,7 @@ async def cmd_lfg(ctx):
 
     await ctx.send(f"Cross channel users queued for {shooty_context.game_name}:\n{lobby_members_str}")
 
-@bot.command(name="shootybeacon", aliases=['stb'])
+@bot.hybrid_command(name="shootybeacon")
 async def cmd_beacon(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)    \
@@ -249,7 +256,7 @@ async def cmd_beacon(ctx):
         
     await ctx.send(f"Sent beacon ping to {channels_pinged_str}")
     
-@bot.command(name="shootysetgame", aliases=['stsg'])
+@bot.hybrid_command(name="shootysetgame")
 async def cmd_set_game_name(ctx, game_name):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -352,6 +359,14 @@ async def on_reaction_remove(reaction, user):
         new_message = party_status_message(True, shooty_context)
 
         await reaction.message.edit(content=new_message)
+
+@bot.command(name='shootysync')
+async def sync(ctx) -> None:
+        synced = await ctx.bot.tree.sync()
+        await ctx.send(
+            f"Synced {len(synced)} commands to the current guild."
+        )
+        return
 
 # Logger helper
 
