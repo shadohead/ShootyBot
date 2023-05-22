@@ -11,7 +11,6 @@ from DiscordConfig import *
 from EventHandler.MessageHandler import *
 from ShootyContext import *
 from discord.ext import commands
-import copy
 
 logging.basicConfig(level=logging.INFO)
 pp = pprint.PrettyPrinter(indent=4)
@@ -46,7 +45,7 @@ async def on_message(message):
         await add_react_options(message)
 
 
-@bot.hybrid_command(name='shooty', with_app_command=True)
+@bot.hybrid_command(name='st', description='Starts a Fresh Shooty Session (FSS™)', with_app_command=True)
 async def cmd_start_session(ctx):
     logging.info("Starting new shooty session")
 
@@ -71,7 +70,7 @@ def backup_user_sets(channel_id, old_shooty_context: ShootyContext):
 
     shooty_context_backup_dict[channel_id] = backup_shooty_context
     
-@bot.hybrid_command(name='shootystatus')
+@bot.hybrid_command(name='sts', description="Prints party status")
 async def cmd_session_status(ctx):
     logging.info("Printing Status")
 
@@ -80,7 +79,7 @@ async def cmd_session_status(ctx):
     await ctx.reply(party_status_message(ctx.channel, shooty_context))
 
 
-@bot.hybrid_command(name='shootymention')
+@bot.hybrid_command(name='stm', description="Mentions everyone in the party")
 async def cmd_mention_session(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -97,7 +96,7 @@ async def cmd_mention_session(ctx):
     await ctx.send(mention_message)
 
 
-@bot.hybrid_command(name='shootykick')
+@bot.hybrid_command(name='shootykick', description='Kicks user from party')
 async def cmd_kick_user(ctx, args):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -110,7 +109,7 @@ async def cmd_kick_user(ctx, args):
 
 
 #TODO: fix this with shooty_context
-@bot.hybrid_command(name='shootysize')
+@bot.hybrid_command(name='shootysize', description='Sets party size.')
 async def cmd_set_session_size(ctx, arg):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -123,7 +122,6 @@ async def cmd_set_session_size(ctx, arg):
     await ctx.reply(get_max_party_size_message(new_party_max_size))
 
 
-@bot.hybrid_command(name='shootyclear')
 async def cmd_clear_session(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -136,7 +134,7 @@ async def cmd_clear_session(ctx):
     shooty_context.reset_users()
     await ctx.send("Cleared shooty session.")
 
-@bot.hybrid_command(name='shootyrestore')
+@bot.hybrid_command(name='shootyrestore', description="Restores party to the previous state before it got reset")
 async def cmd_restore(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -151,13 +149,13 @@ async def cmd_restore(ctx):
     await ctx.channel.send("Restoring shooty session to before it was cleared.")
     await ctx.reply(party_status_message(ctx.channel, shooty_context))
 
-@bot.hybrid_command(name='shootyhelp')
+@bot.hybrid_command(name='shootyhelp', description="Show commands help message")
 async def cmd_show_help(ctx):
-    await send_help_message(ctx.channel)
+    await ctx.reply(get_help_message())
 
 
-@bot.hybrid_command(name='shootytime')
-async def cmd_scheduled_session(ctx, input_time):
+@bot.hybrid_command(name='shootytime', description='Schedule a time to ping the group. You must specify AM/PM or input the time as military time.')
+async def cmd_scheduled_session(ctx, game_time):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
 
@@ -166,7 +164,7 @@ async def cmd_scheduled_session(ctx, input_time):
     # conditions: input must be greater than current
 
     try:
-        scheduled_time = parser.parse(input_time)
+        scheduled_time = parser.parse(game_time)
         # create both timezone objects
         old_timezone = pytz.timezone("US/Pacific")
         new_timezone = pytz.timezone("UTC")
@@ -208,7 +206,7 @@ async def cmd_dm_party_members(ctx):
 
     await shooty_context.dm_all_users_except_caller(None)
 
-@bot.hybrid_command(name="shootysetrole")
+@bot.hybrid_command(name="shootysetrole", description='Set a role for the bot to ping')
 async def cmd_set_role_code(ctx, role_code):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -221,7 +219,7 @@ async def cmd_set_role_code(ctx, role_code):
     await ctx.send(f"Set this channel's role code for pings to {role_code}")
 
     
-@bot.hybrid_command(name="shootylfg")
+@bot.hybrid_command(name="shootylfg", description='Ping all channels cross-server playing the same game as this one')
 async def cmd_lfg(ctx):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
@@ -238,8 +236,8 @@ async def cmd_lfg(ctx):
 
     await ctx.send(f"Cross channel users queued for {shooty_context.game_name}:\n{lobby_members_str}")
 
-@bot.hybrid_command(name="shootybeacon")
-async def cmd_beacon(ctx):
+@bot.hybrid_command(name="shootybeacon", description='Sends a cross-server message to others playing the same game')
+async def cmd_beacon(ctx, message):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)    \
 
@@ -251,12 +249,12 @@ async def cmd_beacon(ctx):
     channels_pinged_str = ""
     for context in shooty_context_dict.values():
         if context.game_name == shooty_context.game_name and context.channel is not shooty_context.channel:
-            await context.channel.send(f"{context.role_code}\nBeacon from Server: *{shooty_context.channel.guild.name}*\n Channel: *{shooty_context.channel.name}*")
+            await context.channel.send(f"{context.role_code}\n{message}\nSent from Server: *{shooty_context.channel.guild.name}*\n Channel: *{shooty_context.channel.name}*")
             channels_pinged_str += f"Server: *{context.channel.guild.name}*, Channel: *{context.channel.name}*\n"
         
-    await ctx.send(f"Sent beacon ping to {channels_pinged_str}")
+    await ctx.send(f"Sent beacon message to {channels_pinged_str}")
     
-@bot.hybrid_command(name="shootysetgame")
+@bot.hybrid_command(name="shootysetgame", description='Set the game name for LFG features')
 async def cmd_set_game_name(ctx, game_name):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)

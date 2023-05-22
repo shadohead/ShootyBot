@@ -127,7 +127,6 @@ class ShootyContext:
     # Party Max Size Functions
     ###
 
-
     def set_party_max_size(self, size):
         self.party_max_size = size
 

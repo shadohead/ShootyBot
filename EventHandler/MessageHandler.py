@@ -25,19 +25,19 @@ def get_max_party_size_message(party_size):
     return f"Current party size: {party_size}"
 
 
-async def send_help_message(channel):
-    await channel.send("ShootyBot help:" + "\n\n"
-                       + "*$shooty* or *$st* -- Starts new Shooty session \n"
-                       + "*$shootystatus* or *$sts* -- Shows current Shooty session status \n"
-                       + "*$shootymention* or *$stm* -- Mentions all session members (full stackers included)\n"
-                       + "*$shootykick user1 ...* or *$stk user1 ...* -- Kick the shooter(s) from session\n"
-                       + "*$shootysize N*  -- Set the max party size\n"
-                       + "*$shootyclear* or *$stc* -- Clears current Shooty session\n"
-                       + "*$shootytime HH:MM(AM/PM)* or *$stt HH:MM(AM/PM)* -- Schedules a new Shooty session for the input time\n"
-                       + "*$shootylfg* or *$stlfg* -- Shows all players queued for the current game across all channels\n"
-                       + "*$shootybeacon* or *$stb* -- Ping every other channel associated with the current game\n"
-                       + "*$shootysetgame* or *$stsg* -- Set the game for this channel needed for LFG features\n"
-                       + "*$shootyrestore* or *$str* -- Restore a previous session in case of accidental delete\n")
+def get_help_message():
+    return ("ShootyBot help:" + "\n\n"
+            + "*$shooty* or *$st* -- Starts new Shooty session \n"
+            + "*$shootystatus* or *$sts* -- Shows current Shooty session status \n"
+            + "*$shootymention* or *$stm* -- Mentions all session members (full stackers included)\n"
+            + "*$shootykick user1 ...* or *$stk user1 ...* -- Kick the shooter(s) from session\n"
+            + "*$shootysize N*  -- Set the max party size\n"
+            + "*$shootyclear* or *$stc* -- Clears current Shooty session\n"
+            + "*$shootytime HH:MM(AM/PM)* or *$stt HH:MM(AM/PM)* -- Schedules a new Shooty session for the input time\n"
+            + "*$shootylfg* or *$stlfg* -- Shows all players queued for the current game across all channels\n"
+            + "*$shootybeacon* or *$stb* -- Ping every other channel associated with the current game\n"
+            + "*$shootysetgame* or *$stsg* -- Set the game for this channel needed for LFG features\n"
+            + "*$shootyrestore* or *$str* -- Restore a previous session in case of accidental delete\n")
 
 
 
