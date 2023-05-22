@@ -20,8 +20,9 @@ class ShootyContext:
 
     # game name set for lfg
     game_name = None
-    
 
+    party_max_size = 5
+    
     def __init__(self, channel_id) -> None:
         # channel associated for lfg
         self.channel = channel_id
@@ -122,6 +123,16 @@ class ShootyContext:
         if user in self.bot_fullstack_user_set:
             self.bot_fullstack_user_set.remove(user)
 
+    ###
+    # Party Max Size Functions
+    ###
+
+    def set_party_max_size(self, size):
+        self.party_max_size = size
+
+
+    def get_party_max_size(self):
+        return self.party_max_size
 
     ###
     # Macro Functions
