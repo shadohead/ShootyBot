@@ -32,18 +32,13 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    global party_max_size
-    
     await bot.process_commands(message)
 
-    channel_id = message.channel.id
-    shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
-
-    # ensure bot only adds reaction emojis to messages by itself and containing the default message
     if message.author == bot.user and message.content.startswith(DEFAULT_MSG):
+        channel_id = message.channel.id
+        shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
         shooty_context.current_st_message_id = message.id
         await add_react_options(message)
-
 
 @bot.hybrid_command(name='st', description='Starts a Fresh Shooty Session (FSS™)', with_app_command=True)
 async def cmd_start_session(ctx):
@@ -88,10 +83,9 @@ async def cmd_mention_session(ctx):
         await ctx.send("No shooty boys to mention.")
         return
 
-    mention_message = ''
-    for user in shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set):
-        if not user.bot:
-            mention_message += user.mention + " "
+    mention_message = ''.join(user.mention + " " for user in 
+                                shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set)
+                                if not user.bot)
 
     await ctx.send(mention_message)
 
@@ -108,15 +102,14 @@ async def cmd_kick_user(ctx, args):
     await ctx.reply(get_kicked_user_message(ctx.channel, kicked_usernames_list))
 
 
-#TODO: fix this with shooty_context
 @bot.hybrid_command(name='shootysize', description='Sets party size.')
-async def cmd_set_session_size(ctx, arg):
+async def cmd_set_session_size(ctx, size):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
 
     if arg.isdigit():
-        logging.info("Changing size to: " + arg)
-        new_party_max_size = int(arg)
+        logging.info(f"Changing size to: {size}")
+        new_party_max_size = int(size)
         shooty_context.set_party_max_size(new_party_max_size)
 
     await ctx.reply(get_max_party_size_message(new_party_max_size))
