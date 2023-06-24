@@ -2,3 +2,4 @@
 __pycache__/
 *env/
 channel_data.json
+DiscordConfig.py

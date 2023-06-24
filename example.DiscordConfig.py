@@ -1,3 +1,4 @@
+# Rename this to DiscordConfig.py when running the bot
 # On the Discord Application Page, go to Bot -> (Create Bot if needed) Token -> Click to Reveal Token
 BOT_TOKEN = "CHANGE_ME"
 
