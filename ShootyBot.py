@@ -3,7 +3,6 @@ import discord
 import pprint
 import logging
 import pytz  # pip install pytz
-import threading
 import asyncio
 from dateutil import parser  # pip install python-dateutil
 from discord import player
@@ -107,7 +106,7 @@ async def cmd_set_session_size(ctx, size):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
 
-    if arg.isdigit():
+    if size.isdigit():
         logging.info(f"Changing size to: {size}")
         new_party_max_size = int(size)
         shooty_context.set_party_max_size(new_party_max_size)
@@ -273,6 +272,7 @@ async def on_reaction_add(reaction, user):
 
     channel_id = reaction.message.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
+    logging.info(f"{id(shooty_context)} channel: {str(shooty_context.channel)}, soloq: {id(shooty_context.bot_soloq_user_set)}, fullstack: {id(shooty_context.bot_fullstack_user_set)}" )
 
     if reaction.message.id is not shooty_context.current_st_message_id:
         logging.info(
@@ -316,6 +316,8 @@ async def on_reaction_remove(reaction, user):
 
     channel_id = reaction.message.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
+
+    logging.info(f"{id(shooty_context)} channel: {str(shooty_context.channel)}, soloq: {id(shooty_context.bot_soloq_user_set)}, fullstack: {id(shooty_context.bot_fullstack_user_set)}" )
 
     if reaction.message.id is not shooty_context.current_st_message_id:
         logging.info(
@@ -376,7 +378,7 @@ def get_shooty_context_from_channel_id(channel_id, shooty_context_dict: dict[str
         #first try loading from json file
         shooty_context_dict[channel_id] = ShootyContext(channel_id)
 
-        shooty_context_dict[channel_id].load_channel_data
+        shooty_context_dict[channel_id].load_channel_data()
 
     return shooty_context_dict[channel_id]
 
