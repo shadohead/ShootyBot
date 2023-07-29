@@ -17,8 +17,9 @@ def get_ping_shooty_message(role_code):
     else:
         return f"{DEFAULT_MSG}{role_code}"
 
+
 def get_kicked_user_message(kicked_usernames_list):
-    return("Kicked: " + str(kicked_usernames_list))
+    return ("Kicked: " + str(kicked_usernames_list))
 
 
 def get_max_party_size_message(party_size):
@@ -26,20 +27,7 @@ def get_max_party_size_message(party_size):
 
 
 def get_help_message():
-    return ("ShootyBot help:" + "\n\n"
-            + "*$shooty* or *$st* -- Starts new Shooty session \n"
-            + "*$shootystatus* or *$sts* -- Shows current Shooty session status \n"
-            + "*$shootymention* or *$stm* -- Mentions all session members (full stackers included)\n"
-            + "*$shootykick user1 ...* or *$stk user1 ...* -- Kick the shooter(s) from session\n"
-            + "*$shootysize N*  -- Set the max party size\n"
-            + "*$shootyclear* or *$stc* -- Clears current Shooty session\n"
-            + "*$shootytime HH:MM(AM/PM)* or *$stt HH:MM(AM/PM)* -- Schedules a new Shooty session for the input time\n"
-            + "*$shootylfg* or *$stlfg* -- Shows all players queued for the current game across all channels\n"
-            + "*$shootybeacon* or *$stb* -- Ping every other channel associated with the current game\n"
-            + "*$shootysetgame* or *$stsg* -- Set the game for this channel needed for LFG features\n"
-            + "*$shootyrestore* or *$str* -- Restore a previous session in case of accidental delete\n")
-
-
+    return ("For command list and descriptions, type `/st` for primary and `/shooty` for secondary commands.")
 
 
 # String formatted with status of the shooty crew
@@ -48,7 +36,8 @@ def party_status_message(is_ping, user_sets: ShootyContext):
     num_fullstack_users = user_sets.get_fullstack_user_count()
     num_unique_users = user_sets.get_unique_user_count()
 
-    all_users_set = user_sets.bot_soloq_user_set.union(user_sets.bot_fullstack_user_set)
+    all_users_set = user_sets.bot_soloq_user_set.union(
+        user_sets.bot_fullstack_user_set)
 
     if is_ping:
         msg = DEFAULT_MSG + user_sets.role_code
@@ -70,7 +59,7 @@ def party_status_message(is_ping, user_sets: ShootyContext):
         new_message = msg + "\n\n"\
             + bold(str(num_soloq_users) + "/" + str(user_sets.get_party_max_size()))\
             + "\n" + \
-           user_sets.get_user_list_string()
+            user_sets.get_user_list_string()
 
     elif num_fullstack_users > 0:
         new_message = msg + "\n\n"\
@@ -79,6 +68,7 @@ def party_status_message(is_ping, user_sets: ShootyContext):
             user_sets.get_user_list_string()
     else:
         new_message = "" + msg + "\n\n"\
-            + "sadge/" + str(user_sets.get_party_max_size()) + " <:viper:725612569716326422>"
+            + "sadge/" + str(user_sets.get_party_max_size()) + \
+            " <:viper:725612569716326422>"
 
     return new_message
