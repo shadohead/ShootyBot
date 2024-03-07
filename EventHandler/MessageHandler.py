@@ -9,6 +9,7 @@ async def add_react_options(message):
     await message.add_reaction('\N{THUMBS UP SIGN}')
     await message.add_reaction('5️⃣')
     await message.add_reaction('✅')
+    await message.add_reaction('🔄')
 
 
 def get_ping_shooty_message(role_code):
