@@ -94,7 +94,7 @@ async def cmd_kick_user(ctx, args):
     channel_id = ctx.channel.id
     shooty_context = get_shooty_context_from_channel_id(channel_id, shooty_context_dict)
 
-    potential_user_names_list = args
+    potential_user_names_list = [args]
     kicked_usernames_list = shooty_context.remove_user_from_everything(
         potential_user_names_list)
 
