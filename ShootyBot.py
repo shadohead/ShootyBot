@@ -308,6 +308,11 @@ async def on_reaction_add(reaction, user):
 
         await reaction.message.edit(content=new_message)
 
+    # Check if the reaction is the refresh emoji
+    elif reaction.emoji == '🔄':
+        # Call the cmd_session_status function to update the shooty status
+        await cmd_session_status(reaction.message)
+
 
 @bot.event
 async def on_reaction_remove(reaction, user):
