@@ -405,8 +405,10 @@ async def on_reaction_add(reaction, user):
     # Check if the reaction is the megaphone emoji
     elif reaction.emoji == "📣":
         logging.info("Megaphone emoji clicked")
-        # Call the cmd_mention_session function to mention the party members
-        await cmd_mention_session(reaction.message)
+        # Create a new Context object from the reaction message
+        ctx = await bot.get_context(reaction.message)
+        # Call the cmd_mention_session function with the new Context object
+        await cmd_mention_session(ctx)
 
 
 @bot.event
