@@ -365,7 +365,7 @@ async def on_reaction_add(reaction, user):
         return
 
     # handle main group of players
-    if reaction.emoji == '\N{THUMBS UP SIGN}':
+    if reaction.emoji == "\N{THUMBS UP SIGN}":
         # case: user was in the full stack only group and wanted to join the regular group
         # remove them from full stack group and put them in the regular group instead
         shooty_context.add_soloq_user(user)
@@ -403,7 +403,7 @@ async def on_reaction_add(reaction, user):
         await cmd_session_status(reaction.message)
 
     # Check if the reaction is the megaphone emoji
-    elif reaction.emoji == '\N{LOUDSPEAKER}' :
+    elif reaction.emoji == "📣":
         logging.info("Megaphone emoji clicked")
         # Call the cmd_mention_session function to mention the party members
         await cmd_mention_session(reaction.message)

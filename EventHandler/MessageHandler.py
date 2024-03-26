@@ -10,7 +10,8 @@ async def add_react_options(message):
     await message.add_reaction("5️⃣")
     # await message.add_reaction('✅')
     await message.add_reaction("🔄")
-    await message.add_reaction("\N{LOUDSPEAKER}")
+    await message.add_reaction("📣")
+
 
 def get_ping_shooty_message(role_code):
     if role_code is None:
