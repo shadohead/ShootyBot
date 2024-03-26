@@ -59,7 +59,8 @@ class ShootyContext:
                 self.role_code = self.get_role_code(str(self.channel))
                 self.game_name = self.get_game_name(str(self.channel))
                 logging.info(
-                    f"set role_code:{self.role_code}, game_name:{self.game_name}")
+                    f"set role_code:{self.role_code}, game_name:{self.game_name}"
+                )
 
     def set_channel_data(self, channel, role_code, game_name):
         self.role_code = role_code
@@ -69,10 +70,9 @@ class ShootyContext:
         if self.channel not in self.channel_data:
             self.channel_data[self.channel] = {}
 
-        self.channel_data[self.channel].update({
-            'role_code': self.role_code,
-            'game_name': self.game_name
-        })
+        self.channel_data[self.channel].update(
+            {"role_code": self.role_code, "game_name": self.game_name}
+        )
         self.save_channel_data()
 
     def get_channel_data(self, channel):
@@ -83,13 +83,13 @@ class ShootyContext:
     def get_role_code(self, channel):
         data = self.get_channel_data(channel)
         if data:
-            return data['role_code']
+            return data["role_code"]
         return None
 
     def get_game_name(self, channel):
         data = self.get_channel_data(channel)
         if data:
-            return data['game_name']
+            return data["game_name"]
         return None
 
     ###
@@ -187,15 +187,17 @@ class ShootyContext:
     ###
 
     def get_user_list_string(self):
-        result_string = ''
+        result_string = ""
 
         # join both sets, logging.info once based on which set the user came from
 
-        all_users_set = self.bot_soloq_user_set.union(
-            self.bot_fullstack_user_set)
+        all_users_set = self.bot_soloq_user_set.union(self.bot_fullstack_user_set)
 
         for index, user in enumerate(all_users_set):
-            if user in self.bot_fullstack_user_set and user not in self.bot_soloq_user_set:
+            if (
+                user in self.bot_fullstack_user_set
+                and user not in self.bot_soloq_user_set
+            ):
                 result_string += italics(self.bold_readied_user(user))
             else:
                 result_string += self.bold_readied_user(user)
@@ -205,15 +207,17 @@ class ShootyContext:
         return result_string
 
     def get_user_list_string_with_hashtag(self):
-        result_string = ''
+        result_string = ""
 
         # join both sets, logging.info once based on which set the user came from
 
-        all_users_set = self.bot_soloq_user_set.union(
-            self.bot_fullstack_user_set)
+        all_users_set = self.bot_soloq_user_set.union(self.bot_fullstack_user_set)
 
         for index, user in enumerate(all_users_set):
-            if user in self.bot_fullstack_user_set and user not in self.bot_soloq_user_set:
+            if (
+                user in self.bot_fullstack_user_set
+                and user not in self.bot_soloq_user_set
+            ):
                 result_string += italics(self.bold_readied_user(user, True))
             else:
                 result_string += self.bold_readied_user(user, True)
@@ -225,5 +229,7 @@ class ShootyContext:
     # DM functionality still not working yet
 
     async def dm_all_users_except_caller(self, user_who_called_command):
-        for user in self.bot_soloq_user_set.union(self.bot_fullstack_user_set).discard(user_who_called_command):
+        for user in self.bot_soloq_user_set.union(self.bot_fullstack_user_set).discard(
+            user_who_called_command
+        ):
             await user.send(f"You have been summoned by {user_who_called_command}.")
