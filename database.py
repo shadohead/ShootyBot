@@ -4,7 +4,7 @@ import os
 import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
-from threading import Lock
+from threading import RLock
 from config import DATA_DIR
 
 class DatabaseManager:
@@ -19,7 +19,7 @@ class DatabaseManager:
         else:
             self.db_path = db_path
         
-        self._lock = Lock()
+        self._lock = RLock()
         self._ensure_data_dir()
         self._init_database()
         
