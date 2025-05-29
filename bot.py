@@ -19,6 +19,14 @@ bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 @bot.event
 async def on_ready():
     logging.info(f"We have logged in as {bot.user}")
+    logging.info(f"Bot is in {len(bot.guilds)} guilds")
+    
+    # Sync slash commands
+    try:
+        synced = await bot.tree.sync()
+        logging.info(f"Synced {len(synced)} slash commands")
+    except Exception as e:
+        logging.error(f"Failed to sync commands: {e}")
 
 @bot.event
 async def on_message(message):

@@ -164,3 +164,6 @@ class ReactionHandler(commands.Cog):
                 data_manager.save_user(user.id)
                 
                 logging.info(f"Tracked participation for {user.name} in session {session.session_id}")
+
+async def setup(bot):
+    await bot.add_cog(ReactionHandler(bot))

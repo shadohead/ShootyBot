@@ -211,3 +211,6 @@ class SessionCommands(commands.Cog):
         
         # Clear session reference
         shooty_context.current_session_id = None
+
+async def setup(bot):
+    await bot.add_cog(SessionCommands(bot))

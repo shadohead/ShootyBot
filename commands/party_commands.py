@@ -61,3 +61,6 @@ class PartyCommands(commands.Cog):
         
         shooty_context.reset_users()
         await ctx.send(MESSAGES["CLEARED_SESSION"])
+
+async def setup(bot):
+    await bot.add_cog(PartyCommands(bot))

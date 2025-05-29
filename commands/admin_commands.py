@@ -92,3 +92,6 @@ class AdminCommands(commands.Cog):
         """Sync slash commands to the current guild"""
         synced = await ctx.bot.tree.sync()
         await ctx.send(f"Synced {len(synced)} commands to the current guild.")
+
+async def setup(bot):
+    await bot.add_cog(AdminCommands(bot))
