@@ -12,7 +12,8 @@ The bot follows a clean, modular architecture:
 
 - **bot.py**: Main entry point that loads cogs and handles Discord events
 - **config.py**: All configuration, emojis, and message templates in one place
-- **context_manager.py**: State management with atomic JSON file operations and FileLock
+- **database.py**: SQLite database layer optimized for Raspberry Pi with ACID compliance
+- **context_manager.py**: State management with database persistence
 - **data_manager.py**: User data and session persistence with comprehensive statistics
 - **commands/**: Command cogs organized by functionality (session, party, admin, valorant)
 - **handlers/**: Reaction handling and message formatting
@@ -36,6 +37,10 @@ py -3 .\bot.py  # Windows
 pytest                           # Run all tests
 pytest --cov=. --cov-report=html  # Run with coverage report
 pytest tests/unit/test_*.py -v    # Run specific test files
+
+# Test database system
+python3 test_database_fast.py     # Quick database functionality test
+python3 migrate_to_sqlite.py --backup  # Migrate from JSON to SQLite with backup
 ```
 
 ## Testing
@@ -80,9 +85,11 @@ For features not covered by unit tests:
 - **State management**: Per-channel context in `shooty_context_dict`
 
 ### Data Management:
-- **Atomic operations**: FileLock ensures thread-safe JSON file operations
+- **SQLite database**: ACID-compliant database with WAL mode for better concurrency
+- **Raspberry Pi optimized**: Database configuration tuned for Pi's ARM architecture and SD card I/O
 - **Session tracking**: Comprehensive session statistics and participant history
 - **User profiles**: Multi-account Valorant linking with backward compatibility
+- **Auto-migration**: Automatic migration from JSON files to SQLite on first run
 - **Auto-backup**: State backup/restore functionality for error recovery
 
 ### External APIs:
@@ -110,6 +117,60 @@ LOG_LEVEL=INFO
 
 The bot will check for configuration in this order: `.env` file → environment variables → `DiscordConfig.py`
 
+## SQLite Database System
+
+ShootyBot uses a lightweight SQLite database optimized for Raspberry Pi 4 deployment:
+
+### Database Features:
+- **ACID compliance**: Full transaction support with rollback capability
+- **WAL mode**: Write-Ahead Logging for better concurrency and crash recovery
+- **Foreign key constraints**: Data integrity enforced at database level
+- **Optimized indexes**: Query performance tuned for common access patterns
+- **Memory efficient**: 32MB cache size suitable for Raspberry Pi memory constraints
+
+### Database Schema:
+- **users**: Discord user profiles with session/game statistics
+- **valorant_accounts**: Multiple Valorant accounts per user with primary account support
+- **sessions**: Gaming session tracking with participant management
+- **session_participants**: Many-to-many relationship for session membership
+- **channel_settings**: Per-channel configuration (role codes, game names, party sizes)
+
+### Migration from JSON:
+**Automatic Migration**: On first startup, the bot automatically migrates existing JSON data to SQLite:
+```bash
+# Manual migration with backup (recommended)
+python3 migrate_to_sqlite.py --backup
+
+# Force migration even if database exists
+python3 migrate_to_sqlite.py --force --backup
+```
+
+**Migration Features**:
+- Preserves all existing user data and session history
+- Handles legacy single-account format → multi-account format conversion
+- Creates automatic backup of JSON files
+- Validates data integrity after migration
+- Shows detailed migration statistics
+
+### Database Management:
+```bash
+# Test database functionality
+python3 test_database_fast.py
+
+# Check database stats (add to bot as admin command)
+# Users: 150, Sessions: 1,247, Size: 2.3 MB
+
+# Database optimization (automatic, but can be manual)
+# VACUUM and incremental_vacuum for compact storage
+```
+
+### Raspberry Pi Optimizations:
+- **Reduced I/O**: Batch operations to minimize SD card writes
+- **Memory tuning**: Conservative cache sizes for 1-8GB Pi memory configurations
+- **Concurrent access**: WAL mode allows simultaneous reads during writes
+- **Crash recovery**: Database remains consistent even after power loss
+- **Performance**: Sub-second response times for typical bot operations
+
 ## Best Practices & Development Guidelines
 
 ### Code Organization:
@@ -134,7 +195,8 @@ The bot will check for configuration in this order: `.env` file → environment 
 - **Async patterns**: Use async/await for all I/O operations
 - **Rate limiting**: Respect Discord and external API rate limits
 - **Memory management**: Clean up unused contexts and data periodically
-- **File locking**: Use FileLock for concurrent JSON file access
+- **Database optimization**: SQLite with WAL mode, indexes, and memory-efficient queries
+- **Raspberry Pi tuning**: 32MB cache, MEMORY temp store, and incremental vacuum
 
 ### Discord Bot Patterns:
 - **Hybrid commands**: Support both slash commands and traditional prefix commands
@@ -151,10 +213,12 @@ The bot will check for configuration in this order: `.env` file → environment 
 - **Context object**: Always check if context/interaction is still valid before responding
 
 ### Data Persistence:
-- **FileLock usage**: Always use context managers with FileLock for JSON operations
-- **Atomic writes**: Write to temp file first, then rename to prevent corruption
+- **SQLite transactions**: Use ACID transactions for data consistency
+- **Database schema**: Normalized schema with foreign key constraints
+- **Migration support**: Automatic migration from legacy JSON files
 - **Backward compatibility**: Handle old data formats gracefully when adding new fields
 - **File permissions**: Ensure bot has read/write access to data directory
+- **Database backup**: Regular database optimization with VACUUM command
 
 ### External API Integration:
 - **Henrik API changes**: API structure may change - test with real response data
@@ -166,7 +230,8 @@ The bot will check for configuration in this order: `.env` file → environment 
 - **Discord mocking**: Use proper Mock objects for Discord.py components
 - **Async testing**: Use pytest-asyncio and proper async test patterns
 - **Time-dependent tests**: Mock datetime.now() for consistent test results
-- **File operations**: Use temporary directories for file-based tests
+- **Database operations**: Use temporary SQLite databases for testing
+- **Migration testing**: Test JSON to SQLite migration with sample data
 
 ### Production Deployment:
 - **Process management**: Use screen/tmux for persistent bot processes

@@ -3,6 +3,7 @@ import json
 import os
 from filelock import FileLock
 from config import *
+from database import database_manager
 
 class ShootyContext:
     """Manages the state for a single channel's party session"""
@@ -198,76 +199,51 @@ class ContextManager:
         return self.contexts[channel_id]
     
     def load_all_contexts(self):
-        """Load all contexts from JSON file"""
+        """Load all contexts from database (kept for compatibility)"""
         if not os.path.exists(DATA_DIR):
             os.makedirs(DATA_DIR)
         
-        if os.path.exists(CHANNEL_DATA_FILE):
-            try:
-                with self.lock:
-                    with open(CHANNEL_DATA_FILE, 'r') as f:
-                        data = json.load(f)
-                
-                for channel_id, channel_data in data.items():
-                    context = ShootyContext.from_dict(int(channel_id), channel_data)
-                    self.contexts[int(channel_id)] = context
-                
-                logging.info(f"Loaded {len(self.contexts)} contexts from file")
-            except Exception as e:
-                logging.error(f"Error loading contexts: {e}")
-        else:
-            logging.info("No existing context data file found")
+        # Contexts are now loaded on-demand from database
+        # This method is kept for compatibility
+        logging.info("Using SQLite database for context storage")
     
     def load_context_data(self, channel_id):
-        """Load data for a specific context from JSON"""
-        if os.path.exists(CHANNEL_DATA_FILE):
-            try:
-                with self.lock:
-                    with open(CHANNEL_DATA_FILE, 'r') as f:
-                        data = json.load(f)
-                
-                channel_data = data.get(str(channel_id))
-                if channel_data:
-                    context = self.contexts[channel_id]
-                    context.role_code = channel_data.get('role_code', DEFAULT_SHOOTY_ROLE_CODE)
-                    context.game_name = channel_data.get('game_name')
-                    context.party_max_size = channel_data.get('party_max_size', DEFAULT_PARTY_SIZE)
-                    logging.info(f"Loaded data for channel {channel_id}")
-            except Exception as e:
-                logging.error(f"Error loading context data for {channel_id}: {e}")
+        """Load data for a specific context from database"""
+        try:
+            settings = database_manager.get_channel_settings(channel_id)
+            if settings:
+                context = self.contexts[channel_id]
+                context.role_code = settings.get('role_code', DEFAULT_SHOOTY_ROLE_CODE)
+                context.game_name = settings.get('game_name')
+                context.party_max_size = settings.get('party_max_size', DEFAULT_PARTY_SIZE)
+                logging.info(f"Loaded data for channel {channel_id} from database")
+            else:
+                logging.debug(f"No existing settings found for channel {channel_id}")
+        except Exception as e:
+            logging.error(f"Error loading context data for {channel_id}: {e}")
     
     def save_context(self, channel_id):
-        """Save a specific context to JSON file"""
+        """Save a specific context to database"""
         try:
-            with self.lock:
-                # Read current data
-                data = {}
-                if os.path.exists(CHANNEL_DATA_FILE):
-                    with open(CHANNEL_DATA_FILE, 'r') as f:
-                        data = json.load(f)
-                
-                # Update specific channel
-                if channel_id in self.contexts:
-                    data[str(channel_id)] = self.contexts[channel_id].to_dict()
-                
-                # Write atomically
-                self._write_json_atomic(data)
-                logging.info(f"Saved context for channel {channel_id}")
+            if channel_id in self.contexts:
+                context = self.contexts[channel_id]
+                success = database_manager.save_channel_settings(
+                    channel_id,
+                    context.role_code,
+                    context.game_name,
+                    context.party_max_size
+                )
+                if success:
+                    logging.info(f"Saved context for channel {channel_id} to database")
+                else:
+                    logging.error(f"Failed to save context for channel {channel_id}")
         except Exception as e:
             logging.error(f"Error saving context for {channel_id}: {e}")
     
     def _write_json_atomic(self, data):
-        """Write JSON data atomically to prevent corruption"""
-        temp_file = f"{CHANNEL_DATA_FILE}.tmp"
-        try:
-            with open(temp_file, 'w') as f:
-                json.dump(data, f, indent=2)
-            os.replace(temp_file, CHANNEL_DATA_FILE)
-        except Exception as e:
-            # Clean up temp file if something went wrong
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-            raise e
+        """Write JSON data atomically (legacy method, kept for compatibility)"""
+        # This method is no longer used but kept for compatibility
+        pass
 
 
 # Global context manager instance
