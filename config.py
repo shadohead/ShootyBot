@@ -15,6 +15,9 @@ MAX_SCHEDULED_HOURS = 4
 # Default role code (can be overridden per channel)
 DEFAULT_SHOOTY_ROLE_CODE = os.getenv("SHOOTY_ROLE_CODE", "<@&773770148070424657>")
 
+# Henrik API Configuration
+HENRIK_API_KEY = os.getenv("HENRIK_API_KEY", "")
+
 # Emojis (all in one place for easy modification)
 EMOJI = {
     "THUMBS_UP": "👍",

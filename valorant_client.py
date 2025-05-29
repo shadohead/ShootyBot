@@ -3,6 +3,7 @@ import requests
 from typing import Optional, Dict, Any
 import discord
 from data_manager import data_manager
+from config import HENRIK_API_KEY
 
 class ValorantClient:
     """Client for interacting with Henrik's Valorant API"""
@@ -12,6 +13,13 @@ class ValorantClient:
         self.headers = {
             'User-Agent': 'ShootyBot/1.0 (Discord Bot)'
         }
+        
+        # Add API key if provided (for Advanced tier)
+        if HENRIK_API_KEY:
+            self.headers['Authorization'] = f'Bearer {HENRIK_API_KEY}'
+            logging.info("Using Henrik API with Advanced key")
+        else:
+            logging.info("Using Henrik API Basic tier (no key)")
     
     async def get_account_info(self, username: str, tag: str) -> Optional[Dict[str, Any]]:
         """Get account information by username and tag"""

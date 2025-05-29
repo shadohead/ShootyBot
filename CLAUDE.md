@@ -51,6 +51,7 @@ No formal test suite exists. Test manually by:
 ```
 BOT_TOKEN=your_discord_bot_token
 SHOOTY_ROLE_CODE=<@&your_role_id>
+HENRIK_API_KEY=your_henrik_key_here  # Optional - for higher rate limits
 LOG_LEVEL=INFO
 ```
 
