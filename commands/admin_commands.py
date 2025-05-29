@@ -1,4 +1,5 @@
 import logging
+import discord
 from discord.ext import commands
 from context_manager import context_manager
 from config import *
@@ -90,8 +91,45 @@ class AdminCommands(commands.Cog):
     @commands.command(name="shootysync")
     async def sync(self, ctx) -> None:
         """Sync slash commands to the current guild"""
-        synced = await ctx.bot.tree.sync()
-        await ctx.send(f"Synced {len(synced)} commands to the current guild.")
+        try:
+            # Sync to current guild for immediate availability
+            synced = await ctx.bot.tree.sync(guild=ctx.guild)
+            command_names = [cmd.name for cmd in synced]
+            await ctx.send(f"✅ Synced {len(synced)} commands to this server: {', '.join(command_names)}")
+        except Exception as e:
+            await ctx.send(f"❌ Error syncing commands: {e}")
+    
+    @commands.command(name="shootysyncglobal")
+    async def sync_global(self, ctx) -> None:
+        """Sync slash commands globally (takes up to 1 hour)"""
+        try:
+            synced = await ctx.bot.tree.sync()
+            command_names = [cmd.name for cmd in synced]
+            await ctx.send(f"✅ Synced {len(synced)} commands globally: {', '.join(command_names)}\n⏰ Global sync can take up to 1 hour to appear everywhere.")
+        except Exception as e:
+            await ctx.send(f"❌ Error syncing commands globally: {e}")
+    
+    @commands.command(name="shootycheck")
+    async def check_commands(self, ctx) -> None:
+        """Check what commands are loaded"""
+        # Check slash commands
+        slash_commands = [cmd.name for cmd in ctx.bot.tree.get_commands()]
+        
+        # Check cogs
+        cogs = list(ctx.bot.cogs.keys())
+        
+        # Check specifically for Valorant commands
+        valorant_cog = ctx.bot.get_cog('ValorantCommands')
+        valorant_commands = []
+        if valorant_cog:
+            valorant_commands = [cmd.name for cmd in valorant_cog.get_commands()]
+        
+        embed = discord.Embed(title="🔍 Bot Status Check", color=0x0099ff)
+        embed.add_field(name="Loaded Cogs", value=", ".join(cogs), inline=False)
+        embed.add_field(name="Slash Commands", value=", ".join(slash_commands), inline=False)
+        embed.add_field(name="Valorant Commands", value=", ".join(valorant_commands) if valorant_commands else "None found", inline=False)
+        
+        await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(AdminCommands(bot))

@@ -21,12 +21,15 @@ async def on_ready():
     logging.info(f"We have logged in as {bot.user}")
     logging.info(f"Bot is in {len(bot.guilds)} guilds")
     
-    # Sync slash commands
-    try:
-        synced = await bot.tree.sync()
-        logging.info(f"Synced {len(synced)} slash commands")
-    except Exception as e:
-        logging.error(f"Failed to sync commands: {e}")
+    # Sync slash commands to all guilds for immediate availability
+    for guild in bot.guilds:
+        try:
+            synced = await bot.tree.sync(guild=guild)
+            logging.info(f"Synced {len(synced)} slash commands to {guild.name}")
+        except Exception as e:
+            logging.error(f"Failed to sync commands to {guild.name}: {e}")
+    
+    logging.info("🤖 Bot is ready and all commands are synced!")
 
 @bot.event
 async def on_message(message):
