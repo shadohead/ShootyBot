@@ -1,6 +1,6 @@
 import logging
 import requests
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import discord
 from data_manager import data_manager
 from config import HENRIK_API_KEY
@@ -122,16 +122,14 @@ class ValorantClient:
             return False
     
     def get_linked_account(self, discord_id: int) -> Optional[Dict[str, str]]:
-        """Get linked Valorant account for a Discord user"""
+        """Get primary linked Valorant account for a Discord user"""
         user_data = data_manager.get_user(discord_id)
-        
-        if user_data.valorant_username and user_data.valorant_tag:
-            return {
-                'username': user_data.valorant_username,
-                'tag': user_data.valorant_tag,
-                'puuid': user_data.valorant_puuid
-            }
-        return None
+        return user_data.get_primary_account()
+    
+    def get_all_linked_accounts(self, discord_id: int) -> List[Dict[str, str]]:
+        """Get all linked Valorant accounts for a Discord user"""
+        user_data = data_manager.get_user(discord_id)
+        return user_data.get_all_accounts()
     
     def is_playing_valorant(self, member: discord.Member) -> bool:
         """Check if a Discord member is currently playing Valorant"""

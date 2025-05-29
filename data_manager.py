@@ -11,20 +11,128 @@ class UserData:
     
     def __init__(self, discord_id: int):
         self.discord_id = discord_id
-        self.valorant_username = None
-        self.valorant_tag = None
-        self.valorant_puuid = None
+        self.valorant_accounts = []  # List of dict: {'username': str, 'tag': str, 'puuid': str, 'primary': bool}
         self.total_sessions = 0
         self.total_games_played = 0
         self.session_history = []  # List of session IDs
         self.last_updated = datetime.now(timezone.utc).isoformat()
+        
+        # Backward compatibility properties
+        self._valorant_username = None
+        self._valorant_tag = None
+        self._valorant_puuid = None
     
-    def link_valorant_account(self, username: str, tag: str, puuid: str):
+    def link_valorant_account(self, username: str, tag: str, puuid: str, set_primary: bool = True):
         """Link a Valorant account to this Discord user"""
-        self.valorant_username = username
-        self.valorant_tag = tag
-        self.valorant_puuid = puuid
+        # Check if account already exists
+        for account in self.valorant_accounts:
+            if account['username'].lower() == username.lower() and account['tag'].lower() == tag.lower():
+                # Update existing account
+                account['puuid'] = puuid
+                if set_primary:
+                    self._set_primary_account(account)
+                self.last_updated = datetime.now(timezone.utc).isoformat()
+                return
+        
+        # If setting as primary, unmark other primary accounts
+        if set_primary:
+            for account in self.valorant_accounts:
+                account['primary'] = False
+        
+        # Add new account
+        new_account = {
+            'username': username,
+            'tag': tag,
+            'puuid': puuid,
+            'primary': set_primary or len(self.valorant_accounts) == 0
+        }
+        self.valorant_accounts.append(new_account)
+        
+        # Backward compatibility
+        if new_account['primary']:
+            self._valorant_username = username
+            self._valorant_tag = tag
+            self._valorant_puuid = puuid
+        
         self.last_updated = datetime.now(timezone.utc).isoformat()
+    
+    def _set_primary_account(self, primary_account: dict):
+        """Set an account as primary"""
+        for account in self.valorant_accounts:
+            account['primary'] = (account == primary_account)
+        
+        # Update backward compatibility properties
+        self._valorant_username = primary_account['username']
+        self._valorant_tag = primary_account['tag']
+        self._valorant_puuid = primary_account['puuid']
+    
+    def remove_valorant_account(self, username: str, tag: str) -> bool:
+        """Remove a specific Valorant account"""
+        for i, account in enumerate(self.valorant_accounts):
+            if account['username'].lower() == username.lower() and account['tag'].lower() == tag.lower():
+                was_primary = account['primary']
+                del self.valorant_accounts[i]
+                
+                # If removed account was primary, set first remaining as primary
+                if was_primary and self.valorant_accounts:
+                    self.valorant_accounts[0]['primary'] = True
+                    self._valorant_username = self.valorant_accounts[0]['username']
+                    self._valorant_tag = self.valorant_accounts[0]['tag']
+                    self._valorant_puuid = self.valorant_accounts[0]['puuid']
+                elif not self.valorant_accounts:
+                    # No accounts left
+                    self._valorant_username = None
+                    self._valorant_tag = None
+                    self._valorant_puuid = None
+                
+                self.last_updated = datetime.now(timezone.utc).isoformat()
+                return True
+        return False
+    
+    def get_primary_account(self) -> Optional[Dict[str, str]]:
+        """Get the primary Valorant account"""
+        for account in self.valorant_accounts:
+            if account['primary']:
+                return account
+        return self.valorant_accounts[0] if self.valorant_accounts else None
+    
+    def get_all_accounts(self) -> List[Dict[str, str]]:
+        """Get all Valorant accounts"""
+        return self.valorant_accounts.copy()
+    
+    def set_primary_account(self, username: str, tag: str) -> bool:
+        """Set a specific account as primary"""
+        for account in self.valorant_accounts:
+            if account['username'].lower() == username.lower() and account['tag'].lower() == tag.lower():
+                self._set_primary_account(account)
+                self.last_updated = datetime.now(timezone.utc).isoformat()
+                return True
+        return False
+    
+    # Backward compatibility properties
+    @property
+    def valorant_username(self):
+        return self._valorant_username
+    
+    @valorant_username.setter
+    def valorant_username(self, value):
+        self._valorant_username = value
+    
+    @property
+    def valorant_tag(self):
+        return self._valorant_tag
+    
+    @valorant_tag.setter
+    def valorant_tag(self, value):
+        self._valorant_tag = value
+    
+    @property
+    def valorant_puuid(self):
+        return self._valorant_puuid
+    
+    @valorant_puuid.setter
+    def valorant_puuid(self, value):
+        self._valorant_puuid = value
     
     def increment_session_count(self):
         """Increment the total session count"""
@@ -46,22 +154,49 @@ class UserData:
         """Convert to dictionary for JSON storage"""
         return {
             'discord_id': self.discord_id,
-            'valorant_username': self.valorant_username,
-            'valorant_tag': self.valorant_tag,
-            'valorant_puuid': self.valorant_puuid,
+            'valorant_accounts': self.valorant_accounts,
             'total_sessions': self.total_sessions,
             'total_games_played': self.total_games_played,
             'session_history': self.session_history,
-            'last_updated': self.last_updated
+            'last_updated': self.last_updated,
+            # Backward compatibility
+            'valorant_username': self.valorant_username,
+            'valorant_tag': self.valorant_tag,
+            'valorant_puuid': self.valorant_puuid
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'UserData':
         """Create UserData from dictionary"""
         user = cls(data['discord_id'])
-        user.valorant_username = data.get('valorant_username')
-        user.valorant_tag = data.get('valorant_tag')
-        user.valorant_puuid = data.get('valorant_puuid')
+        
+        # Handle new format with multiple accounts
+        if 'valorant_accounts' in data:
+            user.valorant_accounts = data.get('valorant_accounts', [])
+            
+            # Set backward compatibility properties from primary account
+            primary_account = user.get_primary_account()
+            if primary_account:
+                user._valorant_username = primary_account['username']
+                user._valorant_tag = primary_account['tag']
+                user._valorant_puuid = primary_account['puuid']
+        else:
+            # Handle old format - migrate to new format
+            old_username = data.get('valorant_username')
+            old_tag = data.get('valorant_tag')
+            old_puuid = data.get('valorant_puuid')
+            
+            if old_username and old_tag:
+                user.valorant_accounts = [{
+                    'username': old_username,
+                    'tag': old_tag,
+                    'puuid': old_puuid or f"legacy_{old_username}_{old_tag}",
+                    'primary': True
+                }]
+                user._valorant_username = old_username
+                user._valorant_tag = old_tag
+                user._valorant_puuid = old_puuid
+        
         user.total_sessions = data.get('total_sessions', 0)
         user.total_games_played = data.get('total_games_played', 0)
         user.session_history = data.get('session_history', [])

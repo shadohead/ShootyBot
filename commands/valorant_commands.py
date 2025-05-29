@@ -123,7 +123,7 @@ class ValorantCommands(commands.Cog):
         
         embed.add_field(
             name="📊 Available Features",
-            value="• Manual account linking (`/vmanuallink`)\n• Discord presence detection\n• Session stats tracking\n• In-game status display (🎮 emoji)",
+            value="• Link multiple accounts (`/vlink`, `/vaddalt`)\n• Account management (`/vlist`, `/vprimary`, `/vremove`)\n• Discord presence detection\n• Session stats tracking\n• In-game status display (🎮 emoji)",
             inline=False
         )
         
@@ -138,6 +138,152 @@ class ValorantCommands(commands.Cog):
             value="1. Get API key from [docs.henrikdev.xyz](https://docs.henrikdev.xyz)\n2. Add `HENRIK_API_KEY=your_key` to .env file\n3. Restart bot to enable `/vlink` verification",
             inline=False
         )
+        
+        await ctx.send(embed=embed)
+    
+    @commands.hybrid_command(
+        name="vaddalt",
+        description="Add an additional Valorant account (e.g., /vaddalt username tag)"
+    )
+    async def add_alt_account(self, ctx, username: str, tag: str):
+        """Add an additional Valorant account"""
+        try:
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                await ctx.defer()
+            
+            logging.info(f"Adding alt Valorant account {username}#{tag} for user {ctx.author.id}")
+            
+            # Get current accounts count
+            user_data = data_manager.get_user(ctx.author.id)
+            current_accounts = len(user_data.get_all_accounts())
+            
+            if current_accounts >= 5:  # Limit to 5 accounts per user
+                embed = discord.Embed(
+                    title="❌ Account Limit Reached",
+                    description="You can only link up to 5 Valorant accounts. Use `/vremove` to remove an account first.",
+                    color=0xff0000
+                )
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                return
+            
+            result = await valorant_client.link_account(ctx.author.id, username, tag)
+            
+            if result['success']:
+                # Link as non-primary account
+                user_data.link_valorant_account(result['username'], result['tag'], result['puuid'], set_primary=False)
+                data_manager.save_user(ctx.author.id)
+                
+                embed = discord.Embed(
+                    title="✅ Alt Account Added",
+                    description=f"Added **{result['username']}#{result['tag']}** as alternate account",
+                    color=0x00ff00
+                )
+                
+                if result.get('card', {}).get('large'):
+                    embed.set_thumbnail(url=result['card']['large'])
+            else:
+                embed = discord.Embed(
+                    title="❌ Failed to Add Alt Account",
+                    description=f"Could not add account: {result['error']}",
+                    color=0xff0000
+                )
+            
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                await ctx.followup.send(embed=embed)
+            else:
+                await ctx.send(embed=embed)
+                
+        except Exception as e:
+            error_msg = f"Error adding alt account: {str(e)}"
+            logging.error(f"Error in vaddalt command: {e}")
+            
+            try:
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(f"❌ {error_msg}")
+                else:
+                    await ctx.send(f"❌ {error_msg}")
+            except:
+                await ctx.send(f"❌ {error_msg}")
+    
+    @commands.hybrid_command(
+        name="vlist",
+        description="List all your linked Valorant accounts"
+    )
+    async def list_accounts(self, ctx, member: discord.Member = None):
+        """List all linked Valorant accounts"""
+        target_user = member or ctx.author
+        accounts = valorant_client.get_all_linked_accounts(target_user.id)
+        
+        if not accounts:
+            embed = discord.Embed(
+                title="📋 Valorant Accounts",
+                description=f"{target_user.display_name} has no linked Valorant accounts",
+                color=0x808080
+            )
+        else:
+            account_list = []
+            for i, account in enumerate(accounts, 1):
+                primary_marker = " 🌟" if account.get('primary', False) else ""
+                account_list.append(f"{i}. **{account['username']}#{account['tag']}**{primary_marker}")
+            
+            embed = discord.Embed(
+                title=f"📋 {target_user.display_name}'s Valorant Accounts",
+                description="\n".join(account_list),
+                color=0xff4655
+            )
+            
+            embed.set_footer(text="🌟 = Primary Account")
+        
+        await ctx.send(embed=embed)
+    
+    @commands.hybrid_command(
+        name="vprimary",
+        description="Set a Valorant account as your primary (e.g., /vprimary username tag)"
+    )
+    async def set_primary_account(self, ctx, username: str, tag: str):
+        """Set a Valorant account as primary"""
+        user_data = data_manager.get_user(ctx.author.id)
+        
+        if user_data.set_primary_account(username, tag):
+            data_manager.save_user(ctx.author.id)
+            embed = discord.Embed(
+                title="✅ Primary Account Set",
+                description=f"**{username}#{tag}** is now your primary Valorant account",
+                color=0x00ff00
+            )
+        else:
+            embed = discord.Embed(
+                title="❌ Account Not Found",
+                description=f"Could not find **{username}#{tag}** in your linked accounts",
+                color=0xff0000
+            )
+        
+        await ctx.send(embed=embed)
+    
+    @commands.hybrid_command(
+        name="vremove",
+        description="Remove a linked Valorant account (e.g., /vremove username tag)"
+    )
+    async def remove_account(self, ctx, username: str, tag: str):
+        """Remove a linked Valorant account"""
+        user_data = data_manager.get_user(ctx.author.id)
+        
+        if user_data.remove_valorant_account(username, tag):
+            data_manager.save_user(ctx.author.id)
+            embed = discord.Embed(
+                title="✅ Account Removed",
+                description=f"Removed **{username}#{tag}** from your linked accounts",
+                color=0x00ff00
+            )
+        else:
+            embed = discord.Embed(
+                title="❌ Account Not Found",
+                description=f"Could not find **{username}#{tag}** in your linked accounts",
+                color=0xff0000
+            )
         
         await ctx.send(embed=embed)
     
@@ -182,8 +328,9 @@ class ValorantCommands(commands.Cog):
         target_user = member or ctx.author
         user_data = data_manager.get_user(target_user.id)
         
-        # Get linked account info
-        linked_account = valorant_client.get_linked_account(target_user.id)
+        # Get linked accounts info
+        all_accounts = valorant_client.get_all_linked_accounts(target_user.id)
+        primary_account = valorant_client.get_linked_account(target_user.id)
         
         # Get recent sessions
         recent_sessions = data_manager.get_user_sessions(target_user.id, limit=5)
@@ -193,17 +340,30 @@ class ValorantCommands(commands.Cog):
             color=0xff4655
         )
         
-        # Add linked account info
-        if linked_account:
-            embed.add_field(
-                name="🎯 Linked Valorant Account",
-                value=f"{linked_account['username']}#{linked_account['tag']}",
-                inline=False
-            )
+        # Add linked accounts info
+        if all_accounts:
+            if len(all_accounts) == 1:
+                account = all_accounts[0]
+                embed.add_field(
+                    name="🎯 Valorant Account",
+                    value=f"{account['username']}#{account['tag']}",
+                    inline=False
+                )
+            else:
+                account_list = []
+                for account in all_accounts:
+                    primary_marker = " 🌟" if account.get('primary', False) else ""
+                    account_list.append(f"• {account['username']}#{account['tag']}{primary_marker}")
+                
+                embed.add_field(
+                    name=f"🎯 Valorant Accounts ({len(all_accounts)})",
+                    value="\n".join(account_list),
+                    inline=False
+                )
         else:
             embed.add_field(
-                name="🎯 Valorant Account",
-                value="Not linked (use `/vlink` to link)",
+                name="🎯 Valorant Accounts",
+                value="None linked (use `/vlink` to link)",
                 inline=False
             )
         
