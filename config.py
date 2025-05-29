@@ -45,7 +45,7 @@ MESSAGES = {
     "PAST_TIME": "Shooty session cannot be scheduled in the past.",
     "TOO_FAR_FUTURE": "Shooty session can only be scheduled up to 4 hrs in advance.",
     "INVALID_TIME": "Must be a valid time. Try format HH:MM",
-    "HELP_MESSAGE": "For command list and descriptions, type `/st` for primary and `/shooty` for secondary commands.",
+    "HELP_MESSAGE": "📖 For comprehensive help with all commands, use `/shootyhelp` (or try `/shootyhelp valorant`, `/shootyhelp admin`, `/shootyhelp reactions` for specific categories)",
     "NEED_GAME_NAME": "Set this channel's game name to see other queues with the same name ```$stsg <game name>```"
 }
 
