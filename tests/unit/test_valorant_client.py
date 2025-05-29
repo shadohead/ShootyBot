@@ -44,24 +44,32 @@ class TestAccountAPI:
     @patch('valorant_client.requests.get')
     @pytest.mark.asyncio
     async def test_get_account_info_success(self, mock_get, client):
-        """Test successful account info retrieval"""
+        """Test successful account info retrieval with real API response structure"""
         mock_response = Mock()
         mock_response.status_code = 200
+        # Based on actual Henrik API response structure
         mock_response.json.return_value = {
+            'status': 200,
             'data': {
-                'puuid': 'test-puuid-123',
+                'puuid': '4b1d3c29-1b87-4a8e-9c47-2d8e5f6c7a9b',
                 'name': 'TestPlayer',
                 'tag': 'TEST',
-                'card': {'id': 'card123'}
+                'card': {
+                    'small': 'https://media.valorantapi.com/playercards/small/card_id.png',
+                    'large': 'https://media.valorantapi.com/playercards/large/card_id.png',
+                    'wide': 'https://media.valorantapi.com/playercards/wide/card_id.png',
+                    'id': '9fb348bc-41a0-91ad-8a3e-818035c4e561'
+                }
             }
         }
         mock_get.return_value = mock_response
         
         result = await client.get_account_info('TestPlayer', 'TEST')
         
-        assert result['puuid'] == 'test-puuid-123'
+        assert result['puuid'] == '4b1d3c29-1b87-4a8e-9c47-2d8e5f6c7a9b'
         assert result['name'] == 'TestPlayer'
         assert result['tag'] == 'TEST'
+        assert result['card']['id'] == '9fb348bc-41a0-91ad-8a3e-818035c4e561'
         mock_get.assert_called_once_with(
             'https://api.henrikdev.xyz/valorant/v1/account/TestPlayer/TEST',
             headers=client.headers
@@ -427,13 +435,87 @@ class TestMatchHistory:
     @patch('valorant_client.requests.get')
     @pytest.mark.asyncio
     async def test_get_match_history_success(self, mock_get, client):
-        """Test successful match history retrieval"""
+        """Test successful match history retrieval with real API response structure"""
         mock_response = Mock()
         mock_response.status_code = 200
+        # Based on actual Henrik API v3 match response structure
         mock_response.json.return_value = {
+            'status': 200,
             'data': [
-                {'metadata': {'map': 'Bind', 'rounds_played': 24}},
-                {'metadata': {'map': 'Ascent', 'rounds_played': 25}}
+                {
+                    'metadata': {
+                        'map': 'Bind', 
+                        'game_version': '8.0.1.10222',
+                        'game_length': 1854000,
+                        'game_start': 1705123456789,
+                        'game_start_patched': '2024-01-13T10:30:56.789Z',
+                        'rounds_played': 24,
+                        'mode': 'Competitive',
+                        'mode_id': 'competitive',
+                        'queue': 'competitive',
+                        'season_id': 'e5f1c2a3-4b8d-5c9e-7f1a-2b3c4d5e6f7g',
+                        'platform': 'PC',
+                        'matchid': 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+                        'premier_info': {
+                            'tournament_id': None,
+                            'matchup_id': None
+                        }
+                    },
+                    'players': {
+                        'all_players': [],
+                        'red': [],
+                        'blue': []
+                    },
+                    'teams': {
+                        'red': {
+                            'has_won': False,
+                            'rounds_won': 11,
+                            'rounds_lost': 13
+                        },
+                        'blue': {
+                            'has_won': True,
+                            'rounds_won': 13,
+                            'rounds_lost': 11
+                        }
+                    }
+                },
+                {
+                    'metadata': {
+                        'map': 'Ascent', 
+                        'game_version': '8.0.1.10222',
+                        'game_length': 2156000,
+                        'game_start': 1705120000000,
+                        'game_start_patched': '2024-01-13T09:33:20.000Z',
+                        'rounds_played': 25,
+                        'mode': 'Competitive',
+                        'mode_id': 'competitive',
+                        'queue': 'competitive',
+                        'season_id': 'e5f1c2a3-4b8d-5c9e-7f1a-2b3c4d5e6f7g',
+                        'platform': 'PC',
+                        'matchid': 'b2c3d4e5-f6g7-8901-bcde-f23456789012',
+                        'premier_info': {
+                            'tournament_id': None,
+                            'matchup_id': None
+                        }
+                    },
+                    'players': {
+                        'all_players': [],
+                        'red': [],
+                        'blue': []
+                    },
+                    'teams': {
+                        'red': {
+                            'has_won': True,
+                            'rounds_won': 13,
+                            'rounds_lost': 12
+                        },
+                        'blue': {
+                            'has_won': False,
+                            'rounds_won': 12,
+                            'rounds_lost': 13
+                        }
+                    }
+                }
             ]
         }
         mock_get.return_value = mock_response
@@ -481,69 +563,181 @@ class TestPlayerStats:
     
     @pytest.fixture
     def sample_matches(self):
-        """Create sample match data for testing"""
+        """Create realistic sample match data based on actual Henrik API structure"""
         return [
             {
                 'is_available': True,
                 'metadata': {
                     'map': 'Bind',
-                    'rounds_played': 24
+                    'game_version': '8.0.1.10222',
+                    'game_length': 1854000,
+                    'game_start': 1705123456789,
+                    'game_start_patched': '2024-01-13T10:30:56.789Z',
+                    'rounds_played': 24,
+                    'mode': 'Competitive',
+                    'mode_id': 'competitive',
+                    'queue': 'competitive',
+                    'season_id': 'e5f1c2a3-4b8d-5c9e-7f1a-2b3c4d5e6f7g',
+                    'platform': 'PC',
+                    'matchid': 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
                 },
                 'players': {
                     'all_players': [
                         {
                             'puuid': 'test-puuid-123',
-                            'character': 'Sage',
+                            'name': 'TestPlayer',
+                            'tag': 'TEST',
                             'team': 'Red',
+                            'level': 127,
+                            'character': 'Sage',
+                            'tier': 15,
                             'stats': {
+                                'score': 4500,
                                 'kills': 18,
                                 'deaths': 12,
                                 'assists': 6,
-                                'headshots': 8,
-                                'bodyshots': 10,
-                                'legshots': 2,
-                                'score': 4500
+                                'bodyshots': 142,
+                                'headshots': 28,
+                                'legshots': 12
                             },
-                            'damage_made': 3200,
-                            'damage_received': 2800
+                            'ability_casts': {
+                                'c_cast': 3,
+                                'q_cast': 8,
+                                'e_cast': 12,
+                                'x_cast': 1
+                            },
+                            'assets': {
+                                'card': {
+                                    'small': 'https://media.valorantapi.com/playercards/small/card_id.png',
+                                    'large': 'https://media.valorantapi.com/playercards/large/card_id.png',
+                                    'wide': 'https://media.valorantapi.com/playercards/wide/card_id.png'
+                                },
+                                'agent': {
+                                    'small': 'https://media.valorantapi.com/agents/sage/displayicon.png',
+                                    'full': 'https://media.valorantapi.com/agents/sage/fullportrait.png',
+                                    'bust': 'https://media.valorantapi.com/agents/sage/bustportrait.png'
+                                }
+                            },
+                            'behaviour': {
+                                'afk_rounds': 0,
+                                'friendly_fire': {
+                                    'incoming': 0,
+                                    'outgoing': 24
+                                },
+                                'rounds_in_spawn': 0
+                            },
+                            'platform': {
+                                'type': 'PC',
+                                'os': {
+                                    'name': 'Windows',
+                                    'version': '10.0.19045.4170'
+                                }
+                            },
+                            'damage_made': 3247,
+                            'damage_received': 2834
                         }
-                    ]
+                    ],
+                    'red': [],
+                    'blue': []
                 },
                 'teams': {
                     'red': {
-                        'has_won': True
+                        'has_won': True,
+                        'rounds_won': 13,
+                        'rounds_lost': 11
+                    },
+                    'blue': {
+                        'has_won': False,
+                        'rounds_won': 11,
+                        'rounds_lost': 13
                     }
                 }
             },
             {
                 'is_available': True,
                 'metadata': {
-                    'map': 'Ascent', 
-                    'rounds_played': 25
+                    'map': 'Ascent',
+                    'game_version': '8.0.1.10222',
+                    'game_length': 2156000,
+                    'game_start': 1705120000000,
+                    'game_start_patched': '2024-01-13T09:33:20.000Z',
+                    'rounds_played': 25,
+                    'mode': 'Competitive',
+                    'mode_id': 'competitive',
+                    'queue': 'competitive',
+                    'season_id': 'e5f1c2a3-4b8d-5c9e-7f1a-2b3c4d5e6f7g',
+                    'platform': 'PC',
+                    'matchid': 'b2c3d4e5-f6g7-8901-bcde-f23456789012'
                 },
                 'players': {
                     'all_players': [
                         {
                             'puuid': 'test-puuid-123',
-                            'character': 'Jett',
+                            'name': 'TestPlayer',
+                            'tag': 'TEST',
                             'team': 'Blue',
+                            'level': 127,
+                            'character': 'Jett',
+                            'tier': 15,
                             'stats': {
+                                'score': 5200,
                                 'kills': 22,
                                 'deaths': 15,
                                 'assists': 4,
-                                'headshots': 12,
-                                'bodyshots': 10,
-                                'legshots': 0,
-                                'score': 5200
+                                'bodyshots': 168,
+                                'headshots': 41,
+                                'legshots': 8
                             },
-                            'damage_made': 3800,
-                            'damage_received': 3200
+                            'ability_casts': {
+                                'c_cast': 2,
+                                'q_cast': 6,
+                                'e_cast': 15,
+                                'x_cast': 2
+                            },
+                            'assets': {
+                                'card': {
+                                    'small': 'https://media.valorantapi.com/playercards/small/card_id.png',
+                                    'large': 'https://media.valorantapi.com/playercards/large/card_id.png',
+                                    'wide': 'https://media.valorantapi.com/playercards/wide/card_id.png'
+                                },
+                                'agent': {
+                                    'small': 'https://media.valorantapi.com/agents/jett/displayicon.png',
+                                    'full': 'https://media.valorantapi.com/agents/jett/fullportrait.png',
+                                    'bust': 'https://media.valorantapi.com/agents/jett/bustportrait.png'
+                                }
+                            },
+                            'behaviour': {
+                                'afk_rounds': 0,
+                                'friendly_fire': {
+                                    'incoming': 12,
+                                    'outgoing': 8
+                                },
+                                'rounds_in_spawn': 0
+                            },
+                            'platform': {
+                                'type': 'PC',
+                                'os': {
+                                    'name': 'Windows',
+                                    'version': '10.0.19045.4170'
+                                }
+                            },
+                            'damage_made': 3842,
+                            'damage_received': 3198
                         }
-                    ]
+                    ],
+                    'red': [],
+                    'blue': []
                 },
                 'teams': {
+                    'red': {
+                        'has_won': True,
+                        'rounds_won': 13,
+                        'rounds_lost': 12
+                    },
                     'blue': {
-                        'has_won': False
+                        'has_won': False,
+                        'rounds_won': 12,
+                        'rounds_lost': 13
                     }
                 }
             }
@@ -567,11 +761,13 @@ class TestPlayerStats:
         assert result['total_deaths'] == 27
         assert result['total_assists'] == 10
         
-        # Calculated stats
+        # Calculated stats with realistic values
         assert result['win_rate'] == 50.0
         assert result['avg_kills'] == 20.0
         assert result['avg_deaths'] == 13.5
         assert result['kd_ratio'] == pytest.approx(40/27, rel=1e-2)
+        assert result['total_damage_made'] == 3247 + 3842
+        assert result['total_damage_received'] == 2834 + 3198
     
     def test_calculate_player_stats_zero_deaths(self, client):
         """Test stats calculation with zero deaths"""
@@ -615,8 +811,8 @@ class TestPlayerStats:
         """Test headshot percentage calculation"""
         result = client.calculate_player_stats(sample_matches, 'test-puuid-123')
         
-        total_shots = 20 + 20 + 2  # headshots + bodyshots + legshots
-        expected_hs_percentage = (20 / total_shots) * 100
+        total_shots = (28 + 41) + (142 + 168) + (12 + 8)  # headshots + bodyshots + legshots from both matches
+        expected_hs_percentage = ((28 + 41) / total_shots) * 100
         
         assert result['headshot_percentage'] == pytest.approx(expected_hs_percentage, rel=1e-2)
     
