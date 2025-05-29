@@ -12,5 +12,5 @@ source /home/pi/.bashrc
 
 # If the screen session is not running, start it
 if [ $? -eq 1 ]; then
-    /usr/bin/screen -dmS ${SCREEN_NAME} /usr/bin/python3 /home/pi/ShootyBot/ShootyBot/ShootyBot.py
+    /usr/bin/screen -dmS ${SCREEN_NAME} /usr/bin/python3 /home/pi/ShootyBot/ShootyBot/bot.py
 fi
