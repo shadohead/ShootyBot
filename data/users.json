@@ -4,12 +4,13 @@
     "valorant_username": null,
     "valorant_tag": null,
     "valorant_puuid": null,
-    "total_sessions": 2,
+    "total_sessions": 3,
     "total_games_played": 0,
     "session_history": [
       "930683485314773034_1748516365",
-      "930683485314773034_1748516378"
+      "930683485314773034_1748516378",
+      "930683485314773034_1748516544"
     ],
-    "last_updated": "2025-05-29T10:59:42.508713+00:00"
+    "last_updated": "2025-05-29T11:02:29.062567+00:00"
   }
 }

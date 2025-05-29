@@ -16,7 +16,8 @@ class ValorantClient:
         
         # Add API key if provided (for Advanced tier)
         if HENRIK_API_KEY:
-            self.headers['Authorization'] = f'Bearer {HENRIK_API_KEY}'
+            # Try different authorization formats
+            self.headers['Authorization'] = HENRIK_API_KEY
             logging.info("Using Henrik API with Advanced key")
         else:
             logging.info("Using Henrik API Basic tier (no key)")
@@ -32,6 +33,9 @@ class ValorantClient:
                 if 'data' in data:
                     return data['data']
                 return data
+            elif response.status_code == 401:
+                logging.error("Henrik API now requires authentication. API key needed.")
+                return None
             elif response.status_code == 404:
                 logging.warning(f"Valorant account not found: {username}#{tag}")
                 return None
@@ -77,7 +81,7 @@ class ValorantClient:
         if not account_info:
             return {
                 'success': False,
-                'error': 'Account not found or API error'
+                'error': 'Henrik API now requires authentication. Please get an API key from https://docs.henrikdev.xyz and add it to your .env file as HENRIK_API_KEY=your_key_here'
             }
         
         # Extract relevant data

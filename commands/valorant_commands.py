@@ -17,31 +17,74 @@ class ValorantCommands(commands.Cog):
     )
     async def link_valorant(self, ctx, username: str, tag: str):
         """Link a Valorant account to Discord user"""
-        await ctx.defer()
-        
-        logging.info(f"Linking Valorant account {username}#{tag} for user {ctx.author.id}")
-        
-        result = await valorant_client.link_account(ctx.author.id, username, tag)
-        
-        if result['success']:
+        try:
+            # Use defer() for slash commands, but check if it exists first
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                await ctx.defer()
+            
+            logging.info(f"Linking Valorant account {username}#{tag} for user {ctx.author.id}")
+            
+            result = await valorant_client.link_account(ctx.author.id, username, tag)
+            
+            if result['success']:
+                embed = discord.Embed(
+                    title="✅ Valorant Account Linked",
+                    description=f"Successfully linked **{result['username']}#{result['tag']}**",
+                    color=0x00ff00
+                )
+                
+                # Add player card if available
+                if result.get('card', {}).get('large'):
+                    embed.set_thumbnail(url=result['card']['large'])
+            else:
+                embed = discord.Embed(
+                    title="❌ Link Failed",
+                    description=f"Could not link account: {result['error']}",
+                    color=0xff0000
+                )
+            
+            # Use appropriate send method based on context type
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                await ctx.followup.send(embed=embed)
+            else:
+                await ctx.send(embed=embed)
+                
+        except Exception as e:
+            error_msg = f"Error linking account: {str(e)}"
+            logging.error(f"Error in vlink command: {e}")
+            
+            # Send error message using appropriate method
+            try:
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(f"❌ {error_msg}")
+                else:
+                    await ctx.send(f"❌ {error_msg}")
+            except:
+                await ctx.send(f"❌ {error_msg}")
+    
+    @commands.hybrid_command(
+        name="vmanuallink", 
+        description="Manually link Valorant account without API verification"
+    )
+    async def manual_link_valorant(self, ctx, username: str, tag: str):
+        """Manually link a Valorant account (no verification)"""
+        try:
+            # Store account info without API verification
+            user_data = data_manager.get_user(ctx.author.id)
+            user_data.link_valorant_account(username, tag, f"manual_{username}_{tag}")
+            data_manager.save_user(ctx.author.id)
+            
             embed = discord.Embed(
-                title="✅ Valorant Account Linked",
-                description=f"Successfully linked **{result['username']}#{result['tag']}**",
+                title="✅ Valorant Account Linked (Manual)",
+                description=f"Manually linked **{username}#{tag}**\n*Note: Account not verified due to API limitations*",
                 color=0x00ff00
             )
             
-            # Add player card if available
-            if result.get('card', {}).get('large'):
-                embed.set_thumbnail(url=result['card']['large'])
+            await ctx.send(embed=embed)
             
-            await ctx.followup.send(embed=embed)
-        else:
-            embed = discord.Embed(
-                title="❌ Link Failed",
-                description=f"Could not link account: {result['error']}",
-                color=0xff0000
-            )
-            await ctx.followup.send(embed=embed)
+        except Exception as e:
+            logging.error(f"Error in manual link: {e}")
+            await ctx.send(f"❌ Error linking account: {str(e)}")
     
     @commands.hybrid_command(
         name="vunlink",
@@ -63,6 +106,38 @@ class ValorantCommands(commands.Cog):
                 description="Could not unlink your account",
                 color=0xff0000
             )
+        
+        await ctx.send(embed=embed)
+    
+    @commands.hybrid_command(
+        name="vinfo",
+        description="Information about Valorant integration and API status"
+    )
+    async def valorant_info(self, ctx):
+        """Show information about Valorant integration"""
+        embed = discord.Embed(
+            title="🎯 Valorant Integration Info",
+            description="Current status of Valorant features in ShootyBot",
+            color=0xff4655
+        )
+        
+        embed.add_field(
+            name="📊 Available Features",
+            value="• Manual account linking (`/vmanuallink`)\n• Discord presence detection\n• Session stats tracking\n• In-game status display (🎮 emoji)",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="⚠️ API Status",
+            value="Henrik's Valorant API now requires authentication.\nAccount verification is temporarily disabled.\nUse `/vmanuallink` for now.",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🔑 To Enable Full Features",
+            value="1. Get API key from [docs.henrikdev.xyz](https://docs.henrikdev.xyz)\n2. Add `HENRIK_API_KEY=your_key` to .env file\n3. Restart bot to enable `/vlink` verification",
+            inline=False
+        )
         
         await ctx.send(embed=embed)
     
