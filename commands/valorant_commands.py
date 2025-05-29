@@ -4,16 +4,18 @@ from discord.ext import commands
 from valorant_client import valorant_client
 from data_manager import data_manager
 from datetime import datetime, timezone
+from match_tracker import get_match_tracker
 
 class ValorantCommands(commands.Cog):
     """Commands for Valorant integration and account management"""
     
     def __init__(self, bot):
         self.bot = bot
+        self.match_tracker = get_match_tracker(bot)
     
     @commands.hybrid_command(
-        name="vlink",
-        description="Link your Valorant account (e.g., /vlink username tag)"
+        name="shootylink",
+        description="Link your Valorant account (e.g., /shootylink username tag)"
     )
     async def link_valorant(self, ctx, username: str, tag: str):
         """Link a Valorant account to Discord user"""
@@ -51,7 +53,7 @@ class ValorantCommands(commands.Cog):
                 
         except Exception as e:
             error_msg = f"Error linking account: {str(e)}"
-            logging.error(f"Error in vlink command: {e}")
+            logging.error(f"Error in shootylink command: {e}")
             
             # Send error message using appropriate method
             try:
@@ -63,7 +65,7 @@ class ValorantCommands(commands.Cog):
                 await ctx.send(f"❌ {error_msg}")
     
     @commands.hybrid_command(
-        name="vmanuallink", 
+        name="shootymanuallink", 
         description="Manually link Valorant account without API verification"
     )
     async def manual_link_valorant(self, ctx, username: str, tag: str):
@@ -87,7 +89,7 @@ class ValorantCommands(commands.Cog):
             await ctx.send(f"❌ Error linking account: {str(e)}")
     
     @commands.hybrid_command(
-        name="vunlink",
+        name="shootyunlink",
         description="Unlink your Valorant account"
     )
     async def unlink_valorant(self, ctx):
@@ -110,7 +112,7 @@ class ValorantCommands(commands.Cog):
         await ctx.send(embed=embed)
     
     @commands.hybrid_command(
-        name="vinfo",
+        name="shootyinfo",
         description="Information about Valorant integration and API status"
     )
     async def valorant_info(self, ctx):
@@ -123,27 +125,27 @@ class ValorantCommands(commands.Cog):
         
         embed.add_field(
             name="📊 Available Features",
-            value="• Link multiple accounts (`/vlink`, `/vaddalt`)\n• Account management (`/vlist`, `/vprimary`, `/vremove`)\n• Discord presence detection\n• Session stats tracking\n• In-game status display (🎮 emoji)",
+            value="• Link multiple accounts (`/shootylink`, `/shootyaddalt`)\n• Account management (`/shootylist`, `/shootyprimary`, `/shootyremove`)\n• Discord presence detection\n• Session stats tracking\n• In-game status display (🎮 emoji)",
             inline=False
         )
         
         embed.add_field(
             name="⚠️ API Status",
-            value="Henrik's Valorant API now requires authentication.\nAccount verification is temporarily disabled.\nUse `/vmanuallink` for now.",
+            value="Henrik's Valorant API now requires authentication.\nAccount verification is temporarily disabled.\nUse `/shootymanuallink` for now.",
             inline=False
         )
         
         embed.add_field(
             name="🔑 To Enable Full Features",
-            value="1. Get API key from [docs.henrikdev.xyz](https://docs.henrikdev.xyz)\n2. Add `HENRIK_API_KEY=your_key` to .env file\n3. Restart bot to enable `/vlink` verification",
+            value="1. Get API key from [docs.henrikdev.xyz](https://docs.henrikdev.xyz)\n2. Add `HENRIK_API_KEY=your_key` to .env file\n3. Restart bot to enable `/shootylink` verification",
             inline=False
         )
         
         await ctx.send(embed=embed)
     
     @commands.hybrid_command(
-        name="vaddalt",
-        description="Add an additional Valorant account (e.g., /vaddalt username tag)"
+        name="shootyaddalt",
+        description="Add an additional Valorant account (e.g., /shootyaddalt username tag)"
     )
     async def add_alt_account(self, ctx, username: str, tag: str):
         """Add an additional Valorant account"""
@@ -160,7 +162,7 @@ class ValorantCommands(commands.Cog):
             if current_accounts >= 5:  # Limit to 5 accounts per user
                 embed = discord.Embed(
                     title="❌ Account Limit Reached",
-                    description="You can only link up to 5 Valorant accounts. Use `/vremove` to remove an account first.",
+                    description="You can only link up to 5 Valorant accounts. Use `/shootyremove` to remove an account first.",
                     color=0xff0000
                 )
                 if hasattr(ctx, 'interaction') and ctx.interaction:
@@ -198,7 +200,7 @@ class ValorantCommands(commands.Cog):
                 
         except Exception as e:
             error_msg = f"Error adding alt account: {str(e)}"
-            logging.error(f"Error in vaddalt command: {e}")
+            logging.error(f"Error in shootyaddalt command: {e}")
             
             try:
                 if hasattr(ctx, 'interaction') and ctx.interaction:
@@ -209,7 +211,7 @@ class ValorantCommands(commands.Cog):
                 await ctx.send(f"❌ {error_msg}")
     
     @commands.hybrid_command(
-        name="vlist",
+        name="shootylist",
         description="List all your linked Valorant accounts"
     )
     async def list_accounts(self, ctx, member: discord.Member = None):
@@ -240,8 +242,8 @@ class ValorantCommands(commands.Cog):
         await ctx.send(embed=embed)
     
     @commands.hybrid_command(
-        name="vprimary",
-        description="Set a Valorant account as your primary (e.g., /vprimary username tag)"
+        name="shootyprimary",
+        description="Set a Valorant account as your primary (e.g., /shootyprimary username tag)"
     )
     async def set_primary_account(self, ctx, username: str, tag: str):
         """Set a Valorant account as primary"""
@@ -264,8 +266,8 @@ class ValorantCommands(commands.Cog):
         await ctx.send(embed=embed)
     
     @commands.hybrid_command(
-        name="vremove",
-        description="Remove a linked Valorant account (e.g., /vremove username tag)"
+        name="shootyremove",
+        description="Remove a linked Valorant account (e.g., /shootyremove username tag)"
     )
     async def remove_account(self, ctx, username: str, tag: str):
         """Remove a linked Valorant account"""
@@ -288,7 +290,7 @@ class ValorantCommands(commands.Cog):
         await ctx.send(embed=embed)
     
     @commands.hybrid_command(
-        name="vwho",
+        name="shootywho",
         description="Show who is currently playing Valorant in this server"
     )
     async def who_playing(self, ctx):
@@ -320,7 +322,7 @@ class ValorantCommands(commands.Cog):
         await ctx.send(embed=embed)
     
     @commands.hybrid_command(
-        name="vstats",
+        name="shootystats",
         description="Show your Shooty session stats"
     )
     async def valorant_stats(self, ctx, member: discord.Member = None):
@@ -363,7 +365,7 @@ class ValorantCommands(commands.Cog):
         else:
             embed.add_field(
                 name="🎯 Valorant Accounts",
-                value="None linked (use `/vlink` to link)",
+                value="None linked (use `/shootylink` to link)",
                 inline=False
             )
         
@@ -403,7 +405,7 @@ class ValorantCommands(commands.Cog):
         await ctx.send(embed=embed)
     
     @commands.hybrid_command(
-        name="vstatsdetailed",
+        name="shootystatsdetailed",
         description="Show detailed Valorant match statistics (KDA, KAST, headshot %, etc.)"
     )
     async def detailed_valorant_stats(self, ctx, member: discord.Member = None, account_name: str = None):
@@ -498,9 +500,19 @@ class ValorantCommands(commands.Cog):
             # Performance Stats
             embed.add_field(
                 name="📊 Performance",
-                value=f"**KD Ratio:** {stats.get('kd_ratio', 0):.2f}\n"
+                value=f"**ACS:** {stats.get('acs', 0):.0f}\n"
+                      f"**KD Ratio:** {stats.get('kd_ratio', 0):.2f}\n"
                       f"**KDA Ratio:** {stats.get('kda_ratio', 0):.2f}\n"
-                      f"**KAST:** {stats.get('kast_percentage', 0):.1f}%\n"
+                      f"**KAST:** {stats.get('kast_percentage', 0):.1f}%",
+                inline=True
+            )
+            
+            # Damage Stats
+            embed.add_field(
+                name="💥 Damage",
+                value=f"**ADR:** {stats.get('adr', 0):.0f}\n"
+                      f"**DD (Δ):** {stats.get('damage_delta_per_round', 0):+.0f}\n"
+                      f"**Damage/Game:** {stats.get('avg_damage_made', 0):.0f}\n"
                       f"**Headshot %:** {stats.get('headshot_percentage', 0):.1f}%",
                 inline=True
             )
@@ -553,7 +565,8 @@ class ValorantCommands(commands.Cog):
                 recent_list = []
                 for match in recent_matches:
                     result = "W" if match['won'] else "L"
-                    recent_list.append(f"{result} {match['kills']}/{match['deaths']}/{match['assists']} ({match['agent']})")
+                    adr_match = match['damage_made'] / max(match['rounds_played'], 1) if match['rounds_played'] > 0 else 0
+                    recent_list.append(f"{result} {match['kills']}/{match['deaths']}/{match['assists']} | {adr_match:.0f} ADR ({match['agent']})")
                 embed.add_field(
                     name="📋 Recent Matches",
                     value="\n".join(recent_list),
@@ -569,7 +582,7 @@ class ValorantCommands(commands.Cog):
                 
         except Exception as e:
             error_msg = f"Error fetching detailed stats: {str(e)}"
-            logging.error(f"Error in vstatsdetailed command: {e}")
+            logging.error(f"Error in shootystatsdetailed command: {e}")
             
             try:
                 if hasattr(ctx, 'interaction') and ctx.interaction:
@@ -580,7 +593,7 @@ class ValorantCommands(commands.Cog):
                 await ctx.send(f"❌ {error_msg}")
     
     @commands.hybrid_command(
-        name="vleaderboard",
+        name="shootyleaderboard",
         description="Show server leaderboard for Valorant stats"
     )
     async def valorant_leaderboard(self, ctx, stat_type: str = "kda"):
@@ -609,7 +622,7 @@ class ValorantCommands(commands.Cog):
         
         embed.add_field(
             name="🚧 Under Development",
-            value="The leaderboard feature is being developed.\nFor now, use `/vstatsdetailed` to see individual stats!",
+            value="The leaderboard feature is being developed.\nFor now, use `/shootystatsdetailed` to see individual stats!",
             inline=False
         )
         
@@ -619,7 +632,7 @@ class ValorantCommands(commands.Cog):
             await ctx.send(embed=embed)
     
     @commands.hybrid_command(
-        name="vhistory",
+        name="shootyhistory",
         description="Show session history for this channel"
     )
     async def session_history(self, ctx, limit: int = 5):
@@ -660,6 +673,118 @@ class ValorantCommands(commands.Cog):
                 )
         
         await ctx.send(embed=embed)
+    
+    @commands.hybrid_command(
+        name="shootylastmatch",
+        description="Show stats from the most recent match involving Discord members"
+    )
+    async def last_match(self, ctx, member: discord.Member = None):
+        """Show the most recent match stats"""
+        try:
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                await ctx.defer()
+            
+            # Use manual check to find recent match
+            embed = await self.match_tracker.manual_check_recent_match(ctx.guild, member)
+            
+            if embed:
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+            else:
+                no_match_embed = discord.Embed(
+                    title="🔍 No Recent Matches",
+                    description="No recent matches found with Discord members from this server.",
+                    color=0x808080
+                )
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(embed=no_match_embed)
+                else:
+                    await ctx.send(embed=no_match_embed)
+                    
+        except Exception as e:
+            error_msg = f"Error fetching last match: {str(e)}"
+            logging.error(f"Error in shootylastmatch command: {e}")
+            
+            try:
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(f"❌ {error_msg}")
+                else:
+                    await ctx.send(f"❌ {error_msg}")
+            except:
+                await ctx.send(f"❌ {error_msg}")
+    
+    @commands.hybrid_command(
+        name="shootymatchtracker",
+        description="Control the automatic match tracking system"
+    )
+    @commands.has_permissions(administrator=True)
+    async def match_tracker_control(self, ctx, action: str = "status"):
+        """Control match tracking (start/stop/status)"""
+        try:
+            if action.lower() == "start":
+                if not self.match_tracker.running:
+                    # Start the tracker in background
+                    self.bot.loop.create_task(self.match_tracker.start_tracking())
+                    embed = discord.Embed(
+                        title="✅ Match Tracker Started",
+                        description="Auto-detection of completed matches is now enabled.\nThe bot will check every 5 minutes for new matches.",
+                        color=0x00ff00
+                    )
+                else:
+                    embed = discord.Embed(
+                        title="ℹ️ Already Running",
+                        description="Match tracker is already running.",
+                        color=0x808080
+                    )
+                    
+            elif action.lower() == "stop":
+                self.match_tracker.stop_tracking()
+                embed = discord.Embed(
+                    title="⏹️ Match Tracker Stopped",
+                    description="Auto-detection has been disabled.\nYou can still use `/shootylastmatch` for manual checks.",
+                    color=0xff4655
+                )
+                
+            else:  # status
+                status = "🟢 Running" if self.match_tracker.running else "🔴 Stopped"
+                tracked_count = len(self.match_tracker.tracked_members)
+                
+                embed = discord.Embed(
+                    title="📊 Match Tracker Status",
+                    color=0x00ff00 if self.match_tracker.running else 0xff0000
+                )
+                embed.add_field(
+                    name="Status",
+                    value=status,
+                    inline=True
+                )
+                embed.add_field(
+                    name="Tracked Members",
+                    value=str(tracked_count),
+                    inline=True
+                )
+                embed.add_field(
+                    name="Check Interval",
+                    value=f"{self.match_tracker.check_interval // 60} minutes",
+                    inline=True
+                )
+                
+                if ctx.guild.id in self.match_tracker.recent_matches:
+                    recent_count = len(self.match_tracker.recent_matches[ctx.guild.id])
+                    embed.add_field(
+                        name="Recent Matches (Last 2h)",
+                        value=str(recent_count),
+                        inline=True
+                    )
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            error_msg = f"Error controlling match tracker: {str(e)}"
+            logging.error(f"Error in shootymatchtracker command: {e}")
+            await ctx.send(f"❌ {error_msg}")
 
 async def setup(bot):
     await bot.add_cog(ValorantCommands(bot))

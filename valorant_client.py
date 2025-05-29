@@ -192,6 +192,8 @@ class ValorantClient:
             'total_legshots': 0,
             'total_score': 0,
             'total_rounds': 0,
+            'total_damage_made': 0,
+            'total_damage_received': 0,
             'kast_rounds': 0,  # Rounds with Kill, Assist, Survived, or Traded
             'maps_played': {},
             'agents_played': {},
@@ -226,6 +228,10 @@ class ValorantClient:
             legshots = player_stats.get('legshots', 0)
             score = player_stats.get('score', 0)
             
+            # Damage stats
+            damage_made = player_data.get('damage_made', 0)
+            damage_received = player_data.get('damage_received', 0)
+            
             stats['total_kills'] += kills
             stats['total_deaths'] += deaths
             stats['total_assists'] += assists
@@ -233,6 +239,8 @@ class ValorantClient:
             stats['total_bodyshots'] += bodyshots
             stats['total_legshots'] += legshots
             stats['total_score'] += score
+            stats['total_damage_made'] += damage_made
+            stats['total_damage_received'] += damage_received
             
             # Win/Loss calculation
             player_team = player_data.get('team', 'Red')
@@ -253,14 +261,18 @@ class ValorantClient:
             agent_name = player_data.get('character', 'Unknown')
             stats['agents_played'][agent_name] = stats['agents_played'].get(agent_name, 0) + 1
             
-            # Rounds for KAST calculation (approximation)
+            # Rounds for KAST calculation
             rounds_played = match.get('metadata', {}).get('rounds_played', 0)
             stats['total_rounds'] += rounds_played
             
-            # Simplified KAST: rounds where player had kills or assists
-            # (We can't calculate exact KAST without round-by-round data)
-            if kills > 0 or assists > 0:
-                stats['kast_rounds'] += min(rounds_played, kills + assists)
+            # KAST calculation: estimated rounds where player had impact
+            # Since we don't have round-by-round data, we estimate based on KDA contribution
+            # This is an approximation: assume player had impact in proportion to their team contribution
+            if rounds_played > 0 and (kills > 0 or assists > 0):
+                # Estimate KAST rounds based on kill/assist participation
+                # Assume each kill/assist represents impact in that round, capped by total rounds
+                estimated_kast_rounds = min(rounds_played, kills + assists)
+                stats['kast_rounds'] += estimated_kast_rounds
             
             # Store recent match info
             stats['recent_matches'].append({
@@ -270,6 +282,9 @@ class ValorantClient:
                 'deaths': deaths,
                 'assists': assists,
                 'score': score,
+                'damage_made': damage_made,
+                'damage_received': damage_received,
+                'rounds_played': rounds_played,
                 'won': teams.get(player_team.lower(), {}).get('has_won', False) if player_team.lower() in teams else False
             })
         
@@ -280,6 +295,25 @@ class ValorantClient:
             stats['avg_deaths'] = stats['total_deaths'] / stats['total_matches']
             stats['avg_assists'] = stats['total_assists'] / stats['total_matches']
             stats['avg_score'] = stats['total_score'] / stats['total_matches']
+            stats['avg_damage_made'] = stats['total_damage_made'] / stats['total_matches']
+            stats['avg_damage_received'] = stats['total_damage_received'] / stats['total_matches']
+            
+            # Calculate DD (Damage Delta) - difference per round between damage dealt and received
+            if stats['total_rounds'] > 0:
+                stats['damage_delta_per_round'] = (stats['total_damage_made'] - stats['total_damage_received']) / stats['total_rounds']
+            else:
+                stats['damage_delta_per_round'] = 0
+            
+            # Calculate ACS (Average Combat Score) - simplified Valorant formula
+            # ACS is roughly: (ADR + (K/D ratio * 50) + (First Kills * 5)) but we'll use a simplified version
+            # Basic formula: (Damage per round + Kill contribution + Assist contribution)
+            if stats['total_rounds'] > 0:
+                adr = stats['total_damage_made'] / stats['total_rounds']
+                kill_contribution = (stats['total_kills'] / stats['total_rounds']) * 70  # Kills are worth ~70 ACS per round
+                assist_contribution = (stats['total_assists'] / stats['total_rounds']) * 25  # Assists worth ~25 ACS per round
+                stats['acs'] = adr + kill_contribution + assist_contribution
+            else:
+                stats['acs'] = 0
             
             if stats['total_deaths'] > 0:
                 stats['kd_ratio'] = stats['total_kills'] / stats['total_deaths']
@@ -296,8 +330,11 @@ class ValorantClient:
             
             if stats['total_rounds'] > 0:
                 stats['kast_percentage'] = (stats['kast_rounds'] / stats['total_rounds']) * 100
+                # Calculate ADR (Average Damage per Round)
+                stats['adr'] = stats['total_damage_made'] / stats['total_rounds']
             else:
                 stats['kast_percentage'] = 0
+                stats['adr'] = 0
         
         return stats
 

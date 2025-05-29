@@ -5,6 +5,7 @@ from config import *
 from context_manager import context_manager
 from handlers.message_formatter import DEFAULT_MSG
 from handlers.reaction_handler import add_react_options
+from match_tracker import get_match_tracker
 
 # Configure logging
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper()))
@@ -28,6 +29,14 @@ async def on_ready():
             logging.info(f"Synced {len(synced)} slash commands to {guild.name}")
         except Exception as e:
             logging.error(f"Failed to sync commands to {guild.name}: {e}")
+    
+    # Start the match tracker
+    try:
+        match_tracker = get_match_tracker(bot)
+        bot.loop.create_task(match_tracker.start_tracking())
+        logging.info("🎯 Match tracker started successfully")
+    except Exception as e:
+        logging.error(f"Failed to start match tracker: {e}")
     
     logging.info("🤖 Bot is ready and all commands are synced!")
 
