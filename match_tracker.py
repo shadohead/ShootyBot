@@ -286,21 +286,44 @@ class MatchTracker:
             member_list.append(f"• **{member.display_name}**: {kda}")
         
         embed.add_field(
-            name=f"👥 Discord Members ({len(discord_members)})",
+            name=f"👥 Discord Squad ({len(discord_members)})",
             value="\n".join(member_list),
             inline=False
         )
         
-        # Add fun highlights
+        # Add enhanced fun highlights
         if fun_stats['highlights']:
-            highlights_text = "\n".join([f"🎉 {highlight}" for highlight in fun_stats['highlights']])
+            # Limit to top 6 highlights to avoid embed limits
+            top_highlights = fun_stats['highlights'][:6]
+            highlights_text = "\n".join([f"{highlight}" for highlight in top_highlights])
             embed.add_field(
-                name="✨ Match Highlights",
+                name="🎆 Epic Match Highlights",
                 value=highlights_text,
                 inline=False
             )
+            
+            # Add a motivational footer based on performance
+            total_kills = sum(dm['player_data'].get('stats', {}).get('kills', 0) for dm in discord_members)
+            if total_kills >= 50:
+                embed.add_field(
+                    name="🔥 Match Rating",
+                    value="**LEGENDARY PERFORMANCE!** 🏆 This match will be remembered!",
+                    inline=False
+                )
+            elif total_kills >= 35:
+                embed.add_field(
+                    name="⚡ Match Rating",
+                    value="**INCREDIBLE GAME!** 🎆 Outstanding teamwork!",
+                    inline=False
+                )
+            elif total_kills >= 25:
+                embed.add_field(
+                    name="💪 Match Rating",
+                    value="**SOLID MATCH!** 🎉 Good coordination!",
+                    inline=False
+                )
         
-        embed.set_footer(text="Auto-detected completed match")
+        embed.set_footer(text="🤖 Auto-detected match • ShootyBot tracking your epic moments!")
         return embed
     
     def _calculate_fun_match_stats(self, match_data: dict, discord_members: List[Dict]) -> Dict:
@@ -335,51 +358,122 @@ class MatchTracker:
                 'agent': player_data.get('character', 'Unknown')
             })
         
-        # Calculate highlights
+        # Calculate enhanced highlights
         if len(player_stats) >= 2:
-            # Top Fragger
+            # Top Fragger with more flair
             top_fragger = max(player_stats, key=lambda x: x['kills'])
-            stats['highlights'].append(f"**Top Fragger**: {top_fragger['member'].display_name} ({top_fragger['kills']} kills)")
+            if top_fragger['kills'] >= 25:
+                stats['highlights'].append(f"🔥🔥 **DEMON MODE**: {top_fragger['member'].display_name} ({top_fragger['kills']} kills) - GOING NUCLEAR!")
+            elif top_fragger['kills'] >= 20:
+                stats['highlights'].append(f"🔥 **Top Fragger**: {top_fragger['member'].display_name} ({top_fragger['kills']} kills) - ON FIRE!")
+            else:
+                stats['highlights'].append(f"🎯 **Top Fragger**: {top_fragger['member'].display_name} ({top_fragger['kills']} kills)")
             
-            # Most Damage
+            # Most Damage with context
             top_damage = max(player_stats, key=lambda x: x['damage_made'])
-            stats['highlights'].append(f"**Damage Dealer**: {top_damage['member'].display_name} ({top_damage['damage_made']} damage)")
+            if top_damage['damage_made'] >= 4000:
+                stats['highlights'].append(f"💥 **DAMAGE MONSTER**: {top_damage['member'].display_name} ({top_damage['damage_made']:,} damage) - ANNIHILATION!")
+            elif top_damage['damage_made'] >= 3000:
+                stats['highlights'].append(f"💥 **Damage Dealer**: {top_damage['member'].display_name} ({top_damage['damage_made']:,} damage)")
+            else:
+                stats['highlights'].append(f"💪 **Damage Leader**: {top_damage['member'].display_name} ({top_damage['damage_made']:,} damage)")
             
-            # Best KDA
+            # Best KDA with performance tiers
             kda_players = [(p, (p['kills'] + p['assists']) / max(p['deaths'], 1)) for p in player_stats]
             best_kda = max(kda_players, key=lambda x: x[1])
-            stats['highlights'].append(f"**Best KDA**: {best_kda[0]['member'].display_name} ({best_kda[1]:.2f})")
+            if best_kda[1] >= 3.0:
+                stats['highlights'].append(f"👑 **KDA KING**: {best_kda[0]['member'].display_name} ({best_kda[1]:.2f} KDA) - UNTOUCHABLE!")
+            elif best_kda[1] >= 2.0:
+                stats['highlights'].append(f"⭐ **KDA Master**: {best_kda[0]['member'].display_name} ({best_kda[1]:.2f} KDA)")
+            else:
+                stats['highlights'].append(f"💪 **Best KDA**: {best_kda[0]['member'].display_name} ({best_kda[1]:.2f} KDA)")
             
-            # Fun/weird stats
+            # Enhanced fun/weird stats
             total_shots = sum(p['headshots'] + p['bodyshots'] + p['legshots'] for p in player_stats)
             if total_shots > 0:
-                # Most leg shots
+                # Most leg shots with humor
                 leg_shot_king = max(player_stats, key=lambda x: x['legshots'])
                 if leg_shot_king['legshots'] > 0:
                     leg_percentage = (leg_shot_king['legshots'] / max(leg_shot_king['headshots'] + leg_shot_king['bodyshots'] + leg_shot_king['legshots'], 1)) * 100
                     if leg_percentage > self.LEG_SHOT_THRESHOLD_PERCENT:
-                        stats['highlights'].append(f"**Leg Shot Specialist**: {leg_shot_king['member'].display_name} ({leg_shot_king['legshots']} leg shots, {leg_percentage:.1f}%)")
+                        if leg_percentage > 25:
+                            stats['highlights'].append(f"🦵 **LEG DESTROYER**: {leg_shot_king['member'].display_name} ({leg_shot_king['legshots']} leg shots, {leg_percentage:.1f}%) - Ankle Biter!")
+                        else:
+                            stats['highlights'].append(f"🦵 **Leg Shot Specialist**: {leg_shot_king['member'].display_name} ({leg_shot_king['legshots']} leg shots, {leg_percentage:.1f}%)")
                 
-                # Headshot accuracy
+                # Enhanced headshot accuracy
                 headshot_ace = max(player_stats, key=lambda x: x['headshots'] / max(x['headshots'] + x['bodyshots'] + x['legshots'], 1))
                 total_shots_player = headshot_ace['headshots'] + headshot_ace['bodyshots'] + headshot_ace['legshots']
                 if total_shots_player > 20:  # Only if they took enough shots
                     hs_percentage = (headshot_ace['headshots'] / total_shots_player) * 100
-                    if hs_percentage > self.HEADSHOT_THRESHOLD_PERCENT:
-                        stats['highlights'].append(f"**Headshot Machine**: {headshot_ace['member'].display_name} ({hs_percentage:.1f}% headshot accuracy)")
+                    if hs_percentage > 40:
+                        stats['highlights'].append(f"🎯 **HEADSHOT DEMON**: {headshot_ace['member'].display_name} ({hs_percentage:.1f}% HS) - INSANE AIM!")
+                    elif hs_percentage > self.HEADSHOT_THRESHOLD_PERCENT:
+                        stats['highlights'].append(f"🎯 **Headshot Machine**: {headshot_ace['member'].display_name} ({hs_percentage:.1f}% HS accuracy)")
+                
+                # Support player recognition
+                assist_king = max(player_stats, key=lambda x: x['assists'])
+                if assist_king['assists'] >= 10:
+                    stats['highlights'].append(f"🤝 **SUPPORT HERO**: {assist_king['member'].display_name} ({assist_king['assists']} assists) - Team Player!")
+                elif assist_king['assists'] >= 7:
+                    stats['highlights'].append(f"🤝 **Team Player**: {assist_king['member'].display_name} ({assist_king['assists']} assists)")
+                
+                # Multi-kill detection (estimated)
+                potential_ace = max(player_stats, key=lambda x: x['kills'])
+                if potential_ace['kills'] >= 25:  # Very high kill count suggests aces
+                    stats['highlights'].append(f"🔥 **ACE ALERT**: {potential_ace['member'].display_name} likely got an ACE! ({potential_ace['kills']} total kills)")
+                elif potential_ace['kills'] >= 20:
+                    stats['highlights'].append(f"⚡ **MULTIKILL MASTER**: {potential_ace['member'].display_name} probably got some 4Ks! ({potential_ace['kills']} kills)")
             
-            # Damage taken vs dealt
+            # Enhanced damage analysis
             tank_player = max(player_stats, key=lambda x: x['damage_received'])
-            if tank_player['damage_received'] > self.HIGH_DAMAGE_THRESHOLD:
-                stats['highlights'].append(f"**Human Shield**: {tank_player['member'].display_name} ({tank_player['damage_received']} damage taken)")
+            glass_cannon = None
             
-            # Random fun fact
-            random_facts = [
-                f"**Total Team Damage**: {sum(p['damage_made'] for p in player_stats):,}",
-                f"**Combined K/D**: {sum(p['kills'] for p in player_stats)}/{sum(p['deaths'] for p in player_stats)}",
-                f"**Agents Played**: {', '.join(set(p['agent'] for p in player_stats))}"
+            # Find glass cannon (high damage dealt, high damage taken)
+            for p in player_stats:
+                if p['damage_made'] > 3000 and p['damage_received'] > self.HIGH_DAMAGE_THRESHOLD:
+                    glass_cannon = p
+                    break
+            
+            if glass_cannon:
+                ratio = glass_cannon['damage_made'] / max(glass_cannon['damage_received'], 1)
+                stats['highlights'].append(f"💎 **GLASS CANNON**: {glass_cannon['member'].display_name} ({glass_cannon['damage_made']:,}D dealt, {glass_cannon['damage_received']:,}D taken)")
+            elif tank_player['damage_received'] > self.HIGH_DAMAGE_THRESHOLD:
+                if tank_player['damage_received'] > 4000:
+                    stats['highlights'].append(f"🛡️ **HUMAN FORTRESS**: {tank_player['member'].display_name} ({tank_player['damage_received']:,} damage tanked) - UNMOVABLE!")
+                else:
+                    stats['highlights'].append(f"🛡️ **Human Shield**: {tank_player['member'].display_name} ({tank_player['damage_received']:,} damage taken)")
+            
+            # Economic efficiency (low deaths with good damage)
+            efficient_player = min(player_stats, key=lambda x: x['deaths'] / max(x['damage_made'], 1))
+            if efficient_player['deaths'] <= 12 and efficient_player['damage_made'] >= 2500:
+                efficiency = efficient_player['damage_made'] / max(efficient_player['deaths'], 1)
+                stats['highlights'].append(f"💰 **ECONOMY MASTER**: {efficient_player['member'].display_name} ({efficiency:.0f} damage per death) - Efficient!")
+            
+            # Match intensity metrics
+            total_team_damage = sum(p['damage_made'] for p in player_stats)
+            total_team_kills = sum(p['kills'] for p in player_stats)
+            total_team_deaths = sum(p['deaths'] for p in player_stats)
+            
+            # Fun match facts with more personality
+            fun_facts = [
+                f"💥 **Team Devastation**: {total_team_damage:,} total damage dealt!",
+                f"⚔️ **Combined Scoreline**: {total_team_kills}/{total_team_deaths} K/D",
+                f"🦸 **Agent Squad**: {', '.join(set(p['agent'] for p in player_stats))}"
             ]
-            stats['highlights'].extend(random.sample(random_facts, min(1, len(random_facts))))
+            
+            # Add intensity rating
+            if total_team_damage > 15000:
+                fun_facts.append("🔥 **INTENSITY**: OFF THE CHARTS!")
+            elif total_team_damage > 10000:
+                fun_facts.append("⚡ **INTENSITY**: High-octane match!")
+            
+            # Add agent diversity fun fact
+            unique_agents = set(p['agent'] for p in player_stats)
+            if len(unique_agents) == len(player_stats):
+                fun_facts.append(f"🌈 **AGENT DIVERSITY**: Perfect variety! ({len(unique_agents)} different agents)")
+            
+            stats['highlights'].extend(random.sample(fun_facts, min(2, len(fun_facts))))
         
         return stats
     
@@ -418,7 +512,11 @@ class MatchTracker:
                 discord_members_in_match = await self._find_discord_members_in_match(guild, match)
                 
                 if len(discord_members_in_match) >= 1:
-                    return await self._create_match_embed(match, discord_members_in_match)
+                    embed = await self._create_match_embed(match, discord_members_in_match)
+                    # Add manual check indicator
+                    if embed:
+                        embed.set_footer(text="🔍 Manual match lookup • ShootyBot")
+                    return embed
                     
             except Exception as e:
                 logging.error(f"Error in manual check for {member.display_name}: {e}")

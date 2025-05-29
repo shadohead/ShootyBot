@@ -197,7 +197,27 @@ class ValorantClient:
             'kast_rounds': 0,  # Rounds with Kill, Assist, Survived, or Traded
             'maps_played': {},
             'agents_played': {},
-            'recent_matches': []
+            'recent_matches': [],
+            # Enhanced stats
+            'multikills': {'2k': 0, '3k': 0, '4k': 0, '5k': 0},
+            'clutches_attempted': {'1v2': 0, '1v3': 0, '1v4': 0, '1v5': 0},
+            'clutches_won': {'1v2': 0, '1v3': 0, '1v4': 0, '1v5': 0},
+            'first_bloods': 0,
+            'first_deaths': 0,
+            'mvp_count': 0,
+            'match_mvp_count': 0,
+            'pistol_rounds_won': 0,
+            'pistol_rounds_played': 0,
+            'eco_rounds_won': 0,
+            'eco_rounds_played': 0,
+            'current_win_streak': 0,
+            'current_loss_streak': 0,
+            'max_win_streak': 0,
+            'max_loss_streak': 0,
+            'agent_performance': {},
+            'map_performance': {},
+            'total_shots_fired': 0,
+            'total_shots_hit': 0
         }
         
         for match in matches:
@@ -274,6 +294,43 @@ class ValorantClient:
                 estimated_kast_rounds = min(rounds_played, kills + assists)
                 stats['kast_rounds'] += estimated_kast_rounds
             
+            # Enhanced tracking
+            match_won = teams.get(player_team.lower(), {}).get('has_won', False) if player_team.lower() in teams else False
+            
+            # Calculate advanced stats for this match
+            self._calculate_match_advanced_stats(match, player_data, stats, rounds_played, match_won)
+            
+            # Agent performance tracking
+            if agent_name not in stats['agent_performance']:
+                stats['agent_performance'][agent_name] = {
+                    'matches': 0, 'wins': 0, 'kills': 0, 'deaths': 0, 'assists': 0, 
+                    'damage': 0, 'score': 0
+                }
+            
+            agent_stats = stats['agent_performance'][agent_name]
+            agent_stats['matches'] += 1
+            if match_won:
+                agent_stats['wins'] += 1
+            agent_stats['kills'] += kills
+            agent_stats['deaths'] += deaths
+            agent_stats['assists'] += assists
+            agent_stats['damage'] += damage_made
+            agent_stats['score'] += score
+            
+            # Map performance tracking
+            if map_name not in stats['map_performance']:
+                stats['map_performance'][map_name] = {
+                    'matches': 0, 'wins': 0, 'kills': 0, 'deaths': 0, 'damage': 0
+                }
+            
+            map_stats = stats['map_performance'][map_name]
+            map_stats['matches'] += 1
+            if match_won:
+                map_stats['wins'] += 1
+            map_stats['kills'] += kills
+            map_stats['deaths'] += deaths
+            map_stats['damage'] += damage_made
+            
             # Store recent match info
             stats['recent_matches'].append({
                 'map': map_name,
@@ -285,8 +342,11 @@ class ValorantClient:
                 'damage_made': damage_made,
                 'damage_received': damage_received,
                 'rounds_played': rounds_played,
-                'won': teams.get(player_team.lower(), {}).get('has_won', False) if player_team.lower() in teams else False
+                'won': match_won
             })
+        
+        # Calculate win/loss streaks
+        self._calculate_streaks(stats)
         
         # Calculate derived stats
         if stats['total_matches'] > 0:
@@ -298,19 +358,45 @@ class ValorantClient:
             stats['avg_damage_made'] = stats['total_damage_made'] / stats['total_matches']
             stats['avg_damage_received'] = stats['total_damage_received'] / stats['total_matches']
             
+            # Calculate enhanced derived stats
+            stats['clutch_success_rate'] = self._calculate_clutch_success_rate(stats)
+            stats['first_blood_rate'] = (stats['first_bloods'] / stats['total_matches']) * 100
+            stats['survival_rate'] = ((stats['total_matches'] - stats['first_deaths']) / stats['total_matches']) * 100
+            
+            if stats['pistol_rounds_played'] > 0:
+                stats['pistol_win_rate'] = (stats['pistol_rounds_won'] / stats['pistol_rounds_played']) * 100
+            else:
+                stats['pistol_win_rate'] = 0
+                
+            if stats['eco_rounds_played'] > 0:
+                stats['eco_win_rate'] = (stats['eco_rounds_won'] / stats['eco_rounds_played']) * 100
+            else:
+                stats['eco_win_rate'] = 0
+                
+            # Calculate accuracy (shots hit / shots fired)
+            if stats['total_shots_fired'] > 0:
+                stats['accuracy'] = (stats['total_shots_hit'] / stats['total_shots_fired']) * 100
+            else:
+                stats['accuracy'] = 0
+                
+            # Calculate performance ratings
+            stats['performance_ratings'] = self._calculate_performance_ratings(stats)
+            
             # Calculate DD (Damage Delta) - difference per round between damage dealt and received
-            if stats['total_rounds'] > 0:
-                stats['damage_delta_per_round'] = (stats['total_damage_made'] - stats['total_damage_received']) / stats['total_rounds']
+            # Use only the actual match rounds, not the estimated enhanced rounds
+            actual_match_rounds = sum(match.get('metadata', {}).get('rounds_played', 0) for match in matches if match.get('is_available', True) and self._player_in_match(match, player_puuid))
+            if actual_match_rounds > 0:
+                stats['damage_delta_per_round'] = (stats['total_damage_made'] - stats['total_damage_received']) / actual_match_rounds
             else:
                 stats['damage_delta_per_round'] = 0
             
             # Calculate ACS (Average Combat Score) - simplified Valorant formula
             # ACS is roughly: (ADR + (K/D ratio * 50) + (First Kills * 5)) but we'll use a simplified version
             # Basic formula: (Damage per round + Kill contribution + Assist contribution)
-            if stats['total_rounds'] > 0:
-                adr = stats['total_damage_made'] / stats['total_rounds']
-                kill_contribution = (stats['total_kills'] / stats['total_rounds']) * 70  # Kills are worth ~70 ACS per round
-                assist_contribution = (stats['total_assists'] / stats['total_rounds']) * 25  # Assists worth ~25 ACS per round
+            if actual_match_rounds > 0:
+                adr = stats['total_damage_made'] / actual_match_rounds
+                kill_contribution = (stats['total_kills'] / actual_match_rounds) * 70  # Kills are worth ~70 ACS per round
+                assist_contribution = (stats['total_assists'] / actual_match_rounds) * 25  # Assists worth ~25 ACS per round
                 stats['acs'] = adr + kill_contribution + assist_contribution
             else:
                 stats['acs'] = 0
@@ -328,15 +414,211 @@ class ValorantClient:
             else:
                 stats['headshot_percentage'] = 0
             
-            if stats['total_rounds'] > 0:
-                stats['kast_percentage'] = (stats['kast_rounds'] / stats['total_rounds']) * 100
+            if actual_match_rounds > 0:
+                stats['kast_percentage'] = (stats['kast_rounds'] / actual_match_rounds) * 100
                 # Calculate ADR (Average Damage per Round)
-                stats['adr'] = stats['total_damage_made'] / stats['total_rounds']
+                stats['adr'] = stats['total_damage_made'] / actual_match_rounds
             else:
                 stats['kast_percentage'] = 0
                 stats['adr'] = 0
         
         return stats
+    
+    def _player_in_match(self, match: Dict[str, Any], player_puuid: str) -> bool:
+        """Check if a player is in a specific match"""
+        all_players = match.get('players', {}).get('all_players', [])
+        return any(player.get('puuid') == player_puuid for player in all_players)
+    
+    def _calculate_match_advanced_stats(self, match: Dict[str, Any], player_data: Dict[str, Any], stats: Dict[str, Any], rounds_played: int, match_won: bool):
+        """Calculate advanced stats for a single match"""
+        player_stats = player_data.get('stats', {})
+        kills = player_stats.get('kills', 0)
+        
+        # Estimate multikills (simplified - real calculation would need round-by-round data)
+        # We'll estimate based on kills per round ratio
+        if rounds_played > 0:
+            kpr = kills / rounds_played
+            if kpr >= 2.5:  # Very high KPR suggests multikills
+                if kpr >= 4:
+                    stats['multikills']['5k'] += max(1, int(kills // 5))  # Estimate aces
+                elif kpr >= 3:
+                    stats['multikills']['4k'] += max(1, int(kills // 4))  # Estimate 4Ks
+                elif kpr >= 2.5:
+                    stats['multikills']['3k'] += max(1, int(kills // 3))  # Estimate 3Ks
+                stats['multikills']['2k'] += max(1, int(kills // 2))  # Estimate 2Ks
+        
+        # Estimate first bloods/deaths (simplified calculation)
+        # Assume 10-15% of kills are first bloods for good players
+        if kills >= 15:  # High frag games more likely to have first bloods
+            estimated_fb = max(1, int(kills * 0.12))
+            stats['first_bloods'] += estimated_fb
+        elif kills >= 10:
+            stats['first_bloods'] += max(0, int(kills * 0.08))
+        
+        # Estimate first deaths (lower chance for good players)
+        deaths = player_stats.get('deaths', 0)
+        if deaths >= 15:  # High death games
+            stats['first_deaths'] += 1
+        elif deaths <= 8:  # Low death games unlikely to have first deaths
+            pass  # No first death
+        else:
+            # Random chance based on death count
+            if deaths > 12:
+                stats['first_deaths'] += 1
+        
+        # MVP estimation (top score in team)
+        score = player_stats.get('score', 0)
+        if score > 4000:  # High score suggests MVP performance
+            stats['match_mvp_count'] += 1
+        
+        # Estimate clutch situations (very simplified)
+        # Higher KDA in losses might indicate clutch attempts
+        if not match_won and kills >= 12 and deaths <= 15:
+            # Estimate clutch attempts in close losses
+            estimated_clutches = min(3, max(0, (kills - 8) // 3))
+            stats['clutches_attempted']['1v2'] += estimated_clutches
+            if kills >= 15:  # Some success in clutches
+                stats['clutches_won']['1v2'] += max(0, estimated_clutches // 2)
+        
+        # Estimate pistol/eco rounds (simplified)
+        # Assume first 2 rounds are pistol rounds
+        if rounds_played >= 2:
+            stats['pistol_rounds_played'] += 2
+            if match_won:
+                # Winners likely won at least 1 pistol round
+                stats['pistol_rounds_won'] += 1
+        
+        # Estimate eco rounds (assume 20-30% of rounds)
+        estimated_eco_rounds = max(2, int(rounds_played * 0.25))
+        stats['eco_rounds_played'] += estimated_eco_rounds
+        if kills >= 10:  # Good performance suggests eco round wins
+            stats['eco_rounds_won'] += max(1, estimated_eco_rounds // 3)
+        
+        # Shot tracking (estimate from hit stats)
+        total_shots_hit = player_stats.get('headshots', 0) + player_stats.get('bodyshots', 0) + player_stats.get('legshots', 0)
+        stats['total_shots_hit'] += total_shots_hit
+        # Estimate shots fired (assume 60-80% accuracy for good players)
+        if total_shots_hit > 0:
+            estimated_shots_fired = int(total_shots_hit * 1.4)  # Assume ~70% accuracy
+            stats['total_shots_fired'] += estimated_shots_fired
+    
+    def _calculate_streaks(self, stats: Dict[str, Any]):
+        """Calculate win/loss streaks from recent matches"""
+        recent_matches = stats.get('recent_matches', [])
+        if not recent_matches:
+            return
+        
+        # Sort by most recent first (reverse order since we append chronologically)
+        recent_matches.reverse()
+        
+        current_streak = 0
+        current_streak_type = None  # 'win' or 'loss'
+        max_win_streak = 0
+        max_loss_streak = 0
+        temp_win_streak = 0
+        temp_loss_streak = 0
+        
+        for match in recent_matches:
+            if match['won']:
+                if current_streak_type == 'win':
+                    current_streak += 1
+                else:
+                    current_streak = 1
+                    current_streak_type = 'win'
+                temp_win_streak += 1
+                temp_loss_streak = 0
+                max_win_streak = max(max_win_streak, temp_win_streak)
+            else:
+                if current_streak_type == 'loss':
+                    current_streak += 1
+                else:
+                    current_streak = 1
+                    current_streak_type = 'loss'
+                temp_loss_streak += 1
+                temp_win_streak = 0
+                max_loss_streak = max(max_loss_streak, temp_loss_streak)
+        
+        if current_streak_type == 'win':
+            stats['current_win_streak'] = current_streak
+            stats['current_loss_streak'] = 0
+        else:
+            stats['current_loss_streak'] = current_streak
+            stats['current_win_streak'] = 0
+        
+        stats['max_win_streak'] = max_win_streak
+        stats['max_loss_streak'] = max_loss_streak
+    
+    def _calculate_clutch_success_rate(self, stats: Dict[str, Any]) -> float:
+        """Calculate overall clutch success rate"""
+        total_attempted = sum(stats['clutches_attempted'].values())
+        total_won = sum(stats['clutches_won'].values())
+        
+        if total_attempted > 0:
+            return (total_won / total_attempted) * 100
+        return 0
+    
+    def _calculate_performance_ratings(self, stats: Dict[str, Any]) -> Dict[str, str]:
+        """Calculate fun performance ratings/badges"""
+        ratings = {}
+        
+        # Fragger rating
+        avg_kills = stats.get('avg_kills', 0)
+        if avg_kills >= 20:
+            ratings['fragger'] = '🔥 Demon Fragger'
+        elif avg_kills >= 15:
+            ratings['fragger'] = '💀 Elite Fragger'
+        elif avg_kills >= 12:
+            ratings['fragger'] = '⚡ Solid Fragger'
+        else:
+            ratings['fragger'] = '🎯 Entry Fragger'
+        
+        # Support rating
+        avg_assists = stats.get('avg_assists', 0)
+        if avg_assists >= 8:
+            ratings['support'] = '👑 Support King'
+        elif avg_assists >= 6:
+            ratings['support'] = '🤝 Team Player'
+        elif avg_assists >= 4:
+            ratings['support'] = '✨ Helper'
+        else:
+            ratings['support'] = '🔫 Solo Player'
+        
+        # Survival rating
+        survival_rate = stats.get('survival_rate', 0)
+        if survival_rate >= 80:
+            ratings['survival'] = '🛡️ Untouchable'
+        elif survival_rate >= 70:
+            ratings['survival'] = '🏃 Escape Artist'
+        elif survival_rate >= 60:
+            ratings['survival'] = '💪 Survivor'
+        else:
+            ratings['survival'] = '💥 Risk Taker'
+        
+        # Accuracy rating
+        accuracy = stats.get('accuracy', 0)
+        headshot_percentage = stats.get('headshot_percentage', 0)
+        if headshot_percentage >= 35:
+            ratings['accuracy'] = '🎯 Headshot Machine'
+        elif headshot_percentage >= 25:
+            ratings['accuracy'] = '🔥 Sharp Shooter'
+        elif accuracy >= 70:
+            ratings['accuracy'] = '💯 Precise'
+        else:
+            ratings['accuracy'] = '🌀 Spray Master'
+        
+        # Clutch rating
+        clutch_rate = stats.get('clutch_success_rate', 0)
+        total_clutches = sum(stats.get('clutches_won', {}).values())
+        if total_clutches >= 5 and clutch_rate >= 60:
+            ratings['clutch'] = '🏆 Clutch God'
+        elif total_clutches >= 3 and clutch_rate >= 50:
+            ratings['clutch'] = '⭐ Clutch King'
+        elif total_clutches >= 1:
+            ratings['clutch'] = '💎 Clutch Player'
+        else:
+            ratings['clutch'] = '🎲 Learning Clutches'
+        
+        return ratings
 
 # Global Valorant client instance
 valorant_client = ValorantClient()

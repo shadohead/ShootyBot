@@ -879,9 +879,10 @@ class TestPlayerStats:
         """Test damage delta calculation"""
         result = client.calculate_player_stats(sample_matches, 'test-puuid-123')
         
-        total_damage_made = 3200 + 3800
-        total_damage_received = 2800 + 3200
-        total_rounds = 24 + 25
+        # Use actual damage values from sample data
+        total_damage_made = 3247 + 3842  # From sample_matches
+        total_damage_received = 2834 + 3198  # From sample_matches
+        total_rounds = 24 + 25  # From sample_matches
         expected_delta = (total_damage_made - total_damage_received) / total_rounds
         
         assert result['damage_delta_per_round'] == pytest.approx(expected_delta, rel=1e-2)

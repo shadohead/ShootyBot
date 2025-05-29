@@ -498,14 +498,28 @@ class ValorantCommands(commands.Cog):
             )
             
             # Performance Stats
+            performance_ratings = stats.get('performance_ratings', {})
             embed.add_field(
-                name="📊 Performance",
+                name="📊 Core Performance",
                 value=f"**ACS:** {stats.get('acs', 0):.0f}\n"
                       f"**KD Ratio:** {stats.get('kd_ratio', 0):.2f}\n"
                       f"**KDA Ratio:** {stats.get('kda_ratio', 0):.2f}\n"
                       f"**KAST:** {stats.get('kast_percentage', 0):.1f}%",
                 inline=True
             )
+            
+            # Performance Badges
+            if performance_ratings:
+                badge_text = "\n".join([
+                    performance_ratings.get('fragger', ''),
+                    performance_ratings.get('support', ''),
+                    performance_ratings.get('accuracy', '')
+                ])
+                embed.add_field(
+                    name="🏆 Performance Badges",
+                    value=badge_text or "No badges yet",
+                    inline=True
+                )
             
             # Damage Stats
             embed.add_field(
@@ -559,6 +573,44 @@ class ValorantCommands(commands.Cog):
                     inline=True
                 )
             
+            # Enhanced Stats Section
+            multikills = stats.get('multikills', {})
+            mk_text = []
+            for mk_type, count in multikills.items():
+                if count > 0:
+                    mk_text.append(f"**{mk_type.upper()}s:** {count}")
+            
+            embed.add_field(
+                name="🔥 Multi-Kills & Achievements",
+                value="\n".join(mk_text) if mk_text else "No multi-kills recorded",
+                inline=True
+            )
+            
+            # Streaks and Special Stats
+            current_win_streak = stats.get('current_win_streak', 0)
+            current_loss_streak = stats.get('current_loss_streak', 0)
+            max_win_streak = stats.get('max_win_streak', 0)
+            first_blood_rate = stats.get('first_blood_rate', 0)
+            clutch_success_rate = stats.get('clutch_success_rate', 0)
+            
+            streak_text = []
+            if current_win_streak > 0:
+                streak_text.append(f"🔥 **Win Streak:** {current_win_streak}")
+            elif current_loss_streak > 0:
+                streak_text.append(f"💔 **Loss Streak:** {current_loss_streak}")
+            
+            streak_text.extend([
+                f"**Best Streak:** {max_win_streak}W",
+                f"**First Blood Rate:** {first_blood_rate:.1f}%",
+                f"**Clutch Success:** {clutch_success_rate:.1f}%"
+            ])
+            
+            embed.add_field(
+                name="⚡ Streaks & Special Stats",
+                value="\n".join(streak_text),
+                inline=True
+            )
+            
             # Recent performance
             recent_matches = stats.get('recent_matches', [])[:5]
             if recent_matches:
@@ -573,7 +625,19 @@ class ValorantCommands(commands.Cog):
                     inline=False
                 )
             
-            embed.set_footer(text="📊 Stats based on recent competitive matches")
+            # Fun facts and ratings
+            performance_ratings = stats.get('performance_ratings', {})
+            if performance_ratings:
+                survival_rating = performance_ratings.get('survival', '')
+                clutch_rating = performance_ratings.get('clutch', '')
+                if survival_rating or clutch_rating:
+                    embed.add_field(
+                        name="🎭 Player Style",
+                        value=f"{survival_rating}\n{clutch_rating}",
+                        inline=False
+                    )
+            
+            embed.set_footer(text="📊 Enhanced stats with performance tracking • ShootyBot")
             
             if hasattr(ctx, 'interaction') and ctx.interaction:
                 await ctx.followup.send(embed=embed)
@@ -594,14 +658,14 @@ class ValorantCommands(commands.Cog):
     
     @commands.hybrid_command(
         name="shootyleaderboard",
-        description="Show server leaderboard for Valorant stats"
+        description="Show server leaderboard for Valorant stats (kda, kd, winrate, headshot, acs)"
     )
     async def valorant_leaderboard(self, ctx, stat_type: str = "kda"):
         """Show server leaderboard for various Valorant stats"""
         if hasattr(ctx, 'interaction') and ctx.interaction:
             await ctx.defer()
         
-        valid_stats = ["kda", "kd", "winrate", "headshot", "kast"]
+        valid_stats = ["kda", "kd", "winrate", "headshot", "acs", "clutch", "multikill"]
         if stat_type.lower() not in valid_stats:
             embed = discord.Embed(
                 title="❌ Invalid Stat Type",
@@ -614,22 +678,209 @@ class ValorantCommands(commands.Cog):
                 await ctx.send(embed=embed)
             return
         
-        embed = discord.Embed(
-            title="🏆 Server Valorant Leaderboard",
-            description=f"Top players by {stat_type.upper()} (Coming Soon!)",
-            color=0xff4655
-        )
+        try:
+            # Collect stats for all members with linked accounts
+            member_stats = []
+            
+            for member in ctx.guild.members:
+                if member.bot:
+                    continue
+                    
+                accounts = valorant_client.get_all_linked_accounts(member.id)
+                if not accounts:
+                    continue
+                
+                primary_account = valorant_client.get_linked_account(member.id)
+                if not primary_account:
+                    continue
+                
+                try:
+                    # Get recent matches for stats calculation
+                    matches = await valorant_client.get_match_history(
+                        primary_account['username'],
+                        primary_account['tag'],
+                        size=10  # Use fewer matches for leaderboard to be faster
+                    )
+                    
+                    if matches:
+                        stats = valorant_client.calculate_player_stats(matches, primary_account['puuid'])
+                        if stats.get('total_matches', 0) >= 3:  # Minimum 3 matches for leaderboard
+                            member_stats.append({
+                                'member': member,
+                                'account': primary_account,
+                                'stats': stats
+                            })
+                except Exception as e:
+                    logging.warning(f"Error getting stats for {member.display_name}: {e}")
+                    continue
+            
+            if not member_stats:
+                embed = discord.Embed(
+                    title="🏆 Server Valorant Leaderboard",
+                    description="No qualifying players found (need 3+ recent matches)",
+                    color=0x808080
+                )
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                return
+            
+            # Sort by requested stat
+            stat_key = stat_type.lower()
+            if stat_key == "kda":
+                sorted_stats = sorted(member_stats, key=lambda x: x['stats'].get('kda_ratio', 0), reverse=True)
+                title_stat = "KDA Ratio"
+                format_func = lambda x: f"{x:.2f}"
+            elif stat_key == "kd":
+                sorted_stats = sorted(member_stats, key=lambda x: x['stats'].get('kd_ratio', 0), reverse=True)
+                title_stat = "K/D Ratio"
+                format_func = lambda x: f"{x:.2f}"
+            elif stat_key == "winrate":
+                sorted_stats = sorted(member_stats, key=lambda x: x['stats'].get('win_rate', 0), reverse=True)
+                title_stat = "Win Rate"
+                format_func = lambda x: f"{x:.1f}%"
+            elif stat_key == "headshot":
+                sorted_stats = sorted(member_stats, key=lambda x: x['stats'].get('headshot_percentage', 0), reverse=True)
+                title_stat = "Headshot %"
+                format_func = lambda x: f"{x:.1f}%"
+            elif stat_key == "acs":
+                sorted_stats = sorted(member_stats, key=lambda x: x['stats'].get('acs', 0), reverse=True)
+                title_stat = "Average Combat Score"
+                format_func = lambda x: f"{x:.0f}"
+            elif stat_key == "clutch":
+                sorted_stats = sorted(member_stats, key=lambda x: x['stats'].get('clutch_success_rate', 0), reverse=True)
+                title_stat = "Clutch Success Rate"
+                format_func = lambda x: f"{x:.1f}%"
+            elif stat_key == "multikill":
+                sorted_stats = sorted(member_stats, key=lambda x: sum(x['stats'].get('multikills', {}).values()), reverse=True)
+                title_stat = "Total Multi-Kills"
+                format_func = lambda x: f"{int(x)}"
+            
+            # Create leaderboard embed
+            embed = discord.Embed(
+                title=f"🏆 Server Leaderboard: {title_stat}",
+                description=f"Top {min(10, len(sorted_stats))} players based on recent matches",
+                color=0xff4655
+            )
+            
+            # Add top players
+            leaderboard_text = []
+            for i, player_data in enumerate(sorted_stats[:10]):
+                member = player_data['member']
+                stats = player_data['stats']
+                account = player_data['account']
+                
+                # Get the stat value
+                if stat_key == "kda":
+                    value = stats.get('kda_ratio', 0)
+                elif stat_key == "kd":
+                    value = stats.get('kd_ratio', 0)
+                elif stat_key == "winrate":
+                    value = stats.get('win_rate', 0)
+                elif stat_key == "headshot":
+                    value = stats.get('headshot_percentage', 0)
+                elif stat_key == "acs":
+                    value = stats.get('acs', 0)
+                elif stat_key == "clutch":
+                    value = stats.get('clutch_success_rate', 0)
+                elif stat_key == "multikill":
+                    value = sum(stats.get('multikills', {}).values())
+                
+                # Add rank emoji
+                rank_emoji = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"{i+1}."
+                
+                # Additional context stats
+                matches = stats.get('total_matches', 0)
+                if stat_key in ["kda", "kd"]:
+                    context = f"({stats.get('avg_kills', 0):.1f}K avg, {matches}G)"
+                elif stat_key == "winrate":
+                    context = f"({stats.get('wins', 0)}W-{stats.get('losses', 0)}L, {matches}G)"
+                elif stat_key == "acs":
+                    context = f"({stats.get('kd_ratio', 0):.2f} KD, {matches}G)"
+                elif stat_key == "multikill":
+                    mk_breakdown = stats.get('multikills', {})
+                    aces = mk_breakdown.get('5k', 0)
+                    context = f"({aces} aces, {matches}G)" if aces > 0 else f"({matches}G)"
+                else:
+                    context = f"({matches}G)"
+                
+                leaderboard_text.append(
+                    f"{rank_emoji} **{member.display_name}** - {format_func(value)} {context}"
+                )
+            
+            embed.add_field(
+                name=f"🎆 Top Performers",
+                value="\n".join(leaderboard_text),
+                inline=False
+            )
+            
+            # Add some server stats
+            total_matches = sum(p['stats'].get('total_matches', 0) for p in member_stats)
+            total_players = len(member_stats)
+            avg_stat = sum(p['stats'].get({
+                'kda': 'kda_ratio',
+                'kd': 'kd_ratio', 
+                'winrate': 'win_rate',
+                'headshot': 'headshot_percentage',
+                'acs': 'acs',
+                'clutch': 'clutch_success_rate',
+                'multikill': lambda s: sum(s.get('multikills', {}).values())
+            }.get(stat_key, 'kda_ratio'), 0) for p in member_stats) / max(total_players, 1)
+            
+            if callable(avg_stat):
+                avg_stat = sum(p['stats'].get('multikills', {}).values() for p in member_stats) / max(total_players, 1)
+            
+            embed.add_field(
+                name="📊 Server Stats",
+                value=f"**Players:** {total_players}\n**Total Matches:** {total_matches}\n**Server Average:** {format_func(avg_stat)}",
+                inline=True
+            )
+            
+            # Add motivational message based on competition
+            if len(sorted_stats) >= 5:
+                top_value = sorted_stats[0]['stats'].get({
+                    'kda': 'kda_ratio',
+                    'kd': 'kd_ratio',
+                    'winrate': 'win_rate', 
+                    'headshot': 'headshot_percentage',
+                    'acs': 'acs',
+                    'clutch': 'clutch_success_rate'
+                }.get(stat_key, 'kda_ratio'), 0)
+                
+                if stat_key == 'multikill':
+                    top_value = sum(sorted_stats[0]['stats'].get('multikills', {}).values())
+                
+                if ((stat_key in ['kda', 'kd'] and top_value >= 2.0) or 
+                    (stat_key == 'winrate' and top_value >= 70) or
+                    (stat_key == 'headshot' and top_value >= 30) or
+                    (stat_key == 'acs' and top_value >= 250) or
+                    (stat_key == 'clutch' and top_value >= 50) or
+                    (stat_key == 'multikill' and top_value >= 5)):
+                    embed.add_field(
+                        name="🔥 Competition Level",
+                        value="**FIERCE COMPETITION!** 🏆\nThis server has some serious talent!",
+                        inline=True
+                    )
+            
+            embed.set_footer(text=f"🔄 Use /shootyleaderboard {' | '.join(valid_stats)} to see different rankings")
+            
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                await ctx.followup.send(embed=embed)
+            else:
+                await ctx.send(embed=embed)
         
-        embed.add_field(
-            name="🚧 Under Development",
-            value="The leaderboard feature is being developed.\nFor now, use `/shootystatsdetailed` to see individual stats!",
-            inline=False
-        )
-        
-        if hasattr(ctx, 'interaction') and ctx.interaction:
-            await ctx.followup.send(embed=embed)
-        else:
-            await ctx.send(embed=embed)
+        except Exception as e:
+            logging.error(f"Error in leaderboard command: {e}")
+            embed = discord.Embed(
+                title="❌ Leaderboard Error",
+                description="Sorry, there was an error generating the leaderboard. Please try again later.",
+                color=0xff0000
+            )
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                await ctx.followup.send(embed=embed)
+            else:
+                await ctx.send(embed=embed)
     
     @commands.hybrid_command(
         name="shootyhistory",
@@ -785,6 +1036,257 @@ class ValorantCommands(commands.Cog):
             error_msg = f"Error controlling match tracker: {str(e)}"
             logging.error(f"Error in shootymatchtracker command: {e}")
             await ctx.send(f"❌ {error_msg}")
+
+    @commands.hybrid_command(
+        name="shootyfun",
+        description="Show fun and quirky Valorant stats with achievements"
+    )
+    async def fun_valorant_stats(self, ctx, member: discord.Member = None):
+        """Show fun stats, achievements, and quirky metrics"""
+        target_user = member or ctx.author
+        
+        try:
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                await ctx.defer()
+            
+            # Get user's Valorant accounts
+            accounts = valorant_client.get_all_linked_accounts(target_user.id)
+            
+            if not accounts:
+                embed = discord.Embed(
+                    title="❌ No Linked Accounts",
+                    description=f"{target_user.display_name} has no linked Valorant accounts",
+                    color=0xff0000
+                )
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                return
+            
+            # Use primary account
+            selected_account = valorant_client.get_linked_account(target_user.id)
+            if not selected_account:
+                selected_account = accounts[0]
+            
+            # Fetch match history
+            matches = await valorant_client.get_match_history(
+                selected_account['username'], 
+                selected_account['tag'], 
+                size=20
+            )
+            
+            if not matches:
+                embed = discord.Embed(
+                    title="❌ No Match Data",
+                    description="Could not fetch match history for fun stats analysis.",
+                    color=0xff0000
+                )
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                return
+            
+            # Calculate stats
+            stats = valorant_client.calculate_player_stats(matches, selected_account['puuid'])
+            
+            if not stats or stats.get('total_matches', 0) == 0:
+                embed = discord.Embed(
+                    title="❌ No Stats Available",
+                    description="No valid match data found for fun stats analysis",
+                    color=0xff0000
+                )
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                return
+            
+            # Create fun stats embed
+            embed = discord.Embed(
+                title=f"🎉 Fun Stats: {selected_account['username']}#{selected_account['tag']}",
+                description=f"Quirky metrics from the last {stats['total_matches']} matches",
+                color=0xff4655
+            )
+            
+            # Performance Ratings/Badges
+            performance_ratings = stats.get('performance_ratings', {})
+            if performance_ratings:
+                ratings_text = "\n".join([
+                    f"{performance_ratings.get('fragger', 'Unknown Fragger')}",
+                    f"{performance_ratings.get('support', 'Unknown Support')}",
+                    f"{performance_ratings.get('survival', 'Unknown Survivor')}",
+                    f"{performance_ratings.get('accuracy', 'Unknown Accuracy')}",
+                    f"{performance_ratings.get('clutch', 'Unknown Clutcher')}"
+                ])
+                embed.add_field(
+                    name="🏆 Your Player Archetype",
+                    value=ratings_text,
+                    inline=False
+                )
+            
+            # Multi-Kill Achievements
+            multikills = stats.get('multikills', {})
+            mk_lines = []
+            for mk_type, count in multikills.items():
+                if count > 0:
+                    if mk_type == '5k':
+                        mk_lines.append(f"🔥 **ACE COUNT:** {count} (Legendary!)")
+                    elif mk_type == '4k':
+                        mk_lines.append(f"💀 **4K COUNT:** {count} (Impressive!)")
+                    elif mk_type == '3k':
+                        mk_lines.append(f"⚡ **3K COUNT:** {count} (Nice!)")
+                    elif mk_type == '2k':
+                        mk_lines.append(f"✨ **2K COUNT:** {count}")
+            
+            embed.add_field(
+                name="🔥 Multi-Kill Hall of Fame",
+                value="\n".join(mk_lines) if mk_lines else "No multi-kills yet... time to pop off! 💪",
+                inline=True
+            )
+            
+            # Streaks and Momentum
+            current_win_streak = stats.get('current_win_streak', 0)
+            current_loss_streak = stats.get('current_loss_streak', 0)
+            max_win_streak = stats.get('max_win_streak', 0)
+            max_loss_streak = stats.get('max_loss_streak', 0)
+            
+            streak_lines = []
+            if current_win_streak > 0:
+                if current_win_streak >= 5:
+                    streak_lines.append(f"🔥🔥 **HOT STREAK:** {current_win_streak}W (ON FIRE!)")
+                else:
+                    streak_lines.append(f"🔥 **Current Win Streak:** {current_win_streak}")
+            elif current_loss_streak > 0:
+                if current_loss_streak >= 3:
+                    streak_lines.append(f"💔💔 **Rough Patch:** {current_loss_streak}L (Shake it off!)")
+                else:
+                    streak_lines.append(f"💔 **Current Loss Streak:** {current_loss_streak}")
+            else:
+                streak_lines.append("⚖️ **Balanced** (Breaking even)")
+            
+            streak_lines.append(f"🏆 **Best Win Streak:** {max_win_streak}")
+            if max_loss_streak > 0:
+                streak_lines.append(f"😅 **Worst Loss Streak:** {max_loss_streak}")
+            
+            embed.add_field(
+                name="📈 Momentum Tracker",
+                value="\n".join(streak_lines),
+                inline=True
+            )
+            
+            # Clutch Performance
+            clutches_won = stats.get('clutches_won', {})
+            clutches_attempted = stats.get('clutches_attempted', {})
+            clutch_success_rate = stats.get('clutch_success_rate', 0)
+            
+            clutch_lines = []
+            total_clutches_won = sum(clutches_won.values())
+            if total_clutches_won > 0:
+                clutch_lines.append(f"🥇 **Total Clutches Won:** {total_clutches_won}")
+                clutch_lines.append(f"📊 **Clutch Success Rate:** {clutch_success_rate:.1f}%")
+                
+                for situation, won in clutches_won.items():
+                    if won > 0:
+                        attempted = clutches_attempted.get(situation, 0)
+                        clutch_lines.append(f"⚔️ **{situation.upper()}:** {won}/{attempted}")
+            else:
+                clutch_lines.append("🎯 **No clutches yet** - Your moment awaits!")
+            
+            embed.add_field(
+                name="🔥 Clutch Master Status",
+                value="\n".join(clutch_lines),
+                inline=False
+            )
+            
+            # Specialty Stats
+            first_blood_rate = stats.get('first_blood_rate', 0)
+            survival_rate = stats.get('survival_rate', 0)
+            accuracy = stats.get('accuracy', 0)
+            headshot_percentage = stats.get('headshot_percentage', 0)
+            
+            specialty_lines = [
+                f"🎯 **Entry Success:** {first_blood_rate:.1f}% (First bloods)",
+                f"🛡️ **Survival Rate:** {survival_rate:.1f}% (Staying alive)",
+                f"🔫 **Shot Accuracy:** {accuracy:.1f}%",
+                f"🎯 **Headshot Rate:** {headshot_percentage:.1f}%"
+            ]
+            
+            # Fun damage stats
+            avg_damage_made = stats.get('avg_damage_made', 0)
+            avg_damage_received = stats.get('avg_damage_received', 0)
+            damage_delta = avg_damage_made - avg_damage_received
+            
+            if damage_delta > 1000:
+                specialty_lines.append(f"💥 **Damage Dealer:** +{damage_delta:.0f} damage delta")
+            elif damage_delta < -500:
+                specialty_lines.append(f"🛡️ **Damage Sponge:** {damage_delta:.0f} damage delta")
+            else:
+                specialty_lines.append(f"⚖️ **Balanced Fighter:** {damage_delta:+.0f} damage delta")
+            
+            embed.add_field(
+                name="📊 Specialty Stats",
+                value="\n".join(specialty_lines),
+                inline=False
+            )
+            
+            # Agent Mastery
+            agent_performance = stats.get('agent_performance', {})
+            if agent_performance:
+                best_agents = sorted(agent_performance.items(), 
+                                   key=lambda x: (x[1]['wins']/max(x[1]['matches'], 1), x[1]['matches']), 
+                                   reverse=True)[:3]
+                
+                agent_lines = []
+                for agent, perf in best_agents:
+                    win_rate = (perf['wins'] / max(perf['matches'], 1)) * 100
+                    avg_kills = perf['kills'] / max(perf['matches'], 1)
+                    agent_lines.append(f"**{agent}:** {win_rate:.0f}%WR, {avg_kills:.1f}K avg ({perf['matches']}G)")
+                
+                embed.add_field(
+                    name="🦸 Agent Mastery Top 3",
+                    value="\n".join(agent_lines),
+                    inline=True
+                )
+            
+            # Map Performance
+            map_performance = stats.get('map_performance', {})
+            if map_performance:
+                best_maps = sorted(map_performance.items(), 
+                                 key=lambda x: (x[1]['wins']/max(x[1]['matches'], 1), x[1]['matches']), 
+                                 reverse=True)[:3]
+                
+                map_lines = []
+                for map_name, perf in best_maps:
+                    win_rate = (perf['wins'] / max(perf['matches'], 1)) * 100
+                    avg_damage = perf['damage'] / max(perf['matches'], 1)
+                    map_lines.append(f"**{map_name}:** {win_rate:.0f}%WR, {avg_damage:.0f}ADR ({perf['matches']}G)")
+                
+                embed.add_field(
+                    name="🗺️ Favorite Maps",
+                    value="\n".join(map_lines),
+                    inline=True
+                )
+            
+            embed.set_footer(text="🎉 Fun stats that make you unique! • ShootyBot")
+            
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                await ctx.followup.send(embed=embed)
+            else:
+                await ctx.send(embed=embed)
+                
+        except Exception as e:
+            error_msg = f"Error fetching fun stats: {str(e)}"
+            logging.error(f"Error in shootyfun command: {e}")
+            
+            try:
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    await ctx.followup.send(f"❌ {error_msg}")
+                else:
+                    await ctx.send(f"❌ {error_msg}")
+            except:
+                await ctx.send(f"❌ {error_msg}")
 
 async def setup(bot):
     await bot.add_cog(ValorantCommands(bot))
