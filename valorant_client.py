@@ -155,6 +155,151 @@ class ValorantClient:
                 playing_members.append(member)
         
         return playing_members
+    
+    async def get_match_history(self, username: str, tag: str, size: int = 5) -> Optional[List[Dict[str, Any]]]:
+        """Get match history for a player"""
+        try:
+            url = f"{self.base_url}/../v3/matches/na/{username}/{tag}?size={size}"
+            response = requests.get(url, headers=self.headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'data' in data:
+                    return data['data']
+                return data
+            else:
+                logging.error(f"Error fetching match history: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logging.error(f"Error fetching match history: {e}")
+            return None
+    
+    def calculate_player_stats(self, matches: List[Dict[str, Any]], player_puuid: str) -> Dict[str, Any]:
+        """Calculate comprehensive player statistics from match history"""
+        if not matches:
+            return {}
+        
+        stats = {
+            'total_matches': 0,
+            'wins': 0,
+            'losses': 0,
+            'total_kills': 0,
+            'total_deaths': 0,
+            'total_assists': 0,
+            'total_headshots': 0,
+            'total_bodyshots': 0,
+            'total_legshots': 0,
+            'total_score': 0,
+            'total_rounds': 0,
+            'kast_rounds': 0,  # Rounds with Kill, Assist, Survived, or Traded
+            'maps_played': {},
+            'agents_played': {},
+            'recent_matches': []
+        }
+        
+        for match in matches:
+            if not match.get('is_available', True):
+                continue
+                
+            # Find the player in this match
+            player_data = None
+            all_players = match.get('players', {}).get('all_players', [])
+            
+            for player in all_players:
+                if player.get('puuid') == player_puuid:
+                    player_data = player
+                    break
+            
+            if not player_data:
+                continue
+            
+            stats['total_matches'] += 1
+            player_stats = player_data.get('stats', {})
+            
+            # Basic stats
+            kills = player_stats.get('kills', 0)
+            deaths = player_stats.get('deaths', 0)
+            assists = player_stats.get('assists', 0)
+            headshots = player_stats.get('headshots', 0)
+            bodyshots = player_stats.get('bodyshots', 0)
+            legshots = player_stats.get('legshots', 0)
+            score = player_stats.get('score', 0)
+            
+            stats['total_kills'] += kills
+            stats['total_deaths'] += deaths
+            stats['total_assists'] += assists
+            stats['total_headshots'] += headshots
+            stats['total_bodyshots'] += bodyshots
+            stats['total_legshots'] += legshots
+            stats['total_score'] += score
+            
+            # Win/Loss calculation
+            player_team = player_data.get('team', 'Red')
+            teams = match.get('teams', {})
+            
+            if player_team.lower() in teams:
+                team_data = teams[player_team.lower()]
+                if team_data.get('has_won', False):
+                    stats['wins'] += 1
+                else:
+                    stats['losses'] += 1
+            
+            # Map tracking
+            map_name = match.get('metadata', {}).get('map', 'Unknown')
+            stats['maps_played'][map_name] = stats['maps_played'].get(map_name, 0) + 1
+            
+            # Agent tracking
+            agent_name = player_data.get('character', 'Unknown')
+            stats['agents_played'][agent_name] = stats['agents_played'].get(agent_name, 0) + 1
+            
+            # Rounds for KAST calculation (approximation)
+            rounds_played = match.get('metadata', {}).get('rounds_played', 0)
+            stats['total_rounds'] += rounds_played
+            
+            # Simplified KAST: rounds where player had kills or assists
+            # (We can't calculate exact KAST without round-by-round data)
+            if kills > 0 or assists > 0:
+                stats['kast_rounds'] += min(rounds_played, kills + assists)
+            
+            # Store recent match info
+            stats['recent_matches'].append({
+                'map': map_name,
+                'agent': agent_name,
+                'kills': kills,
+                'deaths': deaths,
+                'assists': assists,
+                'score': score,
+                'won': teams.get(player_team.lower(), {}).get('has_won', False) if player_team.lower() in teams else False
+            })
+        
+        # Calculate derived stats
+        if stats['total_matches'] > 0:
+            stats['win_rate'] = (stats['wins'] / stats['total_matches']) * 100
+            stats['avg_kills'] = stats['total_kills'] / stats['total_matches']
+            stats['avg_deaths'] = stats['total_deaths'] / stats['total_matches']
+            stats['avg_assists'] = stats['total_assists'] / stats['total_matches']
+            stats['avg_score'] = stats['total_score'] / stats['total_matches']
+            
+            if stats['total_deaths'] > 0:
+                stats['kd_ratio'] = stats['total_kills'] / stats['total_deaths']
+                stats['kda_ratio'] = (stats['total_kills'] + stats['total_assists']) / stats['total_deaths']
+            else:
+                stats['kd_ratio'] = float(stats['total_kills'])
+                stats['kda_ratio'] = float(stats['total_kills'] + stats['total_assists'])
+            
+            total_shots = stats['total_headshots'] + stats['total_bodyshots'] + stats['total_legshots']
+            if total_shots > 0:
+                stats['headshot_percentage'] = (stats['total_headshots'] / total_shots) * 100
+            else:
+                stats['headshot_percentage'] = 0
+            
+            if stats['total_rounds'] > 0:
+                stats['kast_percentage'] = (stats['kast_rounds'] / stats['total_rounds']) * 100
+            else:
+                stats['kast_percentage'] = 0
+        
+        return stats
 
 # Global Valorant client instance
 valorant_client = ValorantClient()
