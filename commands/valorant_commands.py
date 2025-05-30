@@ -443,152 +443,95 @@ class ValorantCommands(GameCommandCog):
                 )
                 return
             
-            # Create detailed stats embed with fields
-            fields = []
-            
-            # Performance Stats
+            # Get performance ratings first
             performance_ratings = stats.get('performance_ratings', {})
-            fields.append({
-                "name": "📊 Core Performance",
-                "value": f"**ACS:** {stats.get('acs', 0):.0f}\n"
-                        f"**KD Ratio:** {stats.get('kd_ratio', 0):.2f}\n"
-                        f"**KDA Ratio:** {stats.get('kda_ratio', 0):.2f}\n"
-                        f"**KAST:** {stats.get('kast_percentage', 0):.1f}%",
-                "inline": True
-            })
             
-            # Performance Badges
-            if performance_ratings:
-                badge_text = "\n".join([
-                    performance_ratings.get('fragger', ''),
-                    performance_ratings.get('support', ''),
-                    performance_ratings.get('accuracy', '')
-                ])
-                fields.append({
-                    "name": "🏆 Performance Badges",
-                    "value": badge_text or "No badges yet",
-                    "inline": True
-                })
-            
-            # Damage Stats
-            fields.append({
-                "name": "💥 Damage",
-                "value": f"**ADR:** {stats.get('adr', 0):.0f}\n"
-                        f"**DD (Δ):** {stats.get('damage_delta_per_round', 0):+.0f}\n"
-                        f"**Damage/Game:** {stats.get('avg_damage_made', 0):.0f}\n"
-                        f"**Headshot %:** {stats.get('headshot_percentage', 0):.1f}%",
-                "inline": True
-            })
-            
-            # Match Results
-            fields.append({
-                "name": "🏆 Match Results",
-                "value": f"**Win Rate:** {stats.get('win_rate', 0):.1f}%\n"
-                        f"**Wins:** {stats.get('wins', 0)}\n"
-                        f"**Losses:** {stats.get('losses', 0)}\n"
-                        f"**Total Matches:** {stats.get('total_matches', 0)}",
-                "inline": True
-            })
-            
-            # Averages
-            embed.add_field(
-                name="📈 Averages",
-                value=f"**Kills:** {stats.get('avg_kills', 0):.1f}\n"
-                      f"**Deaths:** {stats.get('avg_deaths', 0):.1f}\n"
-                      f"**Assists:** {stats.get('avg_assists', 0):.1f}\n"
-                      f"**Score:** {stats.get('avg_score', 0):.0f}",
-                inline=True
+            # Create detailed stats embed
+            await self.send_embed(
+                ctx,
+                f"📊 Detailed Stats: {selected_account['username']}#{selected_account['tag']}",
+                f"Comprehensive performance analysis from the last {stats['total_matches']} matches",
+                color=0xff4655,
+                fields=[
+                    {
+                        "name": "📊 Core Performance",
+                        "value": f"**ACS:** {stats.get('acs', 0):.0f} *(combat score)*\n"
+                                f"**KD Ratio:** {stats.get('kd_ratio', 0):.2f}\n"
+                                f"**KDA Ratio:** {stats.get('kda_ratio', 0):.2f}\n"
+                                f"**KAST:** {stats.get('kast_percentage', 0):.1f}% *(impact %)*",
+                        "inline": True
+                    },
+                    {
+                        "name": "🏆 Performance Badges",
+                        "value": "\n".join([
+                            performance_ratings.get('fragger', ''),
+                            performance_ratings.get('support', ''),
+                            performance_ratings.get('accuracy', '')
+                        ]) + "\n\n*Badges based on your combat stats*" if performance_ratings else "No badges yet",
+                        "inline": True
+                    } if performance_ratings else None,
+                    {
+                        "name": "💥 Damage",
+                        "value": f"**ADR:** {stats.get('adr', 0):.0f} *(per round)*\n"
+                                f"**DD (Δ):** {stats.get('damage_delta_per_round', 0):+.0f} *(dealt-taken)*\n"
+                                f"**Damage/Game:** {stats.get('avg_damage_made', 0):.0f}\n"
+                                f"**Headshot %:** {stats.get('headshot_percentage', 0):.1f}%",
+                        "inline": True
+                    },
+                    {
+                        "name": "🏆 Match Results",
+                        "value": f"**Win Rate:** {stats.get('win_rate', 0):.1f}%\n"
+                                f"**Wins:** {stats.get('wins', 0)}\n"
+                                f"**Losses:** {stats.get('losses', 0)}\n"
+                                f"**Total Matches:** {stats.get('total_matches', 0)}",
+                        "inline": True
+                    },
+                    {
+                        "name": "📈 Averages",
+                        "value": f"**Kills:** {stats.get('avg_kills', 0):.1f}\n"
+                              f"**Deaths:** {stats.get('avg_deaths', 0):.1f}\n"
+                              f"**Assists:** {stats.get('avg_assists', 0):.1f}\n"
+                              f"**Score:** {stats.get('avg_score', 0):.0f}",
+                        "inline": True
+                    },
+                    {
+                        "name": "🦸 Most Played Agents",
+                        "value": "\n".join([f"{agent} ({count})" for agent, count in sorted(stats.get('agents_played', {}).items(), key=lambda x: x[1], reverse=True)[:3]]) or "No agent data",
+                        "inline": True
+                    },
+                    {
+                        "name": "🗺️ Most Played Maps",
+                        "value": "\n".join([f"{map_name} ({count})" for map_name, count in sorted(stats.get('maps_played', {}).items(), key=lambda x: x[1], reverse=True)[:3]]) or "No map data",
+                        "inline": True
+                    },
+                    {
+                        "name": "🔥 Multi-Kills & Achievements",
+                        "value": "\n".join([f"**{mk_type.upper()}s:** {count}" for mk_type, count in stats.get('multikills', {}).items() if count > 0]) or "No multi-kills recorded",
+                        "inline": True
+                    },
+                    {
+                        "name": "⚡ Streaks & Special Stats",
+                        "value": "\n".join([
+                            f"🔥 **Win Streak:** {stats.get('current_win_streak', 0)}" if stats.get('current_win_streak', 0) > 0 else f"💔 **Loss Streak:** {stats.get('current_loss_streak', 0)}" if stats.get('current_loss_streak', 0) > 0 else "⚖️ **Balanced**",
+                            f"**Best Streak:** {stats.get('max_win_streak', 0)}W",
+                            f"**First Blood Rate:** {stats.get('first_blood_rate', 0):.1f}%",
+                            f"**Clutch Success:** {stats.get('clutch_success_rate', 0):.1f}%"
+                        ]),
+                        "inline": True
+                    },
+                    {
+                        "name": "📋 Recent Matches",
+                        "value": "\n".join([f"{'W' if match['won'] else 'L'} {match['kills']}/{match['deaths']}/{match['assists']} | {match['damage_made'] / max(match['rounds_played'], 1):.0f} ADR ({match['agent']})" for match in stats.get('recent_matches', [])[:5]]) or "No recent match data",
+                        "inline": False
+                    } if stats.get('recent_matches') else None,
+                    {
+                        "name": "🎭 Player Style",
+                        "value": f"{performance_ratings.get('survival', '')}\n{performance_ratings.get('clutch', '')}\n\n*Your playstyle based on survival & clutch stats*",
+                        "inline": False
+                    } if performance_ratings and (performance_ratings.get('survival') or performance_ratings.get('clutch')) else None
+                ],
+                footer="📊 Enhanced stats • Use /shootystatshelp to understand badges"
             )
-            
-            # Most played agents
-            agents = stats.get('agents_played', {})
-            if agents:
-                top_agents = sorted(agents.items(), key=lambda x: x[1], reverse=True)[:3]
-                agent_list = [f"{agent} ({count})" for agent, count in top_agents]
-                embed.add_field(
-                    name="🦸 Most Played Agents",
-                    value="\n".join(agent_list),
-                    inline=True
-                )
-            
-            # Most played maps
-            maps = stats.get('maps_played', {})
-            if maps:
-                top_maps = sorted(maps.items(), key=lambda x: x[1], reverse=True)[:3]
-                map_list = [f"{map_name} ({count})" for map_name, count in top_maps]
-                embed.add_field(
-                    name="🗺️ Most Played Maps",
-                    value="\n".join(map_list),
-                    inline=True
-                )
-            
-            # Enhanced Stats Section
-            multikills = stats.get('multikills', {})
-            mk_text = []
-            for mk_type, count in multikills.items():
-                if count > 0:
-                    mk_text.append(f"**{mk_type.upper()}s:** {count}")
-            
-            embed.add_field(
-                name="🔥 Multi-Kills & Achievements",
-                value="\n".join(mk_text) if mk_text else "No multi-kills recorded",
-                inline=True
-            )
-            
-            # Streaks and Special Stats
-            current_win_streak = stats.get('current_win_streak', 0)
-            current_loss_streak = stats.get('current_loss_streak', 0)
-            max_win_streak = stats.get('max_win_streak', 0)
-            first_blood_rate = stats.get('first_blood_rate', 0)
-            clutch_success_rate = stats.get('clutch_success_rate', 0)
-            
-            streak_text = []
-            if current_win_streak > 0:
-                streak_text.append(f"🔥 **Win Streak:** {current_win_streak}")
-            elif current_loss_streak > 0:
-                streak_text.append(f"💔 **Loss Streak:** {current_loss_streak}")
-            
-            streak_text.extend([
-                f"**Best Streak:** {max_win_streak}W",
-                f"**First Blood Rate:** {first_blood_rate:.1f}%",
-                f"**Clutch Success:** {clutch_success_rate:.1f}%"
-            ])
-            
-            embed.add_field(
-                name="⚡ Streaks & Special Stats",
-                value="\n".join(streak_text),
-                inline=True
-            )
-            
-            # Recent performance
-            recent_matches = stats.get('recent_matches', [])[:5]
-            if recent_matches:
-                recent_list = []
-                for match in recent_matches:
-                    result = "W" if match['won'] else "L"
-                    adr_match = match['damage_made'] / max(match['rounds_played'], 1) if match['rounds_played'] > 0 else 0
-                    recent_list.append(f"{result} {match['kills']}/{match['deaths']}/{match['assists']} | {adr_match:.0f} ADR ({match['agent']})")
-                embed.add_field(
-                    name="📋 Recent Matches",
-                    value="\n".join(recent_list),
-                    inline=False
-                )
-            
-            # Fun facts and ratings
-            performance_ratings = stats.get('performance_ratings', {})
-            if performance_ratings:
-                survival_rating = performance_ratings.get('survival', '')
-                clutch_rating = performance_ratings.get('clutch', '')
-                if survival_rating or clutch_rating:
-                    embed.add_field(
-                        name="🎭 Player Style",
-                        value=f"{survival_rating}\n{clutch_rating}",
-                        inline=False
-                    )
-            
-            embed.set_footer(text="📊 Enhanced stats with performance tracking • ShootyBot")
-            
-            await ctx.send(embed=embed)
                 
         except Exception as e:
             self.logger.error(f"Error in shootystatsdetailed command: {e}")
@@ -934,6 +877,103 @@ class ValorantCommands(GameCommandCog):
             self.logger.error(f"Error in shootymatchtracker command: {e}")
             await self.send_error_embed(ctx, "Error Controlling Match Tracker", str(e))
 
+    @commands.hybrid_command(
+        name="shootystatshelp",
+        description="Explains what all the Valorant statistics and badges mean"
+    )
+    async def stats_help(self, ctx: commands.Context) -> None:
+        """Show detailed explanations of all statistics and badges"""
+        embed = discord.Embed(
+            title="📊 Valorant Statistics Guide",
+            description="Understanding your performance metrics and badges",
+            color=0xff4655
+        )
+        
+        # Core stats explanation
+        embed.add_field(
+            name="📈 Core Performance Metrics",
+            value=(
+                "**ACS** - Average Combat Score per round\n"
+                "**ADR** - Average Damage per Round\n"
+                "**DD (Δ)** - Damage Delta (damage dealt - taken)\n"
+                "**KD** - Kill/Death ratio\n"
+                "**KDA** - (Kills + Assists) / Deaths\n"
+                "**KAST** - % rounds with Kill/Assist/Survived/Traded"
+            ),
+            inline=False
+        )
+        
+        # Badge explanations
+        embed.add_field(
+            name="🔥 Fragger Badges",
+            value=(
+                "**🔥 Demon Fragger** - 20+ avg kills (Top tier)\n"
+                "**💀 Elite Fragger** - 15-19 avg kills (Excellent)\n"
+                "**⚡ Solid Fragger** - 12-14 avg kills (Good)\n"
+                "**🎯 Entry Fragger** - <12 avg kills (Standard)"
+            ),
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🤝 Support Badges",
+            value=(
+                "**👑 Support King** - 8+ avg assists (Amazing)\n"
+                "**🤝 Team Player** - 6-7 avg assists (Great)\n"
+                "**✨ Helper** - 4-5 avg assists (Good)\n"
+                "**🔫 Solo Player** - <4 avg assists (Independent)"
+            ),
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🎯 Accuracy Badges",
+            value=(
+                "**🎯 Headshot Machine** - 35%+ headshots\n"
+                "**🔥 Sharp Shooter** - 25-34% headshots\n"
+                "**💯 Precise** - 70%+ shot accuracy\n"
+                "**🌀 Spray Master** - Lower accuracy"
+            ),
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🛡️ Survival Badges",
+            value=(
+                "**🛡️ Untouchable** - 80%+ survival rate\n"
+                "**🏃 Escape Artist** - 70-79% survival\n"
+                "**💪 Survivor** - 60-69% survival\n"
+                "**💥 Risk Taker** - <60% survival"
+            ),
+            inline=True
+        )
+        
+        embed.add_field(
+            name="💎 Clutch Badges",
+            value=(
+                "**🏆 Clutch God** - 5+ clutches, 60%+ success\n"
+                "**⭐ Clutch King** - 3+ clutches, 50%+ success\n"
+                "**💎 Clutch Player** - 1+ clutches won\n"
+                "**🎲 Learning Clutches** - No clutches yet"
+            ),
+            inline=True
+        )
+        
+        embed.add_field(
+            name="📊 Other Key Stats",
+            value=(
+                "**First Blood Rate** - % of matches with opening kill\n"
+                "**Win/Loss Streaks** - Current & best streaks\n"
+                "**Multi-kills** - 2K/3K/4K/ACE counts\n"
+                "**Map/Agent Performance** - Win rates by map/agent"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="Use /shootystatsdetailed to see your full stats breakdown!")
+        
+        await ctx.send(embed=embed)
+    
     @commands.hybrid_command(
         name="shootyfun",
         description="Show fun and quirky Valorant stats with achievements"

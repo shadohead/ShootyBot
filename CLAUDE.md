@@ -232,6 +232,7 @@ python3 test_database_fast.py
 - **Time-dependent tests**: Mock datetime.now() for consistent test results
 - **Database operations**: Use temporary SQLite databases for testing
 - **Migration testing**: Test JSON to SQLite migration with sample data
+- **Command callback testing**: Test hybrid command callbacks directly using `.callback(cog, ctx)`
 
 ### Production Deployment:
 - **Process management**: Use screen/tmux for persistent bot processes
@@ -244,6 +245,12 @@ python3 test_database_fast.py
 - **Test with real data**: Use actual Discord servers and API responses for testing
 - **State inspection**: Add debug commands to inspect bot state during development
 - **Error boundaries**: Catch and log exceptions at appropriate levels
+
+### Code Quality Issues:
+- **Variable scope**: ALWAYS ensure variables are defined before use - trace through execution paths
+- **Test before committing**: Write and run tests for any code changes to verify they work
+- **Think through edge cases**: Consider scenarios where data might be missing or None
+- **Error messages**: Check error logs carefully - undefined variable errors are preventable
 
 ## Development Workflow
 
