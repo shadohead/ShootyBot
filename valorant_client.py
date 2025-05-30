@@ -1,50 +1,80 @@
 import logging
-import requests
 from typing import Optional, Dict, Any, List
 import discord
 from data_manager import data_manager
 from config import HENRIK_API_KEY
 from utils import log_error
+from api_clients import BaseAPIClient, RateLimitInfo, APIResponse
 
-class ValorantClient:
+class ValorantClient(BaseAPIClient):
     """Client for interacting with Henrik's Valorant API"""
     
     def __init__(self):
-        self.base_url = "https://api.henrikdev.xyz/valorant/v1"
-        self.headers = {
-            'User-Agent': 'ShootyBot/1.0 (Discord Bot)'
-        }
+        # Henrik API rate limits: 100 requests per 2 minutes for free tier
+        # Advanced tier has higher limits
+        rate_limit = RateLimitInfo(
+            requests_per_second=1.0,
+            requests_per_minute=50 if HENRIK_API_KEY else 30,
+            requests_per_hour=1500 if HENRIK_API_KEY else 600,
+            burst_limit=5
+        )
         
-        # Add API key if provided (for Advanced tier)
+        super().__init__(
+            base_url="https://api.henrikdev.xyz/valorant/v1",
+            api_key=HENRIK_API_KEY,
+            rate_limit=rate_limit,
+            timeout=30
+        )
+        
         if HENRIK_API_KEY:
-            # Try different authorization formats
-            self.headers['Authorization'] = HENRIK_API_KEY
             logging.info("Using Henrik API with Advanced key")
         else:
             logging.info("Using Henrik API Basic tier (no key)")
     
+    @property
+    def headers(self) -> Dict[str, str]:
+        """Get current headers for backward compatibility with tests."""
+        return self._get_default_headers()
+    
+    def _get_auth_headers(self) -> Dict[str, str]:
+        """Get authentication headers for Henrik API."""
+        if self.api_key:
+            return {'Authorization': self.api_key}
+        return {}
+    
+    async def health_check(self) -> bool:
+        """Check if the Henrik API is healthy."""
+        try:
+            # Use a simple endpoint to check API health
+            response = await self.get('status', use_cache=False, cache_ttl=0)
+            return response.success
+        except Exception:
+            # If no status endpoint, try a basic query
+            try:
+                response = await self.get('account/test/0000', use_cache=False, cache_ttl=0)
+                # Even 404 means API is responding
+                return response.status_code in [200, 404]
+            except Exception:
+                return False
+    
     async def get_account_info(self, username: str, tag: str) -> Optional[Dict[str, Any]]:
         """Get account information by username and tag"""
         try:
-            url = f"{self.base_url}/account/{username}/{tag}"
-            response = requests.get(url, headers=self.headers)
+            response = await self.get(f'account/{username}/{tag}', cache_ttl=300)
             
-            if response.status_code == 200:
-                data = response.json()
-                if 'data' in data:
-                    return data['data']
-                return data
+            if response.success:
+                # Henrik API wraps data in 'data' field
+                if 'data' in response.data:
+                    return response.data['data']
+                return response.data
             elif response.status_code == 401:
                 log_error("Henrik API authentication", Exception("API key needed"))
                 return None
             elif response.status_code == 404:
                 logging.warning(f"Valorant account not found: {username}#{tag}")
                 return None
-            elif response.status_code == 429:
-                logging.warning("Rate limited by Valorant API")
-                return None
             else:
-                log_error(f"Valorant API request", Exception(f"Status {response.status_code}: {response.text}"))
+                log_error(f"Valorant API request", Exception(f"Status {response.status_code}"))
                 return None
                 
         except Exception as e:
@@ -54,14 +84,13 @@ class ValorantClient:
     async def get_account_by_puuid(self, puuid: str) -> Optional[Dict[str, Any]]:
         """Get account information by PUUID"""
         try:
-            url = f"{self.base_url}/by-puuid/account/{puuid}"
-            response = requests.get(url, headers=self.headers)
+            response = await self.get(f'by-puuid/account/{puuid}', cache_ttl=300)
             
-            if response.status_code == 200:
-                data = response.json()
-                if 'data' in data:
-                    return data['data']
-                return data
+            if response.success:
+                # Henrik API wraps data in 'data' field
+                if 'data' in response.data:
+                    return response.data['data']
+                return response.data
             else:
                 log_error("fetching account by PUUID", Exception(f"Status {response.status_code}"))
                 return None
@@ -160,17 +189,29 @@ class ValorantClient:
     async def get_match_history(self, username: str, tag: str, size: int = 5) -> Optional[List[Dict[str, Any]]]:
         """Get match history for a player"""
         try:
-            url = f"{self.base_url}/../v3/matches/na/{username}/{tag}?size={size}"
-            response = requests.get(url, headers=self.headers)
+            # Match history uses v3 API with different base URL
+            # Temporarily change the base URL for this request
+            original_base_url = self.base_url
+            self.base_url = "https://api.henrikdev.xyz/valorant/v3"
             
-            if response.status_code == 200:
-                data = response.json()
-                if 'data' in data:
-                    return data['data']
-                return data
-            else:
-                log_error("fetching match history", Exception(f"Status {response.status_code}"))
-                return None
+            try:
+                response = await self.get(
+                    f'matches/na/{username}/{tag}',
+                    params={'size': size},
+                    cache_ttl=180  # Cache for 3 minutes
+                )
+                
+                if response.success:
+                    # Henrik API wraps data in 'data' field
+                    if 'data' in response.data:
+                        return response.data['data']
+                    return response.data
+                else:
+                    log_error("fetching match history", Exception(f"Status {response.status_code}"))
+                    return None
+            finally:
+                # Restore original base URL
+                self.base_url = original_base_url
                 
         except Exception as e:
             log_error("fetching match history", e)
@@ -622,4 +663,21 @@ class ValorantClient:
         return ratings
 
 # Global Valorant client instance
-valorant_client = ValorantClient()
+_valorant_client_instance: Optional[ValorantClient] = None
+
+def get_valorant_client() -> ValorantClient:
+    """Get the global Valorant client instance."""
+    global _valorant_client_instance
+    if _valorant_client_instance is None:
+        _valorant_client_instance = ValorantClient()
+    return _valorant_client_instance
+
+async def close_valorant_client() -> None:
+    """Close the global Valorant client session."""
+    global _valorant_client_instance
+    if _valorant_client_instance is not None:
+        await _valorant_client_instance.close()
+        _valorant_client_instance = None
+
+# Maintain backward compatibility
+valorant_client = get_valorant_client()
