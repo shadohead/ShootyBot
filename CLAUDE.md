@@ -127,6 +127,33 @@ LOG_LEVEL=INFO
 
 The bot will check for configuration in this order: `.env` file → environment variables → `DiscordConfig.py`
 
+## MCP (Model Context Protocol) Servers
+
+ShootyBot can leverage MCP servers for enhanced capabilities when working with Claude Code:
+
+### Available MCP Servers:
+- **GitHub**: Direct repository management, issue tracking, and pull request creation
+- **Web Research**: Real-time web search and content extraction for up-to-date information
+- **Context7**: Access to library documentation for frameworks and APIs
+- **Perplexity**: Advanced web-based question answering
+- **Playwright**: Browser automation for testing Discord web interfaces
+
+### Usage with Claude Code:
+When using Claude Code (claude.ai/code) with this project, MCP servers provide:
+- **GitHub Integration**: Create issues, manage pull requests, and update code directly
+- **Documentation Access**: Fetch latest Discord.py and Henrik API documentation
+- **Web Search**: Research gaming APIs, Discord bot patterns, and Valorant data
+- **Testing Support**: Automated browser testing for Discord web features
+
+### MCP Configuration:
+MCP servers are automatically available in Claude Code. No additional configuration needed in the bot itself.
+
+### Common MCP Use Cases:
+1. **API Documentation**: `mcp__Context7__get-library-docs` for Discord.py reference
+2. **Issue Creation**: `mcp__github__create_issue` for bug tracking
+3. **Web Research**: `mcp__webresearch__search_google` for Valorant API updates
+4. **PR Management**: `mcp__github__create_pull_request` for code submissions
+
 ## SQLite Database System
 
 ShootyBot uses a lightweight SQLite database optimized for Raspberry Pi 4 deployment:
