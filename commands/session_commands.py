@@ -9,6 +9,7 @@ from handlers.message_formatter import get_ping_shooty_message, party_status_mes
 from handlers.reaction_handler import add_react_options
 from data_manager import data_manager
 from config import *
+from utils import format_time_for_display
 
 class SessionCommands(commands.Cog):
     """Commands for managing party sessions"""
@@ -149,11 +150,11 @@ class SessionCommands(commands.Cog):
                 await ctx.send(MESSAGES["TOO_FAR_FUTURE"])
                 return
             
-            message = await ctx.send(f"Shooty at {scheduled_time.strftime('%I:%M %p')}?")
+            message = await ctx.send(f"Shooty at {format_time_for_display(scheduled_time)}?")
             await self.start_session(ctx)
             await asyncio.sleep(seconds_to_wait)
             
-            await ctx.send(f"Shooty time now! - {scheduled_time.strftime('%I:%M %p')}")
+            await ctx.send(f"Shooty time now! - {format_time_for_display(scheduled_time)}")
             await ctx.reply(party_status_message(ctx.channel, shooty_context))
             
         except ValueError:

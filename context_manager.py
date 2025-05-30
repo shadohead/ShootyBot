@@ -4,6 +4,7 @@ import os
 from filelock import FileLock
 from config import *
 from database import database_manager
+from utils import ensure_directory_exists, log_error
 
 class ShootyContext:
     """Manages the state for a single channel's party session"""
@@ -200,8 +201,7 @@ class ContextManager:
     
     def load_all_contexts(self):
         """Load all contexts from database (kept for compatibility)"""
-        if not os.path.exists(DATA_DIR):
-            os.makedirs(DATA_DIR)
+        ensure_directory_exists(DATA_DIR)
         
         # Contexts are now loaded on-demand from database
         # This method is kept for compatibility
@@ -220,7 +220,7 @@ class ContextManager:
             else:
                 logging.debug(f"No existing settings found for channel {channel_id}")
         except Exception as e:
-            logging.error(f"Error loading context data for {channel_id}: {e}")
+            log_error(f"loading context data for {channel_id}", e)
     
     def save_context(self, channel_id):
         """Save a specific context to database"""
@@ -238,12 +238,8 @@ class ContextManager:
                 else:
                     logging.error(f"Failed to save context for channel {channel_id}")
         except Exception as e:
-            logging.error(f"Error saving context for {channel_id}: {e}")
+            log_error(f"saving context for {channel_id}", e)
     
-    def _write_json_atomic(self, data):
-        """Write JSON data atomically (legacy method, kept for compatibility)"""
-        # This method is no longer used but kept for compatibility
-        pass
 
 
 # Global context manager instance

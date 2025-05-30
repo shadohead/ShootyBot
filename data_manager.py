@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Any
 from filelock import FileLock
 from config import DATA_DIR
 from database import database_manager
+from utils import get_utc_timestamp, ensure_directory_exists, get_timestamp_string
 
 class UserData:
     """Represents a Discord user's persistent data"""
@@ -30,7 +31,7 @@ class UserData:
             self.total_sessions = data.get('total_sessions', 0)
             self.total_games_played = data.get('total_games_played', 0)
             self.session_history = data.get('session_history', [])
-            self.last_updated = data.get('last_updated', datetime.now(timezone.utc).isoformat())
+            self.last_updated = data.get('last_updated', get_utc_timestamp())
         else:
             # Create new user in database
             database_manager.create_or_update_user(self.discord_id)
@@ -38,7 +39,7 @@ class UserData:
             self.total_sessions = 0
             self.total_games_played = 0
             self.session_history = []
-            self.last_updated = datetime.now(timezone.utc).isoformat()
+            self.last_updated = get_utc_timestamp()
     
     def _update_compatibility_properties(self):
         """Update backward compatibility properties from primary account"""
@@ -194,7 +195,7 @@ class SessionData:
             if channel_id is not None and started_by is not None:
                 self.channel_id = channel_id
                 self.started_by = started_by
-                self.start_time = datetime.now(timezone.utc).isoformat()
+                self.start_time = get_utc_timestamp()
                 self.end_time = None
                 self.participants = []
                 self.game_name = None
@@ -270,8 +271,7 @@ class DataManager:
     
     def _ensure_data_dir(self):
         """Ensure data directory exists"""
-        if not os.path.exists(DATA_DIR):
-            os.makedirs(DATA_DIR)
+        ensure_directory_exists(DATA_DIR)
     
     def _check_and_migrate_if_needed(self):
         """Check if JSON files exist and SQLite database doesn't, then migrate"""
@@ -304,7 +304,7 @@ class DataManager:
                 if success:
                     logging.info("Auto-migration completed successfully")
                     # Create backup of JSON files
-                    backup_dir = os.path.join(DATA_DIR, f"json_backup_auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                    backup_dir = os.path.join(DATA_DIR, f"json_backup_auto_{get_timestamp_string()}")
                     os.makedirs(backup_dir)
                     
                     for filename in ['users.json', 'sessions.json', 'channel_data.json']:
@@ -371,10 +371,6 @@ class DataManager:
         sessions_data = database_manager.get_channel_sessions(channel_id, limit)
         return [SessionData(session['session_id']) for session in sessions_data]
     
-    def _write_json_atomic(self, file_path: str, data: Dict):
-        """Write JSON data atomically (legacy method, kept for compatibility)"""
-        # This method is no longer used but kept for compatibility
-        pass
 
 
 # Global data manager instance

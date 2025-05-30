@@ -4,6 +4,7 @@ from typing import Optional, Dict, Any, List
 import discord
 from data_manager import data_manager
 from config import HENRIK_API_KEY
+from utils import log_error
 
 class ValorantClient:
     """Client for interacting with Henrik's Valorant API"""
@@ -34,7 +35,7 @@ class ValorantClient:
                     return data['data']
                 return data
             elif response.status_code == 401:
-                logging.error("Henrik API now requires authentication. API key needed.")
+                log_error("Henrik API authentication", Exception("API key needed"))
                 return None
             elif response.status_code == 404:
                 logging.warning(f"Valorant account not found: {username}#{tag}")
@@ -43,11 +44,11 @@ class ValorantClient:
                 logging.warning("Rate limited by Valorant API")
                 return None
             else:
-                logging.error(f"Valorant API error {response.status_code}: {response.text}")
+                log_error(f"Valorant API request", Exception(f"Status {response.status_code}: {response.text}"))
                 return None
                 
         except Exception as e:
-            logging.error(f"Error fetching Valorant account info: {e}")
+            log_error("fetching Valorant account info", e)
             return None
     
     async def get_account_by_puuid(self, puuid: str) -> Optional[Dict[str, Any]]:
@@ -62,11 +63,11 @@ class ValorantClient:
                     return data['data']
                 return data
             else:
-                logging.error(f"Error fetching account by PUUID: {response.status_code}")
+                log_error("fetching account by PUUID", Exception(f"Status {response.status_code}"))
                 return None
                 
         except Exception as e:
-            logging.error(f"Error fetching account by PUUID: {e}")
+            log_error("fetching account by PUUID", e)
             return None
     
     async def link_account(self, discord_id: int, username: str, tag: str) -> Dict[str, Any]:
@@ -118,7 +119,7 @@ class ValorantClient:
             data_manager.save_user(discord_id)
             return True
         except Exception as e:
-            logging.error(f"Error unlinking account for {discord_id}: {e}")
+            log_error(f"unlinking account for {discord_id}", e)
             return False
     
     def get_linked_account(self, discord_id: int) -> Optional[Dict[str, str]]:
@@ -168,11 +169,11 @@ class ValorantClient:
                     return data['data']
                 return data
             else:
-                logging.error(f"Error fetching match history: {response.status_code}")
+                log_error("fetching match history", Exception(f"Status {response.status_code}"))
                 return None
                 
         except Exception as e:
-            logging.error(f"Error fetching match history: {e}")
+            log_error("fetching match history", e)
             return None
     
     def calculate_player_stats(self, matches: List[Dict[str, Any]], player_puuid: str) -> Dict[str, Any]:

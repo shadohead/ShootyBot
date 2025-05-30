@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from valorant_client import valorant_client
 import random
+from utils import log_error, format_time_ago
 
 class MatchTracker:
     """Tracks Discord members' Valorant matches and detects completed games"""
@@ -38,7 +39,7 @@ class MatchTracker:
                 await self._check_all_servers()
                 await asyncio.sleep(self.check_interval)
             except Exception as e:
-                logging.error(f"Error in match tracker: {e}")
+                log_error("in match tracker", e)
                 await asyncio.sleep(60)  # Wait 1 minute before retrying
     
     def stop_tracking(self):
@@ -52,7 +53,7 @@ class MatchTracker:
             try:
                 await self._check_server_matches(guild)
             except Exception as e:
-                logging.error(f"Error checking server {guild.id}: {e}")
+                log_error(f"checking server {guild.id}", e)
     
     async def _check_server_matches(self, guild: discord.Guild):
         """Check a specific server for finished matches"""
@@ -147,7 +148,7 @@ class MatchTracker:
                         await self._send_match_results(guild, match, discord_members_in_match)
                         
             except Exception as e:
-                logging.error(f"Error checking matches for {member.display_name}: {e}")
+                log_error(f"checking matches for {member.display_name}", e)
         
         # Clean up old matches
         for match_id in list(server_matches.keys()):
@@ -201,7 +202,7 @@ class MatchTracker:
             await channel.send(embed=embed)
             
         except Exception as e:
-            logging.error(f"Error sending match results: {e}")
+            log_error("sending match results", e)
     
     async def _create_match_embed(self, match: dict, discord_members: List[Dict]) -> discord.Embed:
         """Create a fun match results embed"""
@@ -238,15 +239,7 @@ class MatchTracker:
         
         # Calculate relative time
         if match_timestamp:
-            time_ago = datetime.now(timezone.utc) - match_timestamp
-            if time_ago.total_seconds() < 3600:  # Less than 1 hour
-                time_ago_str = f"{int(time_ago.total_seconds() // 60)} minutes ago"
-            elif time_ago.total_seconds() < 86400:  # Less than 1 day
-                hours = int(time_ago.total_seconds() // 3600)
-                time_ago_str = f"{hours} hour{'s' if hours != 1 else ''} ago"
-            else:
-                days = int(time_ago.total_seconds() // 86400)
-                time_ago_str = f"{days} day{'s' if days != 1 else ''} ago"
+            time_ago_str = format_time_ago(match_timestamp)
         else:
             time_ago_str = "Recently"
         
@@ -519,7 +512,7 @@ class MatchTracker:
                     return embed
                     
             except Exception as e:
-                logging.error(f"Error in manual check for {member.display_name}: {e}")
+                log_error(f"in manual check for {member.display_name}", e)
         
         return None
 
