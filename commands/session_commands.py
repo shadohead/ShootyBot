@@ -4,6 +4,7 @@ from datetime import datetime
 import pytz
 from dateutil import parser
 from discord.ext import commands
+from base_commands import BaseCommandCog
 from context_manager import context_manager
 from handlers.message_formatter import get_ping_shooty_message, party_status_message
 from handlers.reaction_handler import add_react_options
@@ -11,18 +12,16 @@ from data_manager import data_manager
 from config import *
 from utils import format_time_for_display
 
-class SessionCommands(commands.Cog):
+class SessionCommands(BaseCommandCog):
     """Commands for managing party sessions"""
-    
-    def __init__(self, bot):
-        self.bot = bot
     
     @commands.hybrid_command(
         name="st", 
         description="Starts a Fresh Shooty Session (FSS™)"
     )
     async def start_session(self, ctx):
-        logging.info("Starting new shooty session")
+        await self.defer_if_slash(ctx)
+        self.logger.info("Starting new shooty session")
         
         channel_id = ctx.channel.id
         shooty_context = context_manager.get_context(channel_id)
@@ -73,7 +72,7 @@ class SessionCommands(commands.Cog):
         description="Prints party status"
     )
     async def session_status(self, ctx):
-        logging.info("Printing Status")
+        self.logger.info("Printing Status")
         
         channel_id = ctx.channel.id
         shooty_context = context_manager.get_context(channel_id)
@@ -86,13 +85,13 @@ class SessionCommands(commands.Cog):
         description="Mentions everyone in the party"
     )
     async def mention_session(self, ctx):
-        logging.info("Mentioning everyone in the party.")
+        self.logger.info("Mentioning everyone in the party.")
         
         channel_id = ctx.channel.id
         shooty_context = context_manager.get_context(channel_id)
         
         if not shooty_context.bot_soloq_user_set and not shooty_context.bot_fullstack_user_set:
-            await ctx.send(MESSAGES["NO_MEMBERS"])
+            await self.send_error_embed(ctx, "No Members", MESSAGES["NO_MEMBERS"])
             return
         
         mention_message = "".join(
@@ -114,19 +113,21 @@ class SessionCommands(commands.Cog):
         # Restore backup
         shooty_context.restore_state()
         
-        logging.info(
+        self.logger.info(
             "Restoring shooty_context: " + 
             str([user.name for user in shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set)])
         )
         
-        await ctx.channel.send(MESSAGES["RESTORED_SESSION"])
-        await ctx.reply(party_status_message(ctx.channel, shooty_context))
+        await self.send_success_embed(ctx, "Session Restored", MESSAGES["RESTORED_SESSION"])
+        await ctx.send(party_status_message(ctx.channel, shooty_context))
     
     @commands.hybrid_command(
         name="shootytime",
         description="Schedule a time to ping the group. You must specify AM/PM or input the time as military time."
     )
     async def scheduled_session(self, ctx, game_time):
+        await self.defer_if_slash(ctx)
+        
         channel_id = ctx.channel.id
         shooty_context = context_manager.get_context(channel_id)
         
@@ -144,10 +145,10 @@ class SessionCommands(commands.Cog):
             seconds_to_wait = (utc_scheduled_time - datetime.now(pytz.UTC)).total_seconds()
             
             if seconds_to_wait < 0:
-                await ctx.send(MESSAGES["PAST_TIME"])
+                await self.send_error_embed(ctx, "Invalid Time", MESSAGES["PAST_TIME"])
                 return
             elif seconds_to_wait > MAX_SCHEDULED_HOURS * 3600:  # Convert hours to seconds
-                await ctx.send(MESSAGES["TOO_FAR_FUTURE"])
+                await self.send_error_embed(ctx, "Too Far in Future", MESSAGES["TOO_FAR_FUTURE"])
                 return
             
             message = await ctx.send(f"Shooty at {format_time_for_display(scheduled_time)}?")
@@ -158,7 +159,7 @@ class SessionCommands(commands.Cog):
             await ctx.reply(party_status_message(ctx.channel, shooty_context))
             
         except ValueError:
-            await ctx.send(MESSAGES["INVALID_TIME"])
+            await self.send_error_embed(ctx, "Invalid Time Format", MESSAGES["INVALID_TIME"])
     
     @commands.hybrid_command(
         name="shootyhelp", 
@@ -460,9 +461,9 @@ class SessionCommands(commands.Cog):
         
         if hasattr(shooty_context, 'current_session_id') and shooty_context.current_session_id:
             await self._end_current_session(shooty_context)
-            await ctx.send("✅ Session ended and stats recorded!")
+            await self.send_success_embed(ctx, "Session Ended", "Session ended and stats recorded!")
         else:
-            await ctx.send("❌ No active session to end.")
+            await self.send_error_embed(ctx, "No Active Session", "No active session to end.")
     
     async def _end_current_session(self, shooty_context):
         """Helper method to end the current session"""
@@ -490,7 +491,7 @@ class SessionCommands(commands.Cog):
             session.end_session()
             data_manager.save_session(session_id)
             
-            logging.info(f"Ended session {session_id} with {len(all_users)} participants")
+            self.logger.info(f"Ended session {session_id} with {len(all_users)} participants")
         
         # Clear session reference
         shooty_context.current_session_id = None
