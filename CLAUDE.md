@@ -33,10 +33,13 @@ py -3 .\bot.py  # Windows
 # Run in production (using screen with auto-update)
 ./run_python_script.sh
 
-# CI/CD Auto-Update Commands
-./setup_auto_update.sh            # Setup automatic daily updates at 5 AM
+# CI/CD Auto-Update & Monitoring Commands
+./setup_auto_update.sh            # Setup auto-start, monitoring & daily updates
+./run_python_script.sh --start         # Start bot manually
+./run_python_script.sh --monitor       # Run health check manually
 ./run_python_script.sh --force-update  # Force immediate update check
 ./run_python_script.sh --check-only    # Check for updates without applying
+tail -f monitor.log                # Monitor health check logs
 tail -f update.log                 # Monitor auto-update logs
 tail -f cron.log                   # Monitor cron execution logs
 

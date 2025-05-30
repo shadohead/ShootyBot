@@ -6,16 +6,22 @@
 # Configuration
 SCREEN_NAME="shooty"
 LOG_FILE="update.log"
+MONITOR_LOG_FILE="monitor.log"
 UPDATE_CHECK_HOUR=5  # 5 AM
 LAST_CHECK_FILE=".last_update_check"
+HEALTH_CHECK_FILE=".bot_health"
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
-# Logging function
+# Logging functions
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "${LOG_FILE}"
+}
+
+monitor_log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "${MONITOR_LOG_FILE}"
 }
 
 # Function to check for updates
@@ -70,16 +76,70 @@ apply_updates() {
     fi
 }
 
+# Function to check if bot is healthy
+is_bot_healthy() {
+    # Check if screen session exists
+    if ! screen -list | grep -q "${SCREEN_NAME}"; then
+        return 1  # Bot not running
+    fi
+    
+    # Check if health file is recent (updated within last 5 minutes)
+    if [ -f "$HEALTH_CHECK_FILE" ]; then
+        local last_health=$(stat -f %m "$HEALTH_CHECK_FILE" 2>/dev/null || stat -c %Y "$HEALTH_CHECK_FILE" 2>/dev/null)
+        local current_time=$(date +%s)
+        local time_diff=$((current_time - last_health))
+        
+        if [ $time_diff -gt 300 ]; then  # 5 minutes
+            return 1  # Health check is stale
+        fi
+    else
+        return 1  # No health file
+    fi
+    
+    return 0  # Bot is healthy
+}
+
 # Function to start the bot
 start_bot() {
-    log "🚀 Starting bot..."
+    monitor_log "🚀 Starting bot..."
+    
+    # Kill any existing screen session first
+    if screen -list | grep -q "${SCREEN_NAME}"; then
+        monitor_log "🛑 Stopping existing bot instance..."
+        screen -S "${SCREEN_NAME}" -X quit
+        sleep 3
+    fi
+    
+    # Start new instance
     screen -dmS ${SCREEN_NAME} ./run.sh
-    sleep 2
+    sleep 3
     
     if screen -list | grep -q "${SCREEN_NAME}"; then
-        log "✅ Bot started successfully"
+        monitor_log "✅ Bot started successfully"
+        # Update health file
+        touch "$HEALTH_CHECK_FILE"
     else
-        log "❌ Failed to start bot"
+        monitor_log "❌ Failed to start bot"
+        return 1
+    fi
+}
+
+# Function to monitor bot health and restart if needed
+monitor_bot() {
+    if ! is_bot_healthy; then
+        monitor_log "⚠️ Bot health check failed - restarting..."
+        start_bot
+        
+        # Wait and check again
+        sleep 5
+        if is_bot_healthy; then
+            monitor_log "✅ Bot successfully restarted"
+        else
+            monitor_log "❌ Bot restart failed - will retry next check"
+        fi
+    else
+        # Update health file to show monitoring is active
+        touch "$HEALTH_CHECK_FILE"
     fi
 }
 
@@ -109,6 +169,13 @@ mark_check_done() {
 
 # Main logic
 
+# If --monitor is passed, run health monitoring
+if [ "$1" = "--monitor" ]; then
+    monitor_log "🔍 Health check monitoring"
+    monitor_bot
+    exit 0
+fi
+
 # If --force-update is passed, force an update check
 if [ "$1" = "--force-update" ]; then
     log "🔧 Force update requested"
@@ -127,6 +194,12 @@ if [ "$1" = "--check-only" ]; then
     exit $?
 fi
 
+# If --start is passed, just start the bot
+if [ "$1" = "--start" ]; then
+    start_bot
+    exit 0
+fi
+
 # Daily update check logic
 if should_check_updates; then
     log "⏰ Daily update check triggered"
@@ -136,10 +209,5 @@ if should_check_updates; then
     mark_check_done
 fi
 
-# Check if the screen session is already running
-if ! screen -list | grep -q "${SCREEN_NAME}"; then
-    log "🔄 Bot not running, starting..."
-    start_bot
-else
-    log "✅ Bot is already running"
-fi
+# Always run health monitoring to ensure bot is running
+monitor_bot

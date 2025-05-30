@@ -1,8 +1,10 @@
 import logging
 import sys
+import os
+import time
 from typing import List, Optional
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import asyncio
 
 from config import (
@@ -33,6 +35,21 @@ class ShootyBot(commands.Bot):
         
         self.match_tracker: Optional[object] = None
         self._cogs_loaded: bool = False
+        self.health_check_file = ".bot_health"
+        
+    @tasks.loop(minutes=2)
+    async def health_check_task(self) -> None:
+        """Update health check file every 2 minutes."""
+        try:
+            with open(self.health_check_file, 'w') as f:
+                f.write(str(int(time.time())))
+        except Exception as e:
+            logging.error(f"Failed to update health check file: {e}")
+    
+    @health_check_task.before_loop
+    async def before_health_check(self) -> None:
+        """Wait until bot is ready before starting health checks."""
+        await self.wait_until_ready()
         
     def setup_logging(self) -> None:
         """Configure logging with proper formatting."""
@@ -70,6 +87,10 @@ class ShootyBot(commands.Bot):
         
         # Start match tracker
         await self.start_match_tracker()
+        
+        # Start health check task
+        self.health_check_task.start()
+        logging.info("💗 Health monitoring started")
         
         logging.info("🤖 ShootyBot is fully operational!")
     
