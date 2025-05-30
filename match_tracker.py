@@ -18,11 +18,14 @@ class MatchTracker:
     LEG_SHOT_THRESHOLD_PERCENT = 15
     HEADSHOT_THRESHOLD_PERCENT = 30
     HIGH_DAMAGE_THRESHOLD = 3000
+    STACK_INACTIVITY_HOURS = 1.5  # Auto-end stacks after 1.5 hours of no games
     
     def __init__(self, bot: discord.Client) -> None:
         self.bot = bot
         self.tracked_members: Dict[int, Dict[str, Any]] = {}  # {member_id: {'last_checked': datetime, 'last_match_id': str}}
         self.recent_matches: Dict[int, Dict[str, Dict[str, Any]]] = {}   # {server_id: {match_id: {'timestamp': datetime, 'members': []}}}
+        self.stack_last_activity: Dict[int, datetime] = {}  # {channel_id: last_match_timestamp}
+        self.stack_has_played: Dict[int, bool] = {}  # {channel_id: has_had_games}
         self.check_interval: int = self.CHECK_INTERVAL_SECONDS
         self.running: bool = False
         
@@ -37,6 +40,7 @@ class MatchTracker:
         while self.running:
             try:
                 await self._check_all_servers()
+                await self._check_inactive_stacks()
                 await asyncio.sleep(self.check_interval)
             except Exception as e:
                 log_error("in match tracker", e)
@@ -167,6 +171,9 @@ class MatchTracker:
                         
                         # Send match results to appropriate channel
                         await self._send_match_results(guild, latest_match, discord_members_in_match)
+                        
+                        # Update stack activity tracking
+                        await self._update_stack_activity(guild, discord_members_in_match, latest_match)
                         
             except Exception as e:
                 log_error(f"checking matches for {member.display_name}", e)
@@ -490,6 +497,129 @@ class MatchTracker:
             stats['highlights'].extend(random.sample(fun_facts, min(2, len(fun_facts))))
         
         return stats
+    
+    async def _update_stack_activity(self, guild: discord.Guild, discord_members_in_match: List[Dict], match_data: Dict[str, Any]) -> None:
+        """Update stack activity tracking when matches are found"""
+        match_timestamp = None
+        
+        # Get match timestamp
+        started_at = match_data.get('metadata', {}).get('game_start', '')
+        if started_at:
+            try:
+                match_timestamp = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+            except:
+                match_timestamp = datetime.now(timezone.utc)
+        else:
+            match_timestamp = datetime.now(timezone.utc)
+        
+        # Find which channels have these members in their stacks
+        for channel in guild.text_channels:
+            context = context_manager.get_context(channel.id)
+            all_stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
+            
+            if not all_stack_users:
+                continue
+            
+            # Check if any of the match participants are in this channel's stack
+            stack_members_in_match = []
+            for dm in discord_members_in_match:
+                if dm['member'] in all_stack_users:
+                    stack_members_in_match.append(dm['member'])
+            
+            # If stack members were in this match, update activity
+            if len(stack_members_in_match) >= self.MIN_DISCORD_MEMBERS:
+                self.stack_last_activity[channel.id] = match_timestamp
+                self.stack_has_played[channel.id] = True
+                logging.info(f"Updated activity for stack in channel {channel.id} - {len(stack_members_in_match)} members played")
+    
+    async def _check_inactive_stacks(self) -> None:
+        """Check for stacks that have been inactive and auto-end them"""
+        current_time = datetime.now(timezone.utc)
+        inactivity_cutoff = timedelta(hours=self.STACK_INACTIVITY_HOURS)
+        
+        for guild in self.bot.guilds:
+            try:
+                for channel in guild.text_channels:
+                    context = context_manager.get_context(channel.id)
+                    all_stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
+                    
+                    # Skip if no one is in the stack
+                    if not all_stack_users:
+                        # Clean up tracking data for empty stacks
+                        if channel.id in self.stack_last_activity:
+                            del self.stack_last_activity[channel.id]
+                        if channel.id in self.stack_has_played:
+                            del self.stack_has_played[channel.id]
+                        continue
+                    
+                    # Only check stacks that have had gaming activity
+                    if not self.stack_has_played.get(channel.id, False):
+                        continue
+                    
+                    # Check if stack has been inactive
+                    last_activity = self.stack_last_activity.get(channel.id)
+                    if last_activity and (current_time - last_activity) > inactivity_cutoff:
+                        await self._auto_end_inactive_stack(channel, context, current_time - last_activity)
+                        
+            except Exception as e:
+                log_error(f"checking inactive stacks for {guild.id}", e)
+    
+    async def _auto_end_inactive_stack(self, channel: discord.TextChannel, context, inactivity_duration: timedelta) -> None:
+        """Automatically end an inactive stack"""
+        try:
+            # Get the session commands cog to end the session properly
+            session_cog = self.bot.get_cog('SessionCommands')
+            if session_cog:
+                # Use the cog's method to properly end the session
+                await session_cog._end_current_session(context)
+            else:
+                # Fallback: end session manually using data manager
+                if hasattr(context, 'current_session_id') and context.current_session_id:
+                    from data_manager import data_manager
+                    session = data_manager.sessions.get(context.current_session_id)
+                    if session:
+                        # Add all current participants
+                        all_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
+                        for user in all_users:
+                            session.add_participant(user.id)
+                            user_data = data_manager.get_user(user.id)
+                            user_data.add_session_to_history(context.current_session_id)
+                            data_manager.save_user(user.id)
+                        
+                        # Check if party was full
+                        if len(all_users) >= context.party_max_size:
+                            session.was_full = True
+                        
+                        # End the session
+                        session.end_session()
+                        data_manager.save_session(context.current_session_id)
+                    
+                    # Clear session reference
+                    context.current_session_id = None
+            
+            # Clear users from the stack
+            context.reset_users()
+            
+            # Clean up tracking data
+            if channel.id in self.stack_last_activity:
+                del self.stack_last_activity[channel.id]
+            if channel.id in self.stack_has_played:
+                del self.stack_has_played[channel.id]
+            
+            # Send notification message
+            hours = int(inactivity_duration.total_seconds() // 3600)
+            minutes = int((inactivity_duration.total_seconds() % 3600) // 60)
+            
+            auto_end_message = (
+                f"🤖 **Auto-ended inactive stack** after {hours}h {minutes}m of no games detected.\n"
+                f"Start a new session with `/st` when you're ready to play again!"
+            )
+            
+            await channel.send(auto_end_message)
+            logging.info(f"Auto-ended inactive stack in channel {channel.id} after {inactivity_duration}")
+            
+        except Exception as e:
+            log_error(f"auto-ending stack in channel {channel.id}", e)
     
     async def manual_check_recent_match(self, guild: discord.Guild, member: discord.Member = None) -> Optional[discord.Embed]:
         """Manually check for a recent match and return embed if found"""
