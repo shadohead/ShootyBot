@@ -186,8 +186,15 @@ class ValorantClient(BaseAPIClient):
         
         return playing_members
     
-    async def get_match_history(self, username: str, tag: str, size: int = 5) -> Optional[List[Dict[str, Any]]]:
-        """Get match history for a player"""
+    async def get_match_history(self, username: str, tag: str, size: int = 5, mode: str = None) -> Optional[List[Dict[str, Any]]]:
+        """Get match history for a player
+        
+        Args:
+            username: Valorant username
+            tag: Valorant tag
+            size: Number of matches to fetch (default 5)
+            mode: Game mode filter (competitive, unrated, replication, etc.)
+        """
         try:
             # Match history uses v3 API with different base URL
             # Temporarily change the base URL for this request
@@ -195,9 +202,13 @@ class ValorantClient(BaseAPIClient):
             self.base_url = "https://api.henrikdev.xyz/valorant/v3"
             
             try:
+                params = {'size': size}
+                if mode:
+                    params['filter'] = mode
+                    
                 response = await self.get(
                     f'matches/na/{username}/{tag}',
-                    params={'size': size},
+                    params=params,
                     cache_ttl=180  # Cache for 3 minutes
                 )
                 
@@ -217,8 +228,14 @@ class ValorantClient(BaseAPIClient):
             log_error("fetching match history", e)
             return None
     
-    def calculate_player_stats(self, matches: List[Dict[str, Any]], player_puuid: str) -> Dict[str, Any]:
-        """Calculate comprehensive player statistics from match history"""
+    def calculate_player_stats(self, matches: List[Dict[str, Any]], player_puuid: str, competitive_only: bool = True) -> Dict[str, Any]:
+        """Calculate comprehensive player statistics from match history
+        
+        Args:
+            matches: List of match data from API
+            player_puuid: Player's PUUID to find in matches
+            competitive_only: If True, only calculate stats from competitive matches
+        """
         if not matches:
             return {}
         
@@ -265,6 +282,17 @@ class ValorantClient(BaseAPIClient):
         for match in matches:
             if not match.get('is_available', True):
                 continue
+            
+            # Filter by game mode if requested
+            if competitive_only:
+                metadata = match.get('metadata', {})
+                mode = metadata.get('mode', '').lower()
+                mode_id = metadata.get('mode_id', '').lower()
+                queue = metadata.get('queue', '').lower()
+                
+                # Skip non-competitive matches
+                if not any('competitive' in field for field in [mode, mode_id, queue]):
+                    continue
                 
             # Find the player in this match
             player_data = None

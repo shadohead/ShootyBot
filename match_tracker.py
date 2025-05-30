@@ -100,11 +100,12 @@ class MatchTracker:
                 if not primary_account:
                     continue
                 
-                # Get recent matches
+                # Get recent matches (competitive only)
                 matches = await valorant_client.get_match_history(
                     primary_account['username'],
                     primary_account['tag'],
-                    size=3  # Check last 3 matches
+                    size=3,  # Check last 3 matches
+                    mode='competitive'  # Only track competitive matches
                 )
                 
                 if not matches:
@@ -493,7 +494,8 @@ class MatchTracker:
                 matches = await valorant_client.get_match_history(
                     primary_account['username'],
                     primary_account['tag'],
-                    size=1
+                    size=1,
+                    mode='competitive'  # Only check competitive matches
                 )
                 
                 if not matches:

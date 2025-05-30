@@ -417,11 +417,12 @@ class ValorantCommands(GameCommandCog):
                 if not selected_account:
                     selected_account = accounts[0]
             
-            # Fetch match history
+            # Fetch match history (competitive only for accurate stats)
             matches = await valorant_client.get_match_history(
                 selected_account['username'], 
                 selected_account['tag'], 
-                size=20  # Analyze last 20 matches
+                size=20,  # Analyze last 20 matches
+                mode='competitive'  # Only analyze competitive matches
             )
             
             if not matches:
