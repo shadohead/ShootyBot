@@ -6,9 +6,10 @@ from typing import Dict, List, Optional, Any
 from valorant_client import valorant_client
 import random
 from utils import log_error, format_time_ago
+from context_manager import context_manager
 
 class MatchTracker:
-    """Tracks Discord members' Valorant matches by polling for newly completed games every minute"""
+    """Tracks Discord members' Valorant matches by polling for newly completed games in active shooty stacks"""
     
     # Configuration constants
     CHECK_INTERVAL_SECONDS = 60  # 1 minute
@@ -31,7 +32,7 @@ class MatchTracker:
             return
         
         self.running = True
-        logging.info("Starting match tracker with 1-minute polling...")
+        logging.info("Starting match tracker with 1-minute polling for active shooty stacks...")
         
         while self.running:
             try:
@@ -55,33 +56,49 @@ class MatchTracker:
                 log_error(f"checking server {guild.id}", e)
     
     async def _check_server_matches(self, guild: discord.Guild) -> None:
-        """Check a specific server for finished matches by polling all linked members"""
+        """Check a specific server for finished matches by polling members in active shooty stacks"""
         current_time = datetime.now(timezone.utc)
         members_to_check = []
         
-        # Find all members with linked Valorant accounts and check them all
-        for member in guild.members:
-            if member.bot:
+        # Find channels with active shooty sessions in this guild
+        for channel in guild.text_channels:
+            context = context_manager.get_context(channel.id)
+            
+            # Get all users in the current stack (soloq + fullstack)
+            all_stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
+            
+            # Skip if no one is in the stack
+            if not all_stack_users:
                 continue
+            
+            # Convert Discord user objects to member objects and check if they have linked accounts
+            for user in all_stack_users:
+                # user is a Discord Member object
+                if user.bot:
+                    continue
+                    
+                accounts = valorant_client.get_all_linked_accounts(user.id)
+                if not accounts:
+                    continue
                 
-            accounts = valorant_client.get_all_linked_accounts(member.id)
-            if not accounts:
-                continue
-            
-            # Update last checked time
-            if member.id not in self.tracked_members:
-                self.tracked_members[member.id] = {
-                    'last_checked': current_time,
-                    'last_match_id': None
-                }
-            else:
-                self.tracked_members[member.id]['last_checked'] = current_time
-            
-            # Add all linked members to check list for polling
-            members_to_check.append(member)
+                # Update last checked time
+                if user.id not in self.tracked_members:
+                    self.tracked_members[user.id] = {
+                        'last_checked': current_time,
+                        'last_match_id': None
+                    }
+                else:
+                    self.tracked_members[user.id]['last_checked'] = current_time
+                
+                # Add to check list if not already added
+                if user not in members_to_check:
+                    members_to_check.append(user)
         
         if members_to_check:
+            logging.debug(f"Checking {len(members_to_check)} stack members for new matches in {guild.name}")
             await self._check_recent_matches(guild, members_to_check)
+        else:
+            logging.debug(f"No active stack members with linked Valorant accounts in {guild.name}")
     
     async def _check_recent_matches(self, guild: discord.Guild, members: List[discord.Member]) -> None:
         """Check recent matches for specific members"""
@@ -320,7 +337,7 @@ class MatchTracker:
                     inline=False
                 )
         
-        embed.set_footer(text="🔍 Auto-detected via polling • ShootyBot tracking your epic moments!")
+        embed.set_footer(text="🔍 Auto-detected from shooty stack • ShootyBot tracking your epic moments!")
         return embed
     
     def _calculate_fun_match_stats(self, match_data: dict, discord_members: List[Dict]) -> Dict:
