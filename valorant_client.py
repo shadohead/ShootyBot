@@ -264,6 +264,7 @@ class ValorantClient(BaseAPIClient):
             'first_bloods': 0,
             'first_deaths': 0,
             'total_rounds_played': 0,
+            'rounds_survived': 0,
             'mvp_count': 0,
             'match_mvp_count': 0,
             'pistol_rounds_won': 0,
@@ -437,7 +438,16 @@ class ValorantClient(BaseAPIClient):
                 stats['first_blood_rate'] = (stats['first_bloods'] / stats['total_rounds_played']) * 100
             else:
                 stats['first_blood_rate'] = 0
-            stats['survival_rate'] = ((stats['total_matches'] - stats['first_deaths']) / stats['total_matches']) * 100
+            # Survival rate: estimate based on deaths per round across all matches
+            # Use actual match rounds for accurate calculation
+            actual_match_rounds = sum(match.get('metadata', {}).get('rounds_played', 0) for match in matches if match.get('is_available', True) and self._player_in_match(match, player_puuid))
+            if actual_match_rounds > 0:
+                # Calculate estimated survival rate based on total deaths vs total rounds
+                death_rate = stats['total_deaths'] / actual_match_rounds
+                # Survival rate = percentage of rounds where player didn't die
+                stats['survival_rate'] = max(0, (1.0 - death_rate) * 100)
+            else:
+                stats['survival_rate'] = 0
             
             if stats['pistol_rounds_played'] > 0:
                 stats['pistol_win_rate'] = (stats['pistol_rounds_won'] / stats['pistol_rounds_played']) * 100
@@ -514,25 +524,28 @@ class ValorantClient(BaseAPIClient):
         
         if rounds_data and player_puuid:
             # Analyze each round for accurate stats
-            self._analyze_rounds_for_player(rounds_data, player_puuid, stats, match_won)
+            self._analyze_rounds_for_player(rounds_data, player_puuid, stats, match_won, match)
         else:
             # Fallback to basic estimations if no round data available
             self._calculate_basic_estimates(player_data, stats, rounds_played, match_won)
     
-    def _analyze_rounds_for_player(self, rounds_data: List[Dict[str, Any]], player_puuid: str, stats: Dict[str, Any], match_won: bool):
+    def _analyze_rounds_for_player(self, rounds_data: List[Dict[str, Any]], player_puuid: str, stats: Dict[str, Any], match_won: bool, match_data: Dict[str, Any] = None):
         """Analyze round-by-round data for accurate first blood, clutch, and multikill calculations"""
         for round_num, round_data in enumerate(rounds_data):
             # Analyze first bloods in this round
             self._analyze_first_bloods_in_round(round_data, player_puuid, stats)
             
             # Analyze clutches in this round
-            self._analyze_clutches_in_round(round_data, player_puuid, stats)
+            self._analyze_clutches_in_round(round_data, player_puuid, stats, match_data)
             
             # Analyze multikills in this round
             self._analyze_multikills_in_round(round_data, player_puuid, stats)
             
+            # Analyze survival in this round
+            self._analyze_survival_in_round(round_data, player_puuid, stats)
+            
             # Analyze pistol/eco rounds
-            self._analyze_economy_rounds(round_data, round_num, player_puuid, stats, match_won)
+            self._analyze_economy_rounds(round_data, round_num, player_puuid, stats, match_won, match_data)
     
     def _analyze_first_bloods_in_round(self, round_data: Dict[str, Any], player_puuid: str, stats: Dict[str, Any]):
         """Analyze first blood events in a round"""
@@ -581,7 +594,7 @@ class ValorantClient(BaseAPIClient):
                     stats['first_deaths'] += 1
                     break
     
-    def _analyze_clutches_in_round(self, round_data: Dict[str, Any], player_puuid: str, stats: Dict[str, Any]):
+    def _analyze_clutches_in_round(self, round_data: Dict[str, Any], player_puuid: str, stats: Dict[str, Any], match_data: Dict[str, Any] = None):
         """Analyze clutch situations in a round"""
         player_stats_in_round = round_data.get('player_stats', [])
         winning_team = round_data.get('winning_team', '')
@@ -619,17 +632,17 @@ class ValorantClient(BaseAPIClient):
             if our_kills_in_round >= 4:
                 # Likely a 1v4 or 1v5 clutch
                 stats['clutches_attempted']['1v5'] += 1
-                if winning_team and self._player_team_won_round(player_puuid, winning_team, round_data):
+                if winning_team and self._player_team_won_round(player_puuid, winning_team, match_data):
                     stats['clutches_won']['1v5'] += 1
             elif our_kills_in_round >= 3:
                 # Likely a 1v3 clutch
                 stats['clutches_attempted']['1v3'] += 1
-                if winning_team and self._player_team_won_round(player_puuid, winning_team, round_data):
+                if winning_team and self._player_team_won_round(player_puuid, winning_team, match_data):
                     stats['clutches_won']['1v3'] += 1
             elif our_kills_in_round >= 2:
                 # Likely a 1v2 clutch
                 stats['clutches_attempted']['1v2'] += 1
-                if winning_team and self._player_team_won_round(player_puuid, winning_team, round_data):
+                if winning_team and self._player_team_won_round(player_puuid, winning_team, match_data):
                     stats['clutches_won']['1v2'] += 1
     
     def _analyze_multikills_in_round(self, round_data: Dict[str, Any], player_puuid: str, stats: Dict[str, Any]):
@@ -659,14 +672,33 @@ class ValorantClient(BaseAPIClient):
         elif kills_in_round >= 2:
             stats['multikills']['2k'] += 1
     
-    def _analyze_economy_rounds(self, round_data: Dict[str, Any], round_num: int, player_puuid: str, stats: Dict[str, Any], match_won: bool):
+    def _analyze_survival_in_round(self, round_data: Dict[str, Any], player_puuid: str, stats: Dict[str, Any]):
+        """Analyze whether the player survived the round (didn't die)"""
+        player_stats_in_round = round_data.get('player_stats', [])
+        
+        # Check if our player died in this round by looking at all kill events
+        player_died = False
+        
+        for ps in player_stats_in_round:
+            for event in ps.get('kill_events', []):
+                if event.get('victim_puuid') == player_puuid:
+                    player_died = True
+                    break
+            if player_died:
+                break
+        
+        # If player didn't die, they survived the round
+        if not player_died:
+            stats['rounds_survived'] += 1
+    
+    def _analyze_economy_rounds(self, round_data: Dict[str, Any], round_num: int, player_puuid: str, stats: Dict[str, Any], match_won: bool, match_data: Dict[str, Any] = None):
         """Analyze pistol and eco rounds"""
         # Pistol rounds are rounds 0 and 12 (first round of each half)
         if round_num == 0 or round_num == 12:
             stats['pistol_rounds_played'] += 1
             
             winning_team = round_data.get('winning_team', '')
-            if self._player_team_won_round(player_puuid, winning_team, round_data):
+            if self._player_team_won_round(player_puuid, winning_team, match_data):
                 stats['pistol_rounds_won'] += 1
         
         # Eco round detection would require economy data analysis
@@ -681,15 +713,48 @@ class ValorantClient(BaseAPIClient):
                 if loadout_value and loadout_value < 2000:  # Less than $2000 loadout
                     stats['eco_rounds_played'] += 1
                     winning_team = round_data.get('winning_team', '')
-                    if self._player_team_won_round(player_puuid, winning_team, round_data):
+                    if self._player_team_won_round(player_puuid, winning_team, match_data):
                         stats['eco_rounds_won'] += 1
                 break
     
-    def _player_team_won_round(self, player_puuid: str, winning_team: str, round_data: Dict[str, Any]) -> bool:
+    def _player_team_won_round(self, player_puuid: str, winning_team: str, match_data: Dict[str, Any]) -> bool:
         """Check if the player's team won the round"""
-        # This is a simplified check - would need proper team tracking
-        # For now, return True if winning_team exists (indicating some team won)
-        return bool(winning_team)
+        if not winning_team or not match_data:
+            return False
+        
+        # Get the player's team from match-level data
+        player_team = self._get_player_team(player_puuid, match_data)
+        if not player_team:
+            return False
+        
+        # Check if the player's team matches the winning team
+        # The winning_team format might be 'Red' or 'Blue'
+        return player_team.lower() == winning_team.lower()
+    
+    def _get_player_team(self, player_puuid: str, match_data: Dict[str, Any]) -> str:
+        """Get the team (Red/Blue) that a player is on"""
+        all_players = match_data.get('players', {}).get('all_players', [])
+        
+        for player in all_players:
+            if player.get('puuid') == player_puuid:
+                return player.get('team', '')
+        
+        # Fallback: check team-specific player lists
+        players_data = match_data.get('players', {})
+        
+        # Check red team
+        red_players = players_data.get('red', [])
+        for player in red_players:
+            if player.get('puuid') == player_puuid:
+                return 'Red'
+        
+        # Check blue team  
+        blue_players = players_data.get('blue', [])
+        for player in blue_players:
+            if player.get('puuid') == player_puuid:
+                return 'Blue'
+        
+        return ''
     
     def _calculate_basic_estimates(self, player_data: Dict[str, Any], stats: Dict[str, Any], rounds_played: int, match_won: bool):
         """Fallback to basic estimations if no round data available"""
@@ -726,6 +791,16 @@ class ValorantClient(BaseAPIClient):
             stats['pistol_rounds_played'] += 2
             if match_won:
                 stats['pistol_rounds_won'] += 1
+        
+        # Basic survival estimation (estimate rounds survived based on deaths)
+        deaths = player_stats.get('deaths', 0)
+        if rounds_played > 0:
+            # Estimate survival rate: assume death rate correlates with deaths per round
+            death_rate = deaths / rounds_played
+            # Estimate rounds survived (conservative estimation)
+            estimated_survival_rate = max(0.3, 1.0 - death_rate)  # At least 30% survival
+            estimated_rounds_survived = int(rounds_played * estimated_survival_rate)
+            stats['rounds_survived'] += estimated_rounds_survived
         
         # Shot tracking (estimate from hit stats)
         total_shots_hit = player_stats.get('headshots', 0) + player_stats.get('bodyshots', 0) + player_stats.get('legshots', 0)
