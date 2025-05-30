@@ -5,6 +5,7 @@ from data_manager import data_manager
 from config import HENRIK_API_KEY
 from utils import log_error
 from api_clients import BaseAPIClient, RateLimitInfo, APIResponse
+from database import database_manager
 
 class ValorantClient(BaseAPIClient):
     """Client for interacting with Henrik's Valorant API"""
@@ -60,13 +61,22 @@ class ValorantClient(BaseAPIClient):
     async def get_account_info(self, username: str, tag: str) -> Optional[Dict[str, Any]]:
         """Get account information by username and tag"""
         try:
+            # Check database storage first
+            stored_account = database_manager.get_stored_account(username=username, tag=tag)
+            if stored_account:
+                logging.debug(f"Using stored account info for {username}#{tag}")
+                return stored_account
+            
             response = await self.get(f'account/{username}/{tag}', cache_ttl=300)
             
             if response.success:
                 # Henrik API wraps data in 'data' field
-                if 'data' in response.data:
-                    return response.data['data']
-                return response.data
+                account_data = response.data['data'] if 'data' in response.data else response.data
+                
+                # Store the account data permanently
+                database_manager.store_account(account_data, username=username, tag=tag)
+                
+                return account_data
             elif response.status_code == 401:
                 log_error("Henrik API authentication", Exception("API key needed"))
                 return None
@@ -84,13 +94,22 @@ class ValorantClient(BaseAPIClient):
     async def get_account_by_puuid(self, puuid: str) -> Optional[Dict[str, Any]]:
         """Get account information by PUUID"""
         try:
+            # Check database storage first
+            stored_account = database_manager.get_stored_account(puuid=puuid)
+            if stored_account:
+                logging.debug(f"Using stored account info for PUUID {puuid}")
+                return stored_account
+            
             response = await self.get(f'by-puuid/account/{puuid}', cache_ttl=300)
             
             if response.success:
                 # Henrik API wraps data in 'data' field
-                if 'data' in response.data:
-                    return response.data['data']
-                return response.data
+                account_data = response.data['data'] if 'data' in response.data else response.data
+                
+                # Store the account data permanently
+                database_manager.store_account(account_data, puuid=puuid)
+                
+                return account_data
             else:
                 log_error("fetching account by PUUID", Exception(f"Status {response.status_code}"))
                 return None
@@ -196,6 +215,22 @@ class ValorantClient(BaseAPIClient):
             mode: Game mode filter (competitive, unrated, replication, etc.)
         """
         try:
+            # First get the account to find PUUID for cache lookup
+            account_info = await self.get_account_info(username, tag)
+            if not account_info:
+                return None
+            
+            puuid = account_info.get('puuid')
+            if not puuid:
+                return None
+            
+            # Check database storage first
+            stored_data = database_manager.get_stored_player_stats(puuid, mode, size)
+            if stored_data:
+                stats_data, match_history_data = stored_data
+                logging.debug(f"Using stored match history for {username}#{tag}")
+                return match_history_data
+            
             # Match history uses v3 API with different base URL
             # Temporarily change the base URL for this request
             original_base_url = self.base_url
@@ -214,9 +249,13 @@ class ValorantClient(BaseAPIClient):
                 
                 if response.success:
                     # Henrik API wraps data in 'data' field
-                    if 'data' in response.data:
-                        return response.data['data']
-                    return response.data
+                    match_history = response.data['data'] if 'data' in response.data else response.data
+                    
+                    # Calculate stats and store both together
+                    stats = self.calculate_player_stats(match_history, puuid, competitive_only=(mode == 'competitive'))
+                    database_manager.store_player_stats(puuid, mode, size, stats, match_history)
+                    
+                    return match_history
                 else:
                     log_error("fetching match history", Exception(f"Status {response.status_code}"))
                     return None
@@ -238,6 +277,14 @@ class ValorantClient(BaseAPIClient):
         """
         if not matches:
             return {}
+        
+        # Check storage first for this exact calculation
+        mode = 'competitive' if competitive_only else 'all'
+        stored_data = database_manager.get_stored_player_stats(player_puuid, mode, len(matches))
+        if stored_data:
+            stats_data, _ = stored_data
+            logging.debug(f"Using stored player stats for PUUID {player_puuid}")
+            return stats_data
         
         stats = {
             'total_matches': 0,
@@ -501,6 +548,10 @@ class ValorantClient(BaseAPIClient):
             else:
                 stats['kast_percentage'] = 0
                 stats['adr'] = 0
+        
+        # Store the calculated stats permanently
+        mode = 'competitive' if competitive_only else 'all'
+        database_manager.store_player_stats(player_puuid, mode, len(matches), stats, matches)
         
         return stats
     
@@ -1101,6 +1152,71 @@ class ValorantClient(BaseAPIClient):
             ratings['clutch'] = '🎲 Learning Clutches'
         
         return ratings
+    
+    # Storage management methods
+    async def clear_player_storage(self, username: str, tag: str) -> bool:
+        """Clear all stored data for a specific player"""
+        try:
+            account_info = await self.get_account_info(username, tag)
+            if not account_info:
+                return False
+            
+            puuid = account_info.get('puuid')
+            if not puuid:
+                return False
+            
+            # Clear stored player stats for this PUUID
+            with database_manager._lock:
+                conn = database_manager._get_connection()
+                try:
+                    deleted = conn.execute("DELETE FROM henrik_player_stats WHERE puuid = ?", (puuid,)).rowcount
+                    conn.commit()
+                    
+                    if deleted > 0:
+                        logging.info(f"Cleared {deleted} stored entries for {username}#{tag}")
+                    
+                    return True
+                except Exception as e:
+                    logging.error(f"Error clearing storage for {username}#{tag}: {e}")
+                    conn.rollback()
+                    return False
+                finally:
+                    conn.close()
+            
+        except Exception as e:
+            logging.error(f"Error clearing player storage: {e}")
+            return False
+    
+    def clear_all_storage(self) -> bool:
+        """Clear all stored Henrik API data"""
+        return database_manager.clear_all_henrik_storage()
+    
+    def get_storage_stats(self) -> Dict[str, Any]:
+        """Get storage usage statistics"""
+        try:
+            henrik_stats = database_manager.get_henrik_storage_stats()
+            db_stats = database_manager.get_database_stats()
+            
+            return {
+                'stored_matches': henrik_stats.get('stored_matches', 0),
+                'stored_player_stats': henrik_stats.get('stored_player_stats', 0),
+                'stored_accounts': henrik_stats.get('stored_accounts', 0),
+                'matches_size_mb': henrik_stats.get('matches_size_mb', 0),
+                'player_stats_size_mb': henrik_stats.get('player_stats_size_mb', 0),
+                'accounts_size_mb': henrik_stats.get('accounts_size_mb', 0),
+                'total_size_mb': sum([
+                    henrik_stats.get('matches_size_mb', 0),
+                    henrik_stats.get('player_stats_size_mb', 0),
+                    henrik_stats.get('accounts_size_mb', 0)
+                ])
+            }
+        except Exception as e:
+            logging.error(f"Error getting storage stats: {e}")
+            return {
+                'stored_matches': 0, 'stored_player_stats': 0, 'stored_accounts': 0,
+                'matches_size_mb': 0, 'player_stats_size_mb': 0, 'accounts_size_mb': 0,
+                'total_size_mb': 0
+            }
 
 # Global Valorant client instance
 _valorant_client_instance: Optional[ValorantClient] = None

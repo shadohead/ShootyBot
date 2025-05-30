@@ -16,6 +16,7 @@ from handlers.message_formatter import DEFAULT_MSG
 from handlers.reaction_handler import add_react_options
 from match_tracker import get_match_tracker
 from utils import log_error
+from valorant_client import get_valorant_client
 
 
 class ShootyBot(commands.Bot):
@@ -49,6 +50,33 @@ class ShootyBot(commands.Bot):
     @health_check_task.before_loop
     async def before_health_check(self) -> None:
         """Wait until bot is ready before starting health checks."""
+        await self.wait_until_ready()
+    
+    @tasks.loop(hours=6)
+    async def storage_monitoring_task(self) -> None:
+        """Monitor storage usage and log statistics every 6 hours."""
+        try:
+            valorant_client = get_valorant_client()
+            stats = valorant_client.get_storage_stats()
+            
+            total_size = stats.get('total_size_mb', 0)
+            logging.info(f"📊 Henrik storage: {stats['stored_matches']} matches, "
+                        f"{stats['stored_player_stats']} player stats, "
+                        f"{stats['stored_accounts']} accounts "
+                        f"({total_size:.1f}MB total)")
+            
+            # Log if approaching size limits
+            if stats.get('matches_size_mb', 0) > 40:  # Warn at 40MB (limit is 50MB)
+                logging.warning(f"⚠️ Match storage approaching limit: {stats['matches_size_mb']:.1f}MB")
+            if stats.get('player_stats_size_mb', 0) > 16:  # Warn at 16MB (limit is 20MB)
+                logging.warning(f"⚠️ Player stats storage approaching limit: {stats['player_stats_size_mb']:.1f}MB")
+                
+        except Exception as e:
+            logging.error(f"Failed to monitor storage: {e}")
+    
+    @storage_monitoring_task.before_loop
+    async def before_storage_monitoring(self) -> None:
+        """Wait until bot is ready before starting storage monitoring."""
         await self.wait_until_ready()
         
     def setup_logging(self) -> None:
@@ -91,6 +119,10 @@ class ShootyBot(commands.Bot):
         # Start health check task
         self.health_check_task.start()
         logging.info("💗 Health monitoring started")
+        
+        # Start storage monitoring task
+        self.storage_monitoring_task.start()
+        logging.info("📊 Storage monitoring started")
         
         logging.info("🤖 ShootyBot is fully operational!")
     

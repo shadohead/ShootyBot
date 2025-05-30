@@ -2,7 +2,7 @@ import sqlite3
 import logging
 import os
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from threading import RLock
 from config import DATA_DIR
@@ -122,6 +122,44 @@ class DatabaseManager:
                     )
                 """)
                 
+                # Henrik API persistent storage tables
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS henrik_matches (
+                        match_id TEXT PRIMARY KEY,
+                        match_data TEXT NOT NULL,  -- JSON string of match data
+                        stored_at TEXT NOT NULL,
+                        last_accessed TEXT NOT NULL,
+                        data_size INTEGER NOT NULL  -- Size of match_data in bytes
+                    )
+                """)
+                
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS henrik_player_stats (
+                        stats_key TEXT PRIMARY KEY,  -- Format: puuid_gamemode_matchcount (e.g., "abc123_competitive_10")
+                        puuid TEXT NOT NULL,
+                        game_mode TEXT,
+                        match_count INTEGER,
+                        stats_data TEXT NOT NULL,  -- JSON string of calculated stats
+                        match_history_data TEXT NOT NULL,  -- JSON string of match list
+                        stored_at TEXT NOT NULL,
+                        last_accessed TEXT NOT NULL,
+                        data_size INTEGER NOT NULL  -- Size of stats_data + match_history_data in bytes
+                    )
+                """)
+                
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS henrik_accounts (
+                        account_key TEXT PRIMARY KEY,  -- Format: username_tag or puuid
+                        username TEXT,
+                        tag TEXT,
+                        puuid TEXT,
+                        account_data TEXT NOT NULL,  -- JSON string of account info
+                        stored_at TEXT NOT NULL,
+                        last_accessed TEXT NOT NULL,
+                        data_size INTEGER NOT NULL  -- Size of account_data in bytes
+                    )
+                """)
+                
                 # Create indexes for better query performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_valorant_accounts_discord_id ON valorant_accounts(discord_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_valorant_accounts_primary ON valorant_accounts(discord_id, is_primary)")
@@ -130,6 +168,17 @@ class DatabaseManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_session_participants_session_id ON session_participants(session_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_session_participants_discord_id ON session_participants(discord_id)")
+                
+                # Henrik storage indexes
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_matches_last_accessed ON henrik_matches(last_accessed)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_matches_data_size ON henrik_matches(data_size)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_player_stats_puuid ON henrik_player_stats(puuid)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_player_stats_last_accessed ON henrik_player_stats(last_accessed)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_player_stats_data_size ON henrik_player_stats(data_size)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_accounts_username_tag ON henrik_accounts(username, tag)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_accounts_puuid ON henrik_accounts(puuid)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_accounts_last_accessed ON henrik_accounts(last_accessed)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_accounts_data_size ON henrik_accounts(data_size)")
                 
                 conn.commit()
                 logging.info("Database tables initialized successfully")
@@ -657,7 +706,8 @@ class DatabaseManager:
             try:
                 stats = {}
                 
-                tables = ['users', 'valorant_accounts', 'sessions', 'session_participants', 'channel_settings']
+                tables = ['users', 'valorant_accounts', 'sessions', 'session_participants', 'channel_settings', 
+                         'henrik_matches', 'henrik_player_stats', 'henrik_accounts']
                 for table in tables:
                     row = conn.execute(f"SELECT COUNT(*) as count FROM {table}").fetchone()
                     stats[table] = row['count']
@@ -671,6 +721,323 @@ class DatabaseManager:
             except Exception as e:
                 logging.error(f"Error getting database stats: {e}")
                 return {}
+            finally:
+                conn.close()
+    
+    # Henrik API persistent storage methods
+    def get_stored_match(self, match_id: str) -> Optional[Dict[str, Any]]:
+        """Get stored match data if it exists"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                
+                # Update last_accessed when retrieving
+                row = conn.execute("""
+                    SELECT match_data FROM henrik_matches WHERE match_id = ?
+                """, (match_id,)).fetchone()
+                
+                if row:
+                    # Update last_accessed
+                    conn.execute("""
+                        UPDATE henrik_matches SET last_accessed = ? WHERE match_id = ?
+                    """, (now, match_id))
+                    conn.commit()
+                    
+                    return json.loads(row['match_data'])
+                return None
+            
+            except Exception as e:
+                logging.error(f"Error getting stored match {match_id}: {e}")
+                return None
+            finally:
+                conn.close()
+    
+    def store_match(self, match_id: str, match_data: Dict[str, Any]) -> bool:
+        """Store match data permanently"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                match_json = json.dumps(match_data)
+                data_size = len(match_json.encode('utf-8'))
+                
+                conn.execute("""
+                    INSERT OR REPLACE INTO henrik_matches (match_id, match_data, stored_at, last_accessed, data_size)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (match_id, match_json, now, now, data_size))
+                
+                conn.commit()
+                
+                # Check if we need size-based cleanup
+                self._check_and_cleanup_matches(conn)
+                
+                return True
+            
+            except Exception as e:
+                logging.error(f"Error storing match {match_id}: {e}")
+                conn.rollback()
+                return False
+            finally:
+                conn.close()
+    
+    def get_stored_player_stats(self, puuid: str, game_mode: str = None, match_count: int = 5) -> Optional[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
+        """Get stored player stats and match history if they exist"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                stats_key = f"{puuid}_{game_mode or 'all'}_{match_count}"
+                
+                row = conn.execute("""
+                    SELECT stats_data, match_history_data FROM henrik_player_stats 
+                    WHERE stats_key = ?
+                """, (stats_key,)).fetchone()
+                
+                if row:
+                    # Update last_accessed
+                    conn.execute("""
+                        UPDATE henrik_player_stats SET last_accessed = ? WHERE stats_key = ?
+                    """, (now, stats_key))
+                    conn.commit()
+                    
+                    stats_data = json.loads(row['stats_data'])
+                    match_history_data = json.loads(row['match_history_data'])
+                    return stats_data, match_history_data
+                return None
+            
+            except Exception as e:
+                logging.error(f"Error getting stored player stats {puuid}: {e}")
+                return None
+            finally:
+                conn.close()
+    
+    def store_player_stats(self, puuid: str, game_mode: str, match_count: int, stats_data: Dict[str, Any], 
+                          match_history_data: List[Dict[str, Any]]) -> bool:
+        """Store player stats and match history permanently"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                stats_key = f"{puuid}_{game_mode or 'all'}_{match_count}"
+                
+                stats_json = json.dumps(stats_data)
+                history_json = json.dumps(match_history_data)
+                data_size = len(stats_json.encode('utf-8')) + len(history_json.encode('utf-8'))
+                
+                conn.execute("""
+                    INSERT OR REPLACE INTO henrik_player_stats 
+                    (stats_key, puuid, game_mode, match_count, stats_data, match_history_data, stored_at, last_accessed, data_size)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (stats_key, puuid, game_mode, match_count, stats_json, history_json, now, now, data_size))
+                
+                conn.commit()
+                
+                # Check if we need size-based cleanup
+                self._check_and_cleanup_player_stats(conn)
+                
+                return True
+            
+            except Exception as e:
+                logging.error(f"Error storing player stats {puuid}: {e}")
+                conn.rollback()
+                return False
+            finally:
+                conn.close()
+    
+    def get_stored_account(self, username: str = None, tag: str = None, puuid: str = None) -> Optional[Dict[str, Any]]:
+        """Get stored account data if it exists"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                
+                if puuid:
+                    account_key = puuid
+                    row = conn.execute("""
+                        SELECT account_data FROM henrik_accounts WHERE account_key = ?
+                    """, (account_key,)).fetchone()
+                elif username and tag:
+                    account_key = f"{username}_{tag}"
+                    row = conn.execute("""
+                        SELECT account_data FROM henrik_accounts WHERE account_key = ?
+                    """, (account_key,)).fetchone()
+                else:
+                    return None
+                
+                if row:
+                    # Update last_accessed
+                    conn.execute("""
+                        UPDATE henrik_accounts SET last_accessed = ? WHERE account_key = ?
+                    """, (now, account_key))
+                    conn.commit()
+                    
+                    return json.loads(row['account_data'])
+                return None
+            
+            except Exception as e:
+                logging.error(f"Error getting stored account: {e}")
+                return None
+            finally:
+                conn.close()
+    
+    def store_account(self, account_data: Dict[str, Any], username: str = None, tag: str = None, puuid: str = None) -> bool:
+        """Store account data permanently"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                account_json = json.dumps(account_data)
+                data_size = len(account_json.encode('utf-8'))
+                
+                # Create storage entries for both username_tag and puuid if available
+                account_puuid = account_data.get('puuid') or puuid
+                account_username = account_data.get('name') or username
+                account_tag = account_data.get('tag') or tag
+                
+                # Store by username_tag
+                if account_username and account_tag:
+                    account_key = f"{account_username}_{account_tag}"
+                    conn.execute("""
+                        INSERT OR REPLACE INTO henrik_accounts 
+                        (account_key, username, tag, puuid, account_data, stored_at, last_accessed, data_size)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (account_key, account_username, account_tag, account_puuid, account_json, now, now, data_size))
+                
+                # Store by puuid
+                if account_puuid and account_puuid != f"{account_username}_{account_tag}":
+                    account_key = account_puuid
+                    conn.execute("""
+                        INSERT OR REPLACE INTO henrik_accounts 
+                        (account_key, username, tag, puuid, account_data, stored_at, last_accessed, data_size)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (account_key, account_username, account_tag, account_puuid, account_json, now, now, data_size))
+                
+                conn.commit()
+                
+                # Check if we need size-based cleanup
+                self._check_and_cleanup_accounts(conn)
+                
+                return True
+            
+            except Exception as e:
+                logging.error(f"Error storing account data: {e}")
+                conn.rollback()
+                return False
+            finally:
+                conn.close()
+    
+    def _check_and_cleanup_matches(self, conn, max_size_mb: int = 50) -> None:
+        """Clean up old match data if storage exceeds size limit"""
+        try:
+            # Check total size
+            size_row = conn.execute("SELECT SUM(data_size) as total_size FROM henrik_matches").fetchone()
+            total_size_mb = (size_row['total_size'] or 0) / (1024 * 1024)
+            
+            if total_size_mb > max_size_mb:
+                # Delete oldest accessed entries until we're under the limit
+                target_size = max_size_mb * 0.8 * 1024 * 1024  # 80% of limit
+                
+                deleted = conn.execute("""
+                    DELETE FROM henrik_matches WHERE match_id IN (
+                        SELECT match_id FROM henrik_matches 
+                        ORDER BY last_accessed ASC 
+                        LIMIT (SELECT COUNT(*) / 4 FROM henrik_matches)
+                    )
+                """).rowcount
+                
+                if deleted > 0:
+                    logging.info(f"Cleaned up {deleted} old match entries (size limit exceeded)")
+                    
+        except Exception as e:
+            logging.error(f"Error during match cleanup: {e}")
+    
+    def _check_and_cleanup_player_stats(self, conn, max_size_mb: int = 20) -> None:
+        """Clean up old player stats if storage exceeds size limit"""
+        try:
+            size_row = conn.execute("SELECT SUM(data_size) as total_size FROM henrik_player_stats").fetchone()
+            total_size_mb = (size_row['total_size'] or 0) / (1024 * 1024)
+            
+            if total_size_mb > max_size_mb:
+                deleted = conn.execute("""
+                    DELETE FROM henrik_player_stats WHERE stats_key IN (
+                        SELECT stats_key FROM henrik_player_stats 
+                        ORDER BY last_accessed ASC 
+                        LIMIT (SELECT COUNT(*) / 4 FROM henrik_player_stats)
+                    )
+                """).rowcount
+                
+                if deleted > 0:
+                    logging.info(f"Cleaned up {deleted} old player stats entries (size limit exceeded)")
+                    
+        except Exception as e:
+            logging.error(f"Error during player stats cleanup: {e}")
+    
+    def _check_and_cleanup_accounts(self, conn, max_size_mb: int = 5) -> None:
+        """Clean up old account data if storage exceeds size limit"""
+        try:
+            size_row = conn.execute("SELECT SUM(data_size) as total_size FROM henrik_accounts").fetchone()
+            total_size_mb = (size_row['total_size'] or 0) / (1024 * 1024)
+            
+            if total_size_mb > max_size_mb:
+                deleted = conn.execute("""
+                    DELETE FROM henrik_accounts WHERE account_key IN (
+                        SELECT account_key FROM henrik_accounts 
+                        ORDER BY last_accessed ASC 
+                        LIMIT (SELECT COUNT(*) / 4 FROM henrik_accounts)
+                    )
+                """).rowcount
+                
+                if deleted > 0:
+                    logging.info(f"Cleaned up {deleted} old account entries (size limit exceeded)")
+                    
+        except Exception as e:
+            logging.error(f"Error during account cleanup: {e}")
+    
+    def get_henrik_storage_stats(self) -> Dict[str, Any]:
+        """Get Henrik storage statistics"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                stats = {}
+                
+                # Get counts and sizes for each table
+                for table, name in [('henrik_matches', 'matches'), 
+                                   ('henrik_player_stats', 'player_stats'), 
+                                   ('henrik_accounts', 'accounts')]:
+                    row = conn.execute(f"""
+                        SELECT COUNT(*) as count, SUM(data_size) as total_size 
+                        FROM {table}
+                    """).fetchone()
+                    
+                    stats[f'stored_{name}'] = row['count']
+                    stats[f'{name}_size_mb'] = (row['total_size'] or 0) / (1024 * 1024)
+                
+                return stats
+            
+            except Exception as e:
+                logging.error(f"Error getting Henrik storage stats: {e}")
+                return {}
+            finally:
+                conn.close()
+    
+    def clear_all_henrik_storage(self) -> bool:
+        """Clear all Henrik storage data"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("DELETE FROM henrik_matches")
+                conn.execute("DELETE FROM henrik_player_stats")
+                conn.execute("DELETE FROM henrik_accounts")
+                
+                conn.commit()
+                logging.info("All Henrik storage cleared")
+                return True
+            
+            except Exception as e:
+                logging.error(f"Error clearing Henrik storage: {e}")
+                conn.rollback()
+                return False
             finally:
                 conn.close()
 
