@@ -117,6 +117,7 @@ class DatabaseManager:
                         role_code TEXT,
                         game_name TEXT,
                         party_max_size INTEGER DEFAULT 5,
+                        voice_channel_id INTEGER,
                         last_updated TEXT NOT NULL
                     )
                 """)
@@ -514,7 +515,7 @@ class DatabaseManager:
                 conn.close()
     
     def save_channel_settings(self, channel_id: int, role_code: str = None, 
-                             game_name: str = None, party_max_size: int = 5) -> bool:
+                             game_name: str = None, party_max_size: int = 5, voice_channel_id: int = None) -> bool:
         """Save channel settings"""
         with self._lock:
             conn = self._get_connection()
@@ -522,15 +523,16 @@ class DatabaseManager:
                 now = datetime.now(timezone.utc).isoformat()
                 
                 conn.execute("""
-                    INSERT INTO channel_settings (channel_id, role_code, game_name, party_max_size, last_updated)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO channel_settings (channel_id, role_code, game_name, party_max_size, voice_channel_id, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(channel_id) DO UPDATE SET
                         role_code = COALESCE(?, role_code),
                         game_name = COALESCE(?, game_name),
                         party_max_size = COALESCE(?, party_max_size),
+                        voice_channel_id = COALESCE(?, voice_channel_id),
                         last_updated = ?
-                """, (channel_id, role_code, game_name, party_max_size, now,
-                      role_code, game_name, party_max_size, now))
+                """, (channel_id, role_code, game_name, party_max_size, voice_channel_id, now,
+                      role_code, game_name, party_max_size, voice_channel_id, now))
                 
                 conn.commit()
                 return True

@@ -113,6 +113,108 @@ class AdminCommands(BaseCommandCog):
             await self.send_error_embed(ctx, "Game Set Failed", "An error occurred while setting the game name")
     
     @commands.hybrid_command(
+        name="shootysetvoice", 
+        description="Set voice channel for name bolding (use channel mention or ID)"
+    )
+    @commands.has_permissions(manage_channels=True)
+    async def set_voice_channel(self, ctx: commands.Context, *, voice_channel_input: str = None) -> None:
+        """Set the voice channel that triggers name bolding."""
+        try:
+            channel_id = ctx.channel.id
+            shooty_context = context_manager.get_context(channel_id)
+            
+            if voice_channel_input is None:
+                # Clear voice channel setting
+                old_voice_channel_id = shooty_context.voice_channel_id
+                shooty_context.voice_channel_id = None
+                shooty_context.channel = ctx.channel
+                
+                # Save the context
+                context_manager.save_context(channel_id)
+                
+                await self.send_success_embed(
+                    ctx,
+                    "Voice Channel Cleared",
+                    "Names will no longer be bolded based on voice channel presence"
+                )
+                
+                self.logger.info(f"Cleared voice channel setting (was {old_voice_channel_id}) in channel {channel_id}")
+                return
+            
+            # Parse voice channel input (can be mention, ID, or name)
+            voice_channel = None
+            voice_channel_input = voice_channel_input.strip()
+            
+            # Try to parse as channel mention (<#123456789>)
+            if voice_channel_input.startswith('<#') and voice_channel_input.endswith('>'):
+                try:
+                    voice_channel_id = int(voice_channel_input[2:-1])
+                    voice_channel = ctx.guild.get_channel(voice_channel_id)
+                except ValueError:
+                    pass
+            # Try to parse as channel ID
+            elif voice_channel_input.isdigit():
+                try:
+                    voice_channel_id = int(voice_channel_input)
+                    voice_channel = ctx.guild.get_channel(voice_channel_id)
+                except ValueError:
+                    pass
+            # Try to find by name
+            else:
+                voice_channel = discord.utils.get(ctx.guild.voice_channels, name=voice_channel_input)
+            
+            if voice_channel is None:
+                await self.send_error_embed(
+                    ctx,
+                    "Voice Channel Not Found",
+                    "Please provide a valid voice channel mention (#channel), ID, or name"
+                )
+                return
+            
+            # Validate it's actually a voice channel
+            if not isinstance(voice_channel, discord.VoiceChannel):
+                await self.send_error_embed(
+                    ctx,
+                    "Invalid Channel Type",
+                    "The channel must be a voice channel, not a text channel"
+                )
+                return
+            
+            # Validate voice channel is in the same guild
+            if voice_channel.guild != ctx.guild:
+                await self.send_error_embed(
+                    ctx,
+                    "Invalid Voice Channel",
+                    "Voice channel must be in the same server"
+                )
+                return
+            
+            old_voice_channel_id = shooty_context.voice_channel_id
+            shooty_context.voice_channel_id = voice_channel.id
+            shooty_context.channel = ctx.channel
+            
+            # Save the context
+            context_manager.save_context(channel_id)
+            
+            await self.send_success_embed(
+                ctx,
+                "Voice Channel Set",
+                f"Names will now be bolded when users are in **{voice_channel.name}** 🔊"
+            )
+            
+            self.logger.info(f"Changed voice channel from {old_voice_channel_id} to {voice_channel.id} in channel {channel_id}")
+            
+        except commands.MissingPermissions:
+            await self.send_error_embed(
+                ctx,
+                "Permission Denied",
+                "You need 'Manage Channels' permission to set the voice channel"
+            )
+        except Exception as e:
+            self.logger.error(f"Error in set_voice_channel: {e}")
+            await self.send_error_embed(ctx, "Voice Channel Set Failed", "An error occurred while setting the voice channel")
+    
+    @commands.hybrid_command(
         name="shootylfg",
         description="Show all players across servers playing the same game"
     )
@@ -426,12 +528,23 @@ class AdminCommands(BaseCommandCog):
                 inline=True
             )
             
-            # Add current channel game setting
+            # Add current channel settings
             shooty_context = context_manager.get_context(ctx.channel.id)
             current_game = shooty_context.game_name or "Not set"
             embed.add_field(
                 name="This Channel's Game",
                 value=current_game,
+                inline=True
+            )
+            
+            # Add voice channel setting
+            voice_channel_name = "Not set"
+            if shooty_context.voice_channel_id:
+                voice_channel = ctx.guild.get_channel(shooty_context.voice_channel_id)
+                voice_channel_name = voice_channel.name if voice_channel else "Invalid Channel"
+            embed.add_field(
+                name="Voice Channel for Bolding",
+                value=voice_channel_name,
                 inline=True
             )
             

@@ -27,6 +27,7 @@ class ShootyContext:
         self.role_code: str = DEFAULT_SHOOTY_ROLE_CODE
         self.game_name: Optional[str] = None
         self.party_max_size: int = DEFAULT_PARTY_SIZE
+        self.voice_channel_id: Optional[int] = None
         
         # Backup for restore functionality
         self._backup: Optional[Dict[str, Any]] = None
@@ -117,22 +118,36 @@ class ShootyContext:
     
     # Formatting Functions
     def bold_readied_user(self, user: str, display_hashtag: bool = False) -> str:
-        """Format username with bold if ready or playing Valorant"""
-        from valorant_client import valorant_client
-        
+        """Format username with bold if ready or in voice channel"""
         is_ready = user in self.bot_ready_user_set
-        is_playing_valorant = valorant_client.is_playing_valorant(user)
+        is_in_voice_channel = self._is_user_in_voice_channel(user)
         
         # Format name
         name = str(user) if display_hashtag else user.name
         
-        # Apply formatting: bold if ready, double bold if playing Valorant
-        if is_playing_valorant:
-            return f"**{name}** 🎮"
+        # Apply formatting: bold if ready or in voice channel
+        if is_in_voice_channel:
+            return f"**{name}** 🔊"
         elif is_ready:
             return f"**{name}**"
         else:
             return name
+    
+    def _is_user_in_voice_channel(self, user) -> bool:
+        """Check if user is in the configured voice channel"""
+        if not self.voice_channel_id or not self.channel:
+            return False
+        
+        try:
+            # Get the voice channel
+            voice_channel = self.channel.guild.get_channel(self.voice_channel_id)
+            if not voice_channel:
+                return False
+            
+            # Check if user is in the voice channel
+            return user in voice_channel.members
+        except Exception:
+            return False
     
     def get_user_list_string(self) -> str:
         """Get formatted string of all users"""
@@ -172,7 +187,8 @@ class ShootyContext:
         return {
             'role_code': self.role_code,
             'game_name': self.game_name,
-            'party_max_size': self.party_max_size
+            'party_max_size': self.party_max_size,
+            'voice_channel_id': self.voice_channel_id
         }
     
     @classmethod
@@ -182,6 +198,7 @@ class ShootyContext:
         context.role_code = data.get('role_code', DEFAULT_SHOOTY_ROLE_CODE)
         context.game_name = data.get('game_name')
         context.party_max_size = data.get('party_max_size', DEFAULT_PARTY_SIZE)
+        context.voice_channel_id = data.get('voice_channel_id')
         return context
 
 
@@ -218,6 +235,7 @@ class ContextManager:
                 context.role_code = settings.get('role_code', DEFAULT_SHOOTY_ROLE_CODE)
                 context.game_name = settings.get('game_name')
                 context.party_max_size = settings.get('party_max_size', DEFAULT_PARTY_SIZE)
+                context.voice_channel_id = settings.get('voice_channel_id')
                 logging.info(f"Loaded data for channel {channel_id} from database")
             else:
                 logging.debug(f"No existing settings found for channel {channel_id}")
@@ -233,7 +251,8 @@ class ContextManager:
                     channel_id,
                     context.role_code,
                     context.game_name,
-                    context.party_max_size
+                    context.party_max_size,
+                    context.voice_channel_id
                 )
                 if success:
                     logging.info(f"Saved context for channel {channel_id} to database")
