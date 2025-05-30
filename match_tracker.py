@@ -8,20 +8,19 @@ import random
 from utils import log_error, format_time_ago
 
 class MatchTracker:
-    """Tracks Discord members' Valorant matches and detects completed games"""
+    """Tracks Discord members' Valorant matches by polling for newly completed games every minute"""
     
     # Configuration constants
-    CHECK_INTERVAL_SECONDS = 300  # 5 minutes
+    CHECK_INTERVAL_SECONDS = 60  # 1 minute
     MATCH_CUTOFF_HOURS = 2
     MIN_DISCORD_MEMBERS = 2
     LEG_SHOT_THRESHOLD_PERCENT = 15
     HEADSHOT_THRESHOLD_PERCENT = 30
     HIGH_DAMAGE_THRESHOLD = 3000
-    RANDOM_CHECK_PROBABILITY = 0.1  # 10%
     
     def __init__(self, bot: discord.Client) -> None:
         self.bot = bot
-        self.tracked_members: Dict[int, Dict[str, Any]] = {}  # {member_id: {'was_playing': bool, 'last_checked': datetime}}
+        self.tracked_members: Dict[int, Dict[str, Any]] = {}  # {member_id: {'last_checked': datetime, 'last_match_id': str}}
         self.recent_matches: Dict[int, Dict[str, Dict[str, Any]]] = {}   # {server_id: {match_id: {'timestamp': datetime, 'members': []}}}
         self.check_interval: int = self.CHECK_INTERVAL_SECONDS
         self.running: bool = False
@@ -32,7 +31,7 @@ class MatchTracker:
             return
         
         self.running = True
-        logging.info("Starting match tracker...")
+        logging.info("Starting match tracker with 1-minute polling...")
         
         while self.running:
             try:
@@ -56,11 +55,11 @@ class MatchTracker:
                 log_error(f"checking server {guild.id}", e)
     
     async def _check_server_matches(self, guild: discord.Guild) -> None:
-        """Check a specific server for finished matches"""
+        """Check a specific server for finished matches by polling all linked members"""
         current_time = datetime.now(timezone.utc)
         members_to_check = []
         
-        # Find members with linked Valorant accounts
+        # Find all members with linked Valorant accounts and check them all
         for member in guild.members:
             if member.bot:
                 continue
@@ -69,22 +68,17 @@ class MatchTracker:
             if not accounts:
                 continue
             
-            # Track presence changes
-            was_playing = self.tracked_members.get(member.id, {}).get('was_playing', False)
-            is_playing = valorant_client.is_playing_valorant(member)
+            # Update last checked time
+            if member.id not in self.tracked_members:
+                self.tracked_members[member.id] = {
+                    'last_checked': current_time,
+                    'last_match_id': None
+                }
+            else:
+                self.tracked_members[member.id]['last_checked'] = current_time
             
-            # Update tracking
-            self.tracked_members[member.id] = {
-                'was_playing': is_playing,
-                'last_checked': current_time
-            }
-            
-            # If they stopped playing, check for new matches
-            if was_playing and not is_playing:
-                members_to_check.append(member)
-            # Also check periodically for all linked members
-            elif random.random() < self.RANDOM_CHECK_PROBABILITY:
-                members_to_check.append(member)
+            # Add all linked members to check list for polling
+            members_to_check.append(member)
         
         if members_to_check:
             await self._check_recent_matches(guild, members_to_check)
@@ -104,24 +98,33 @@ class MatchTracker:
                 matches = await valorant_client.get_match_history(
                     primary_account['username'],
                     primary_account['tag'],
-                    size=3,  # Check last 3 matches
+                    size=1,  # Only check most recent match for polling efficiency
                     mode='competitive'  # Only track competitive matches
                 )
                 
                 if not matches:
                     continue
                 
-                for match in matches:
-                    match_id = match.get('metadata', {}).get('matchid')
-                    if not match_id:
-                        continue
+                # Check if this member has a new most recent match
+                latest_match = matches[0]  # Most recent match
+                latest_match_id = latest_match.get('metadata', {}).get('matchid')
+                
+                if not latest_match_id:
+                    continue
+                
+                # Check if this is a new match for this member
+                last_known_match = self.tracked_members.get(member.id, {}).get('last_match_id')
+                
+                if last_known_match != latest_match_id:
+                    # Update the last known match for this member
+                    self.tracked_members[member.id]['last_match_id'] = latest_match_id
                     
-                    # Skip if we've already processed this match
-                    if match_id in server_matches:
+                    # Skip if we've already processed this match globally
+                    if latest_match_id in server_matches:
                         continue
                     
                     # Skip old matches
-                    started_at = match.get('metadata', {}).get('game_start', '')
+                    started_at = latest_match.get('metadata', {}).get('game_start', '')
                     if started_at:
                         try:
                             match_time = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
@@ -131,22 +134,22 @@ class MatchTracker:
                             continue
                     
                     # Skip if match is not completed
-                    if not match.get('metadata', {}).get('game_length', 0):
+                    if not latest_match.get('metadata', {}).get('game_length', 0):
                         continue
                     
                     # Find all Discord members in this match
-                    discord_members_in_match = await self._find_discord_members_in_match(guild, match)
+                    discord_members_in_match = await self._find_discord_members_in_match(guild, latest_match)
                     
                     # Only process if minimum Discord members were in the match
                     if len(discord_members_in_match) >= self.MIN_DISCORD_MEMBERS:
-                        server_matches[match_id] = {
+                        server_matches[latest_match_id] = {
                             'timestamp': datetime.now(timezone.utc),
                             'members': discord_members_in_match,
-                            'match_data': match
+                            'match_data': latest_match
                         }
                         
                         # Send match results to appropriate channel
-                        await self._send_match_results(guild, match, discord_members_in_match)
+                        await self._send_match_results(guild, latest_match, discord_members_in_match)
                         
             except Exception as e:
                 log_error(f"checking matches for {member.display_name}", e)
@@ -317,7 +320,7 @@ class MatchTracker:
                     inline=False
                 )
         
-        embed.set_footer(text="🤖 Auto-detected match • ShootyBot tracking your epic moments!")
+        embed.set_footer(text="🔍 Auto-detected via polling • ShootyBot tracking your epic moments!")
         return embed
     
     def _calculate_fun_match_stats(self, match_data: dict, discord_members: List[Dict]) -> Dict:
