@@ -7,11 +7,14 @@ from filelock import FileLock
 from config import DATA_DIR
 from database import database_manager
 from utils import get_utc_timestamp, ensure_directory_exists, get_timestamp_string
+from base_models import TimestampedModel, ValidatedModel, StatefulModel, DatabaseBackedManager
 
-class UserData:
+class UserData(TimestampedModel, ValidatedModel):
     """Represents a Discord user's persistent data"""
     
     def __init__(self, discord_id: int):
+        TimestampedModel.__init__(self)
+        ValidatedModel.__init__(self)
         self.discord_id = discord_id
         
         # Load data from database
@@ -31,7 +34,11 @@ class UserData:
             self.total_sessions = data.get('total_sessions', 0)
             self.total_games_played = data.get('total_games_played', 0)
             self.session_history = data.get('session_history', [])
-            self.last_updated = data.get('last_updated', get_utc_timestamp())
+            # Use existing timestamps if available
+            if 'created_at' in data:
+                self.created_at = data['created_at']
+            if 'last_updated' in data:
+                self.updated_at = data['last_updated']
         else:
             # Create new user in database
             database_manager.create_or_update_user(self.discord_id)
@@ -39,7 +46,7 @@ class UserData:
             self.total_sessions = 0
             self.total_games_played = 0
             self.session_history = []
-            self.last_updated = get_utc_timestamp()
+            # Timestamps already set by TimestampedModel.__init__()
     
     def _update_compatibility_properties(self):
         """Update backward compatibility properties from primary account"""
@@ -59,6 +66,7 @@ class UserData:
             self.discord_id, username, tag, puuid, set_primary
         )
         if success:
+            self.update_timestamp()
             self._load_from_database()  # Refresh data from database
             self._update_compatibility_properties()
     
@@ -72,6 +80,7 @@ class UserData:
             True  # set_primary=True
         )
         if success:
+            self.update_timestamp()
             self._load_from_database()  # Refresh data from database
             self._update_compatibility_properties()
     
@@ -79,6 +88,7 @@ class UserData:
         """Remove a specific Valorant account"""
         success = database_manager.remove_valorant_account(self.discord_id, username, tag)
         if success:
+            self.update_timestamp()
             self._load_from_database()  # Refresh data from database
             self._update_compatibility_properties()
         return success
@@ -103,6 +113,7 @@ class UserData:
                     account.get('puuid', ''), True
                 )
                 if success:
+                    self.update_timestamp()
                     self._load_from_database()
                     self._update_compatibility_properties()
                 return success
@@ -136,11 +147,13 @@ class UserData:
     def increment_session_count(self):
         """Increment the total session count"""
         database_manager.increment_user_stats(self.discord_id, sessions=1)
+        self.update_timestamp()
         self._load_from_database()  # Refresh data
     
     def increment_games_played(self):
         """Increment games played count"""
         database_manager.increment_user_stats(self.discord_id, games=1)
+        self.update_timestamp()
         self._load_from_database()  # Refresh data
     
     def add_session_to_history(self, session_id: str):
@@ -149,20 +162,51 @@ class UserData:
         # Just refresh our data to get the latest session history
         self._load_from_database()
     
+    def validate(self) -> bool:
+        """Validate user data"""
+        # Clear previous errors
+        self.clear_validation_errors()
+        
+        # Validate discord_id
+        if not isinstance(self.discord_id, int) or self.discord_id <= 0:
+            self.add_validation_error("Invalid discord_id")
+        
+        # Validate valorant accounts
+        for account in self.valorant_accounts:
+            if not isinstance(account, dict):
+                self.add_validation_error("Invalid valorant account format")
+                continue
+            if 'username' not in account or 'tag' not in account:
+                self.add_validation_error("Valorant account missing username or tag")
+        
+        # Validate numeric fields
+        if self.total_sessions < 0:
+            self.add_validation_error("Total sessions cannot be negative")
+        if self.total_games_played < 0:
+            self.add_validation_error("Total games played cannot be negative")
+        
+        return len(self.get_validation_errors()) == 0
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for compatibility"""
-        return {
+        # Start with base class data (timestamps)
+        data = super().to_dict()
+        
+        # Add user-specific data
+        data.update({
             'discord_id': self.discord_id,
             'valorant_accounts': self.valorant_accounts,
             'total_sessions': self.total_sessions,
             'total_games_played': self.total_games_played,
             'session_history': self.session_history,
-            'last_updated': self.last_updated,
+            'last_updated': self.updated_at,  # For backward compatibility
             # Backward compatibility
             'valorant_username': self.valorant_username,
             'valorant_tag': self.valorant_tag,
             'valorant_puuid': self.valorant_puuid
-        }
+        })
+        
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'UserData':
@@ -172,10 +216,14 @@ class UserData:
         return cls(data['discord_id'])
 
 
-class SessionData:
+class SessionData(StatefulModel):
     """Represents a gaming session"""
     
+    # Define valid states for a session
+    VALID_STATES = ['active', 'completed', 'cancelled', 'expired']
+    
     def __init__(self, session_id: str, channel_id: int = None, started_by: int = None):
+        super().__init__(initial_state='active')
         self.session_id = session_id
         
         # Load data from database if it exists
@@ -190,12 +238,23 @@ class SessionData:
             self.party_size = session_data['party_size']
             self.was_full = session_data['was_full']
             self.duration_minutes = session_data['duration_minutes']
+            
+            # Set timestamps from database
+            if 'created_at' in session_data:
+                self.created_at = session_data['created_at']
+            else:
+                self.created_at = self.start_time
+            
+            # Determine state based on end_time
+            if self.end_time:
+                self._state = 'completed'
         else:
             # Create new session
             if channel_id is not None and started_by is not None:
                 self.channel_id = channel_id
                 self.started_by = started_by
                 self.start_time = get_utc_timestamp()
+                self.created_at = self.start_time
                 self.end_time = None
                 self.participants = []
                 self.game_name = None
@@ -214,13 +273,18 @@ class SessionData:
         """Add a participant to the session"""
         success = database_manager.add_session_participant(self.session_id, discord_id)
         if success:
+            self.update_timestamp()
             # Refresh data from database
             session_data = database_manager.get_session(self.session_id)
             if session_data:
                 self.participants = session_data['participants']
+                # Check if session is now full
+                if len(self.participants) >= self.party_size:
+                    self.was_full = True
     
     def end_session(self):
         """End the session and calculate duration"""
+        self.state = 'completed'  # Update state
         success = database_manager.end_session(self.session_id, self.was_full)
         if success:
             # Refresh data from database
@@ -229,9 +293,19 @@ class SessionData:
                 self.end_time = session_data['end_time']
                 self.duration_minutes = session_data['duration_minutes']
     
+    def cancel_session(self):
+        """Cancel the session"""
+        self.state = 'cancelled'
+        # You might want to call end_session here as well
+        self.end_session()
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for compatibility"""
-        return {
+        # Start with base class data (timestamps and state)
+        data = super().to_dict()
+        
+        # Add session-specific data
+        data.update({
             'session_id': self.session_id,
             'channel_id': self.channel_id,
             'started_by': self.started_by,
@@ -242,7 +316,9 @@ class SessionData:
             'party_size': self.party_size,
             'was_full': self.was_full,
             'duration_minutes': self.duration_minutes
-        }
+        })
+        
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'SessionData':
@@ -252,16 +328,17 @@ class SessionData:
         return cls(data['session_id'])
 
 
-class DataManager:
+class DataManager(DatabaseBackedManager[UserData]):
     """Manages persistent data for users and sessions using SQLite database"""
     
     def __init__(self):
+        super().__init__(table_name='users')
+        
         # Legacy file paths for migration purposes
         self.users_file = os.path.join(DATA_DIR, "users.json")
         self.sessions_file = os.path.join(DATA_DIR, "sessions.json")
         
-        # Cache for frequently accessed data
-        self.users = {}  # discord_id -> UserData
+        # Additional cache for sessions (users are handled by base class)
         self.sessions = {}  # session_id -> SessionData
         
         self._ensure_data_dir()
@@ -330,16 +407,60 @@ class DataManager:
         # This method is kept for compatibility but doesn't need to do anything
         logging.info("Using SQLite database for data storage")
     
+    # Implement abstract methods from DatabaseBackedManager
+    def get(self, discord_id: int) -> Optional[UserData]:
+        """Get user data from cache or database"""
+        if discord_id in self._cache:
+            return self._cache[discord_id]
+        
+        # Try to load from database
+        if self._exists_in_storage(discord_id):
+            user = UserData(discord_id)
+            self._cache[discord_id] = user
+            return user
+        
+        return None
+    
+    def create(self, discord_id: int, **kwargs) -> UserData:
+        """Create a new user"""
+        user = UserData(discord_id)
+        self._cache[discord_id] = user
+        return user
+    
+    def save(self, discord_id: int) -> bool:
+        """Save user data (automatic with database)"""
+        # Data is automatically saved to database
+        # Just remove from modified set
+        self._modified.discard(discord_id)
+        return True
+    
+    def delete(self, discord_id: int) -> bool:
+        """Delete a user"""
+        # Remove from cache
+        if discord_id in self._cache:
+            del self._cache[discord_id]
+        
+        # Database doesn't have a delete_user method yet
+        # For now, return True as we removed from cache
+        self._modified.discard(discord_id)
+        return True
+    
+    def _exists_in_storage(self, discord_id: int) -> bool:
+        """Check if user exists in database"""
+        return self.db.get_user(discord_id) is not None
+    
+    # Legacy method for compatibility
     def get_user(self, discord_id: int) -> UserData:
         """Get or create user data"""
-        if discord_id not in self.users:
-            self.users[discord_id] = UserData(discord_id)
-        return self.users[discord_id]
+        user = self.get(discord_id)
+        if user is None:
+            user = self.create(discord_id)
+        return user
     
     def save_user(self, discord_id: int):
         """Save a specific user's data (automatic with database)"""
-        # Data is automatically saved to database when methods are called
-        # This method is kept for compatibility but doesn't need to do anything
+        # Delegate to base class save method
+        self.save(discord_id)
         logging.debug(f"User data for {discord_id} is automatically saved to database")
     
     def create_session(self, channel_id: int, started_by: int, game_name: str = None) -> SessionData:
