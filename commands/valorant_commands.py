@@ -7,6 +7,7 @@ from valorant_client import valorant_client
 from data_manager import data_manager
 from datetime import datetime, timezone
 from match_tracker import get_match_tracker
+from heatmap_generator import get_heatmap_generator
 
 class ValorantCommands(GameCommandCog):
     """Commands for Valorant integration and account management"""
@@ -804,10 +805,22 @@ class ValorantCommands(GameCommandCog):
             await self.defer_if_slash(ctx)
             
             # Use manual check to find recent match
-            embed = await self.match_tracker.manual_check_recent_match(ctx.guild, member)
+            result = await self.match_tracker.manual_check_recent_match(ctx.guild, member)
             
-            if embed:
-                await ctx.send(embed=embed)
+            if result:
+                embed, match_data, team_puuids = result
+                
+                # Generate heatmap if we have round data
+                heatmap_file = None
+                if match_data.get('rounds'):
+                    heatmap_generator = get_heatmap_generator()
+                    heatmap_file = await heatmap_generator.generate_heatmap(match_data, team_puuids)
+                
+                # Send embed with optional heatmap
+                if heatmap_file:
+                    await ctx.send(embed=embed, file=heatmap_file)
+                else:
+                    await ctx.send(embed=embed)
             else:
                 await self.send_embed(
                     ctx,

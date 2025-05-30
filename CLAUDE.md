@@ -58,6 +58,7 @@ python3 migrate_to_sqlite.py --backup  # Migrate from JSON to SQLite with backup
 **Comprehensive unit test suite available** (75+ tests):
 
 ### Test Commands:
+
 ```bash
 # Run all tests with coverage
 pytest --cov=. --cov-report=html
@@ -73,6 +74,7 @@ pytest tests/unit/test_data_manager.py -v        # Data persistence tests
 ```
 
 ### Test Coverage:
+
 - **valorant_client.py**: 94% coverage (38 tests) - Henrik API integration
 - **commands/session_commands.py**: 96% coverage (19 tests) - Discord commands
 - **handlers/message_formatter.py**: 100% coverage (18 tests) - Message formatting
@@ -80,7 +82,9 @@ pytest tests/unit/test_data_manager.py -v        # Data persistence tests
 - **data_manager.py**: 96% coverage - Data persistence
 
 ### Manual Testing:
+
 For features not covered by unit tests:
+
 1. Run the bot locally with a test Discord server
 2. Test Discord UI interactions (reactions, slash commands)
 3. Verify cross-server webhook functionality
@@ -89,12 +93,14 @@ For features not covered by unit tests:
 ## Key Implementation Details
 
 ### Discord Integration:
+
 - **Hybrid commands**: Use Discord.py's hybrid approach (slash + traditional prefix)
 - **Cog architecture**: Commands organized in separate cog files with `setup()` functions
 - **Reaction handling**: Emojis (👍, 5️⃣, 🔄, 📣) drive user interactions
 - **State management**: Per-channel context in `shooty_context_dict`
 
 ### Data Management:
+
 - **SQLite database**: ACID-compliant database with WAL mode for better concurrency
 - **Raspberry Pi optimized**: Database configuration tuned for Pi's ARM architecture and SD card I/O
 - **Session tracking**: Comprehensive session statistics and participant history
@@ -103,11 +109,13 @@ For features not covered by unit tests:
 - **Auto-backup**: State backup/restore functionality for error recovery
 
 ### External APIs:
+
 - **Henrik API**: Valorant account info, match history, and statistics
 - **Rate limiting**: Proper handling of API rate limits and authentication
 - **Real-time data**: Live Valorant activity detection via Discord presence
 
 ### Performance:
+
 - **Concurrent operations**: Async/await patterns throughout
 - **Efficient state**: Minimal memory footprint with lazy loading
 - **Batch operations**: Bulk user operations where possible
@@ -115,6 +123,7 @@ For features not covered by unit tests:
 ## Configuration
 
 **Option 1 (Recommended)**: Create a `.env` file (copy from `.env.example`):
+
 ```
 BOT_TOKEN=your_discord_bot_token
 SHOOTY_ROLE_CODE=<@&your_role_id>
@@ -132,6 +141,7 @@ The bot will check for configuration in this order: `.env` file → environment 
 ShootyBot can leverage MCP servers for enhanced capabilities when working with Claude Code:
 
 ### Available MCP Servers:
+
 - **GitHub**: Direct repository management, issue tracking, and pull request creation
 - **Web Research**: Real-time web search and content extraction for up-to-date information
 - **Context7**: Access to library documentation for frameworks and APIs
@@ -139,26 +149,20 @@ ShootyBot can leverage MCP servers for enhanced capabilities when working with C
 - **Playwright**: Browser automation for testing Discord web interfaces
 
 ### Usage with Claude Code:
+
 When using Claude Code (claude.ai/code) with this project, MCP servers provide:
+
 - **GitHub Integration**: Create issues, manage pull requests, and update code directly
 - **Documentation Access**: Fetch latest Discord.py and Henrik API documentation
 - **Web Search**: Research gaming APIs, Discord bot patterns, and Valorant data
 - **Testing Support**: Automated browser testing for Discord web features
-
-### MCP Configuration:
-MCP servers are automatically available in Claude Code. No additional configuration needed in the bot itself.
-
-### Common MCP Use Cases:
-1. **API Documentation**: `mcp__Context7__get-library-docs` for Discord.py reference
-2. **Issue Creation**: `mcp__github__create_issue` for bug tracking
-3. **Web Research**: `mcp__webresearch__search_google` for Valorant API updates
-4. **PR Management**: `mcp__github__create_pull_request` for code submissions
 
 ## SQLite Database System
 
 ShootyBot uses a lightweight SQLite database optimized for Raspberry Pi 4 deployment:
 
 ### Database Features:
+
 - **ACID compliance**: Full transaction support with rollback capability
 - **WAL mode**: Write-Ahead Logging for better concurrency and crash recovery
 - **Foreign key constraints**: Data integrity enforced at database level
@@ -166,6 +170,7 @@ ShootyBot uses a lightweight SQLite database optimized for Raspberry Pi 4 deploy
 - **Memory efficient**: 32MB cache size suitable for Raspberry Pi memory constraints
 
 ### Database Schema:
+
 - **users**: Discord user profiles with session/game statistics
 - **valorant_accounts**: Multiple Valorant accounts per user with primary account support
 - **sessions**: Gaming session tracking with participant management
@@ -173,7 +178,9 @@ ShootyBot uses a lightweight SQLite database optimized for Raspberry Pi 4 deploy
 - **channel_settings**: Per-channel configuration (role codes, game names, party sizes)
 
 ### Migration from JSON:
+
 **Automatic Migration**: On first startup, the bot automatically migrates existing JSON data to SQLite:
+
 ```bash
 # Manual migration with backup (recommended)
 python3 migrate_to_sqlite.py --backup
@@ -183,6 +190,7 @@ python3 migrate_to_sqlite.py --force --backup
 ```
 
 **Migration Features**:
+
 - Preserves all existing user data and session history
 - Handles legacy single-account format → multi-account format conversion
 - Creates automatic backup of JSON files
@@ -190,6 +198,7 @@ python3 migrate_to_sqlite.py --force --backup
 - Shows detailed migration statistics
 
 ### Database Management:
+
 ```bash
 # Test database functionality
 python3 test_database_fast.py
@@ -202,6 +211,7 @@ python3 test_database_fast.py
 ```
 
 ### Raspberry Pi Optimizations:
+
 - **Reduced I/O**: Batch operations to minimize SD card writes
 - **Memory tuning**: Conservative cache sizes for 1-8GB Pi memory configurations
 - **Concurrent access**: WAL mode allows simultaneous reads during writes
@@ -211,24 +221,28 @@ python3 test_database_fast.py
 ## Best Practices & Development Guidelines
 
 ### Code Organization:
+
 - **Modular design**: Keep related functionality in separate modules
 - **Cog pattern**: Use Discord.py cogs for command organization with proper `setup()` functions
 - **Config centralization**: All configuration, messages, and emojis in `config.py`
 - **Separation of concerns**: Handlers for UI logic, managers for data persistence
 
 ### Error Handling:
+
 - **Graceful degradation**: Bot should continue functioning even if external APIs fail
 - **User feedback**: Always provide clear error messages to users
 - **Logging**: Use appropriate log levels (DEBUG, INFO, WARNING, ERROR)
 - **State recovery**: Implement backup/restore for critical user state
 
 ### Testing Strategy:
+
 - **Unit tests first**: Test business logic and API integration thoroughly
 - **Mock external dependencies**: Use realistic API response data in tests
 - **Discord.py testing**: Test command callbacks directly, not the wrapped commands
 - **Coverage targets**: Aim for >90% coverage on core modules
 
 ### Performance Considerations:
+
 - **Async patterns**: Use async/await for all I/O operations
 - **Rate limiting**: Respect Discord and external API rate limits
 - **Memory management**: Clean up unused contexts and data periodically
@@ -236,6 +250,7 @@ python3 test_database_fast.py
 - **Raspberry Pi tuning**: 32MB cache, MEMORY temp store, and incremental vacuum
 
 ### Discord Bot Patterns:
+
 - **Hybrid commands**: Support both slash commands and traditional prefix commands
 - **Reaction UX**: Use reaction-based interfaces for quick user interactions
 - **Context management**: Maintain per-channel state efficiently
@@ -244,12 +259,14 @@ python3 test_database_fast.py
 ## Common Gotchas & Troubleshooting
 
 ### Discord.py Issues:
+
 - **Command sync timing**: Slash commands may take time to appear in Discord UI
 - **Intents**: Ensure proper intents are enabled for message content and reactions
 - **Event loop**: Don't mix sync and async code - use proper async patterns
 - **Context object**: Always check if context/interaction is still valid before responding
 
 ### Data Persistence:
+
 - **SQLite transactions**: Use ACID transactions for data consistency
 - **Database schema**: Normalized schema with foreign key constraints
 - **Migration support**: Automatic migration from legacy JSON files
@@ -258,12 +275,14 @@ python3 test_database_fast.py
 - **Database backup**: Regular database optimization with VACUUM command
 
 ### External API Integration:
+
 - **Henrik API changes**: API structure may change - test with real response data
 - **Rate limiting**: Implement exponential backoff for rate-limited requests
 - **Authentication**: API keys may be required - handle missing keys gracefully
 - **Timeouts**: Set reasonable timeouts for API requests to prevent hanging
 
 ### Testing Challenges:
+
 - **Discord mocking**: Use proper Mock objects for Discord.py components
 - **Async testing**: Use pytest-asyncio and proper async test patterns
 - **Time-dependent tests**: Mock datetime.now() for consistent test results
@@ -272,18 +291,21 @@ python3 test_database_fast.py
 - **Command callback testing**: Test hybrid command callbacks directly using `.callback(cog, ctx)`
 
 ### Production Deployment:
+
 - **Process management**: Use screen/tmux for persistent bot processes
 - **Log rotation**: Implement log rotation to prevent disk space issues
 - **Environment isolation**: Use virtual environments in production
 - **Graceful shutdown**: Handle SIGTERM/SIGINT for clean bot shutdown
 
 ### Debugging Tips:
+
 - **Enable debug logging**: Set LOG_LEVEL=DEBUG for detailed operation logs
 - **Test with real data**: Use actual Discord servers and API responses for testing
 - **State inspection**: Add debug commands to inspect bot state during development
 - **Error boundaries**: Catch and log exceptions at appropriate levels
 
 ### Code Quality Issues:
+
 - **Variable scope**: ALWAYS ensure variables are defined before use - trace through execution paths
 - **Test before committing**: Write and run tests for any code changes to verify they work
 - **Think through edge cases**: Consider scenarios where data might be missing or None
@@ -292,6 +314,7 @@ python3 test_database_fast.py
 ## Development Workflow
 
 ### Adding New Features:
+
 1. **Plan the architecture**: Identify which modules need changes
 2. **Write tests first**: Create unit tests for new functionality
 3. **Implement incrementally**: Add features in small, testable chunks
@@ -299,6 +322,7 @@ python3 test_database_fast.py
 5. **Update documentation**: Update CLAUDE.md with new patterns or gotchas
 
 ### Code Review Checklist:
+
 - [ ] Unit tests added/updated for new functionality
 - [ ] Error handling implemented for failure cases
 - [ ] Logging added at appropriate levels
@@ -308,6 +332,7 @@ python3 test_database_fast.py
 - [ ] Configuration externalized appropriately
 
 ### Release Process:
+
 1. Run full test suite: `pytest --cov=. --cov-report=html`
 2. Test manually with real Discord server
 3. Update version/changelog if applicable

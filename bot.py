@@ -232,6 +232,19 @@ class ShootyBot(commands.Bot):
         except Exception as e:
             log_error("saving contexts during shutdown", e)
         
+        # Close external clients
+        try:
+            from valorant_client import close_valorant_client
+            from heatmap_generator import close_heatmap_generator
+            
+            await close_valorant_client()
+            logging.info("Valorant client closed")
+            
+            await close_heatmap_generator()
+            logging.info("Heatmap generator closed")
+        except Exception as e:
+            log_error("closing external clients", e)
+        
         await super().close()
         logging.info("ShootyBot shutdown complete")
 

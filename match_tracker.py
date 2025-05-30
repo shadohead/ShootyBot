@@ -7,6 +7,7 @@ from valorant_client import valorant_client
 import random
 from utils import log_error, format_time_ago
 from context_manager import context_manager
+from heatmap_generator import get_heatmap_generator
 
 class MatchTracker:
     """Tracks Discord members' Valorant matches by polling for newly completed games in active shooty stacks"""
@@ -227,7 +228,22 @@ class MatchTracker:
         try:
             # Calculate fun stats and create embed
             embed = await self._create_match_embed(match, discord_members)
-            await channel.send(embed=embed)
+            
+            # Generate heatmap if we have round data
+            heatmap_file = None
+            if match.get('rounds'):
+                # Extract team PUUIDs
+                team_puuids = [dm['player_data'].get('puuid', '') for dm in discord_members]
+                
+                # Generate heatmap
+                heatmap_generator = get_heatmap_generator()
+                heatmap_file = await heatmap_generator.generate_heatmap(match, team_puuids)
+            
+            # Send embed with optional heatmap
+            if heatmap_file:
+                await channel.send(embed=embed, file=heatmap_file)
+            else:
+                await channel.send(embed=embed)
             
         except Exception as e:
             log_error("sending match results", e)
@@ -807,8 +823,8 @@ class MatchTracker:
         except Exception as e:
             log_error(f"auto-ending stack in channel {channel.id}", e)
     
-    async def manual_check_recent_match(self, guild: discord.Guild, member: discord.Member = None) -> Optional[discord.Embed]:
-        """Manually check for a recent match and return embed if found"""
+    async def manual_check_recent_match(self, guild: discord.Guild, member: discord.Member = None) -> Optional[tuple]:
+        """Manually check for a recent match and return (embed, match_data, team_puuids) if found"""
         if member:
             members_to_check = [member]
         else:
@@ -848,7 +864,11 @@ class MatchTracker:
                     # Add manual check indicator
                     if embed:
                         embed.set_footer(text="🔍 Manual match lookup • ShootyBot")
-                    return embed
+                    
+                    # Extract team PUUIDs for heatmap generation
+                    team_puuids = [dm['player_data'].get('puuid', '') for dm in discord_members_in_match]
+                    
+                    return (embed, match, team_puuids)
                     
             except Exception as e:
                 log_error(f"in manual check for {member.display_name}", e)
