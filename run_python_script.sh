@@ -85,9 +85,13 @@ is_bot_healthy() {
     
     # Check if health file is recent (updated within last 5 minutes)
     if [ -f "$HEALTH_CHECK_FILE" ]; then
-        local last_health=$(stat -f %m "$HEALTH_CHECK_FILE" 2>/dev/null || stat -c %Y "$HEALTH_CHECK_FILE" 2>/dev/null)
+        local last_health=$(stat -f %m "$HEALTH_CHECK_FILE" 2>/dev/null || stat -c %Y "$HEALTH_CHECK_FILE" 2>/dev/null || echo "0")
         local current_time=$(date +%s)
-        local time_diff=$((current_time - last_health))
+        if [[ "$last_health" =~ ^[0-9]+$ ]]; then
+            local time_diff=$((current_time - last_health))
+        else
+            return 1  # Invalid timestamp
+        fi
         
         if [ $time_diff -gt 300 ]; then  # 5 minutes
             return 1  # Health check is stale
