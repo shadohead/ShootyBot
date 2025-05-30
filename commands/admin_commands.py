@@ -15,7 +15,7 @@ class AdminCommands(BaseCommandCog):
         description="Set a role for the bot to ping (use role mention or ID)"
     )
     @commands.has_permissions(manage_channels=True)
-    async def set_role_code(self, ctx: commands.Context, *, role_mention: str):
+    async def set_role_code(self, ctx: commands.Context, *, role_mention: str) -> None:
         """Set the role that gets pinged for sessions."""
         try:
             channel_id = ctx.channel.id
@@ -64,7 +64,7 @@ class AdminCommands(BaseCommandCog):
         description="Set the game name for cross-server LFG features"
     )
     @commands.has_permissions(manage_channels=True)
-    async def set_game_name(self, ctx: commands.Context, *, game_name: str):
+    async def set_game_name(self, ctx: commands.Context, *, game_name: str) -> None:
         """Set the game name for cross-server Looking For Group features."""
         try:
             channel_id = ctx.channel.id
@@ -116,7 +116,7 @@ class AdminCommands(BaseCommandCog):
         name="shootylfg",
         description="Show all players across servers playing the same game"
     )
-    async def lfg(self, ctx: commands.Context):
+    async def lfg(self, ctx: commands.Context) -> None:
         """Show cross-server Looking For Group information."""
         try:
             channel_id = ctx.channel.id
@@ -195,7 +195,7 @@ class AdminCommands(BaseCommandCog):
         description="Send a cross-server message to other channels playing the same game"
     )
     @commands.cooldown(1, 60, commands.BucketType.user)  # 1 per minute per user
-    async def beacon(self, ctx: commands.Context, *, message: str):
+    async def beacon(self, ctx: commands.Context, *, message: str) -> None:
         """Send a beacon message to other channels playing the same game."""
         try:
             await self.defer_if_slash(ctx)

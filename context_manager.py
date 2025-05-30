@@ -1,7 +1,9 @@
 import logging
 import json
 import os
+from typing import Dict, Set, Optional, List, Any
 from filelock import FileLock
+import discord
 from config import *
 from database import database_manager
 from utils import ensure_directory_exists, log_error
@@ -9,29 +11,29 @@ from utils import ensure_directory_exists, log_error
 class ShootyContext:
     """Manages the state for a single channel's party session"""
     
-    def __init__(self, channel_id):
-        self.channel_id = channel_id
-        self.channel = None  # Discord channel object, set later
+    def __init__(self, channel_id: int) -> None:
+        self.channel_id: int = channel_id
+        self.channel: Optional[discord.TextChannel] = None  # Discord channel object, set later
         
         # User sets
-        self.bot_soloq_user_set = set()
-        self.bot_fullstack_user_set = set()
-        self.bot_ready_user_set = set()
+        self.bot_soloq_user_set: Set[str] = set()
+        self.bot_fullstack_user_set: Set[str] = set()
+        self.bot_ready_user_set: Set[str] = set()
         
         # Message tracking
-        self.current_st_message_id = None
+        self.current_st_message_id: Optional[int] = None
         
         # Channel settings
-        self.role_code = DEFAULT_SHOOTY_ROLE_CODE
-        self.game_name = None
-        self.party_max_size = DEFAULT_PARTY_SIZE
+        self.role_code: str = DEFAULT_SHOOTY_ROLE_CODE
+        self.game_name: Optional[str] = None
+        self.party_max_size: int = DEFAULT_PARTY_SIZE
         
         # Backup for restore functionality
-        self._backup = None
+        self._backup: Optional[Dict[str, Any]] = None
         
         logging.info(f"Created ShootyContext for channel {channel_id}")
     
-    def backup_state(self):
+    def backup_state(self) -> None:
         """Backup current state for restore command"""
         self._backup = {
             'soloq': set(self.bot_soloq_user_set),
@@ -40,7 +42,7 @@ class ShootyContext:
         }
         logging.info(f"Backed up state for channel {self.channel_id}")
     
-    def restore_state(self):
+    def restore_state(self) -> bool:
         """Restore from backup"""
         if self._backup:
             self.bot_soloq_user_set = self._backup['soloq']
@@ -50,51 +52,51 @@ class ShootyContext:
         else:
             logging.warning(f"No backup available for channel {self.channel_id}")
     
-    def reset_users(self):
+    def reset_users(self) -> None:
         """Clear all user sets"""
         self.bot_soloq_user_set.clear()
         self.bot_fullstack_user_set.clear()
         self.bot_ready_user_set.clear()
     
     # Solo Q User Functions
-    def get_soloq_user_count(self):
+    def get_soloq_user_count(self) -> int:
         return len(self.bot_soloq_user_set)
     
-    def add_soloq_user(self, user):
+    def add_soloq_user(self, user: str) -> None:
         # Remove from fullstack if they were there
         self.bot_fullstack_user_set.discard(user)
         self.bot_soloq_user_set.add(user)
     
-    def is_soloq_user(self, user):
+    def is_soloq_user(self, user: str) -> bool:
         return user in self.bot_soloq_user_set
     
-    def remove_soloq_user(self, user):
+    def remove_soloq_user(self, user: str) -> None:
         self.bot_soloq_user_set.discard(user)
     
     # Fullstack User Functions
-    def get_fullstack_user_count(self):
+    def get_fullstack_user_count(self) -> int:
         return len(self.bot_fullstack_user_set)
     
-    def add_fullstack_user(self, user):
+    def add_fullstack_user(self, user: str) -> None:
         # Only add if they're not already in soloq
         if user not in self.bot_soloq_user_set:
             self.bot_fullstack_user_set.add(user)
     
-    def remove_fullstack_user(self, user):
+    def remove_fullstack_user(self, user: str) -> None:
         self.bot_fullstack_user_set.discard(user)
     
     # Party Size Functions
-    def set_party_max_size(self, size):
+    def set_party_max_size(self, size: int) -> None:
         self.party_max_size = size
     
-    def get_party_max_size(self):
+    def get_party_max_size(self) -> int:
         return self.party_max_size
     
     # Utility Functions
-    def get_unique_user_count(self):
+    def get_unique_user_count(self) -> int:
         return len(self.bot_soloq_user_set.union(self.bot_fullstack_user_set))
     
-    def remove_user_from_everything(self, user_names_list):
+    def remove_user_from_everything(self, user_names_list: List[str]) -> None:
         """Remove users by name prefix from all sets"""
         kicked_usernames_list = []
         
@@ -114,7 +116,7 @@ class ShootyContext:
         return kicked_usernames_list
     
     # Formatting Functions
-    def bold_readied_user(self, user, display_hashtag=False):
+    def bold_readied_user(self, user: str, display_hashtag: bool = False) -> str:
         """Format username with bold if ready or playing Valorant"""
         from valorant_client import valorant_client
         
@@ -132,7 +134,7 @@ class ShootyContext:
         else:
             return name
     
-    def get_user_list_string(self):
+    def get_user_list_string(self) -> str:
         """Get formatted string of all users"""
         result_string = ""
         all_users_set = self.bot_soloq_user_set.union(self.bot_fullstack_user_set)
@@ -148,7 +150,7 @@ class ShootyContext:
         
         return result_string
     
-    def get_user_list_string_with_hashtag(self):
+    def get_user_list_string_with_hashtag(self) -> str:
         """Get formatted string of all users with hashtags"""
         result_string = ""
         all_users_set = self.bot_soloq_user_set.union(self.bot_fullstack_user_set)
@@ -165,7 +167,7 @@ class ShootyContext:
         return result_string
     
     # Persistence methods
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
         """Convert persistent data to dictionary for JSON storage"""
         return {
             'role_code': self.role_code,
@@ -174,7 +176,7 @@ class ShootyContext:
         }
     
     @classmethod
-    def from_dict(cls, channel_id, data):
+    def from_dict(cls, channel_id: int, data: Dict[str, Any]) -> 'ShootyContext':
         """Create context from dictionary data"""
         context = cls(channel_id)
         context.role_code = data.get('role_code', DEFAULT_SHOOTY_ROLE_CODE)
@@ -186,12 +188,12 @@ class ShootyContext:
 class ContextManager:
     """Manages all ShootyContext instances and handles persistence"""
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.contexts = {}
         self.lock = FileLock(f"{CHANNEL_DATA_FILE}.lock")
         self.load_all_contexts()
     
-    def get_context(self, channel_id):
+    def get_context(self, channel_id: int) -> ShootyContext:
         """Get or create context for a channel"""
         if channel_id not in self.contexts:
             self.contexts[channel_id] = ShootyContext(channel_id)
@@ -199,7 +201,7 @@ class ContextManager:
         
         return self.contexts[channel_id]
     
-    def load_all_contexts(self):
+    def load_all_contexts(self) -> None:
         """Load all contexts from database (kept for compatibility)"""
         ensure_directory_exists(DATA_DIR)
         
@@ -207,7 +209,7 @@ class ContextManager:
         # This method is kept for compatibility
         logging.info("Using SQLite database for context storage")
     
-    def load_context_data(self, channel_id):
+    def load_context_data(self, channel_id: int) -> Optional[Dict[str, Any]]:
         """Load data for a specific context from database"""
         try:
             settings = database_manager.get_channel_settings(channel_id)
@@ -222,7 +224,7 @@ class ContextManager:
         except Exception as e:
             log_error(f"loading context data for {channel_id}", e)
     
-    def save_context(self, channel_id):
+    def save_context(self, channel_id: int) -> bool:
         """Save a specific context to database"""
         try:
             if channel_id in self.contexts:
@@ -240,7 +242,7 @@ class ContextManager:
         except Exception as e:
             log_error(f"saving context for {channel_id}", e)
     
-    def save_all_contexts(self):
+    def save_all_contexts(self) -> None:
         """Save all active contexts to database."""
         saved_count = 0
         for channel_id in self.contexts:
@@ -251,7 +253,7 @@ class ContextManager:
                 log_error(f"saving context {channel_id} during save_all", e)
         logging.info(f"Saved {saved_count}/{len(self.contexts)} contexts")
     
-    def _write_json_atomic(self, data):
+    def _write_json_atomic(self, data: Dict[str, Any]) -> bool:
         """Write JSON data atomically (legacy method, kept for compatibility)"""
         # This method is no longer used but kept for compatibility
         pass
@@ -261,11 +263,11 @@ class ContextManager:
 context_manager = ContextManager()
 
 
-def get_shooty_context_from_channel_id(channel_id):
+def get_shooty_context_from_channel_id(channel_id: int) -> ShootyContext:
     """Helper function for backward compatibility"""
     return context_manager.get_context(channel_id)
 
 
-def to_names_list(user_set):
+def to_names_list(user_set: Set[str]) -> List[str]:
     """Helper function to convert user set to list of names"""
     return [user.name for user in user_set]

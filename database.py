@@ -25,7 +25,7 @@ class DatabaseManager:
         
         logging.info(f"Database initialized at {self.db_path}")
     
-    def _ensure_data_dir(self):
+    def _ensure_data_dir(self) -> None:
         """Ensure data directory exists"""
         if not os.path.exists(DATA_DIR):
             os.makedirs(DATA_DIR)
@@ -51,7 +51,7 @@ class DatabaseManager:
         conn.row_factory = sqlite3.Row  # Enable column access by name
         return conn
     
-    def _init_database(self):
+    def _init_database(self) -> None:
         """Initialize database tables"""
         with self._lock:
             conn = self._get_connection()
@@ -634,7 +634,7 @@ class DatabaseManager:
             logging.error(f"Error during migration: {e}")
             return False
     
-    def vacuum_database(self):
+    def vacuum_database(self) -> None:
         """Optimize database for better performance on Raspberry Pi"""
         with self._lock:
             conn = self._get_connection()

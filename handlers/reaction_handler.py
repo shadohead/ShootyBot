@@ -1,4 +1,5 @@
 import logging
+from typing import Union
 import discord
 from discord.ext import commands
 from context_manager import context_manager, to_names_list
@@ -6,7 +7,7 @@ from handlers.message_formatter import party_status_message
 from data_manager import data_manager
 from config import *
 
-async def add_react_options(message):
+async def add_react_options(message: discord.Message) -> None:
     """Add reaction options to a message"""
     await message.add_reaction(EMOJI["THUMBS_UP"])
     await message.add_reaction(EMOJI["FULL_STACK"])
@@ -16,11 +17,11 @@ async def add_react_options(message):
 class ReactionHandler(commands.Cog):
     """Handles all reaction-based interactions"""
     
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
     
     @commands.Cog.listener()
-    async def on_reaction_add(self, reaction, user):
+    async def on_reaction_add(self, reaction: discord.Reaction, user: Union[discord.Member, discord.User]) -> None:
         """Handle when users add reactions"""
         if user.bot or reaction.message.author != self.bot.user:
             return
@@ -79,7 +80,7 @@ class ReactionHandler(commands.Cog):
             await self._mention_party(reaction.message)
     
     @commands.Cog.listener()
-    async def on_reaction_remove(self, reaction, user):
+    async def on_reaction_remove(self, reaction: discord.Reaction, user: Union[discord.Member, discord.User]) -> None:
         """Handle when users remove reactions"""
         if user.bot or reaction.message.author != self.bot.user:
             return
@@ -165,5 +166,5 @@ class ReactionHandler(commands.Cog):
                 
                 logging.info(f"Tracked participation for {user.name} in session {session.session_id}")
 
-async def setup(bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(ReactionHandler(bot))

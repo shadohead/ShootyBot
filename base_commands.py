@@ -13,7 +13,7 @@ from config import MESSAGES
 class BaseCommandCog(commands.Cog):
     """Base class for all command cogs with common functionality."""
     
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.logger = logging.getLogger(self.__class__.__name__)
     
@@ -120,7 +120,7 @@ class BaseCommandCog(commands.Cog):
 class GameCommandCog(BaseCommandCog):
     """Base class for game-specific command cogs."""
     
-    def __init__(self, bot: commands.Bot, game_name: str):
+    def __init__(self, bot: commands.Bot, game_name: str) -> None:
         super().__init__(bot)
         self.game_name = game_name
     
@@ -176,7 +176,7 @@ class PaginatedEmbed:
     """Helper class for creating paginated embeds."""
     
     def __init__(self, title: str, color: int = 0x3498db,
-                 items_per_page: int = 10, footer_base: str = ""):
+                 items_per_page: int = 10, footer_base: str = "") -> None:
         self.title = title
         self.color = color
         self.items_per_page = items_per_page
@@ -229,19 +229,19 @@ class PaginatedEmbed:
 class ConfirmationView(discord.ui.View):
     """A simple yes/no confirmation view."""
     
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = 30.0) -> None:
         super().__init__(timeout=timeout)
         self.value: Optional[bool] = None
         self.interaction: Optional[discord.Interaction] = None
     
     @discord.ui.button(label='Yes', style=discord.ButtonStyle.success, emoji='✅')
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.value = True
         self.interaction = interaction
         self.stop()
     
     @discord.ui.button(label='No', style=discord.ButtonStyle.danger, emoji='❌')
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.value = False
         self.interaction = interaction
         self.stop()

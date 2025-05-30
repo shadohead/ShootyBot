@@ -1,7 +1,7 @@
 """Base models and abstract classes for ShootyBot data management."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, TypeVar, Generic, Set
+from typing import Dict, Any, Optional, List, TypeVar, Generic, Set, Callable, Union
 from datetime import datetime
 import logging
 
@@ -109,7 +109,7 @@ class StatefulModel(TimestampedModel):
     
     VALID_STATES: List[str] = []  # Override in subclasses
     
-    def __init__(self, initial_state: str = None):
+    def __init__(self, initial_state: Optional[str] = None):
         super().__init__()
         self._state: str = initial_state or self.get_default_state()
         self._state_history: List[Dict[str, Any]] = []
@@ -221,14 +221,14 @@ class ObservableModel(BaseModel):
     """Model with observer pattern support."""
     
     def __init__(self):
-        self._observers: List[callable] = []
+        self._observers: List[Callable[[Any, str, Any], None]] = []
     
-    def attach_observer(self, callback: callable) -> None:
+    def attach_observer(self, callback: Callable[[Any, str, Any], None]) -> None:
         """Attach an observer callback."""
         if callback not in self._observers:
             self._observers.append(callback)
     
-    def detach_observer(self, callback: callable) -> None:
+    def detach_observer(self, callback: Callable[[Any, str, Any], None]) -> None:
         """Detach an observer callback."""
         if callback in self._observers:
             self._observers.remove(callback)

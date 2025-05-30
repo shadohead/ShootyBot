@@ -1,9 +1,11 @@
 import logging
 import asyncio
 from datetime import datetime
+from typing import Optional
 import pytz
 from dateutil import parser
 from discord.ext import commands
+import discord
 from base_commands import BaseCommandCog
 from context_manager import context_manager
 from handlers.message_formatter import get_ping_shooty_message, party_status_message
@@ -19,7 +21,7 @@ class SessionCommands(BaseCommandCog):
         name="st", 
         description="Starts a Fresh Shooty Session (FSS™)"
     )
-    async def start_session(self, ctx):
+    async def start_session(self, ctx: commands.Context) -> None:
         await self.defer_if_slash(ctx)
         self.logger.info("Starting new shooty session")
         
@@ -71,7 +73,7 @@ class SessionCommands(BaseCommandCog):
         name="sts", 
         description="Prints party status"
     )
-    async def session_status(self, ctx):
+    async def session_status(self, ctx: commands.Context) -> None:
         self.logger.info("Printing Status")
         
         channel_id = ctx.channel.id
@@ -84,7 +86,7 @@ class SessionCommands(BaseCommandCog):
         name="stm", 
         description="Mentions everyone in the party"
     )
-    async def mention_session(self, ctx):
+    async def mention_session(self, ctx: commands.Context) -> None:
         self.logger.info("Mentioning everyone in the party.")
         
         channel_id = ctx.channel.id
@@ -106,7 +108,7 @@ class SessionCommands(BaseCommandCog):
         name="shootyrestore",
         description="Restores party to the previous state before it got reset"
     )
-    async def restore_session(self, ctx):
+    async def restore_session(self, ctx: commands.Context) -> None:
         channel_id = ctx.channel.id
         shooty_context = context_manager.get_context(channel_id)
         
@@ -125,7 +127,7 @@ class SessionCommands(BaseCommandCog):
         name="shootytime",
         description="Schedule a time to ping the group. You must specify AM/PM or input the time as military time."
     )
-    async def scheduled_session(self, ctx, game_time):
+    async def scheduled_session(self, ctx: commands.Context, game_time: str) -> None:
         await self.defer_if_slash(ctx)
         
         channel_id = ctx.channel.id
@@ -165,7 +167,7 @@ class SessionCommands(BaseCommandCog):
         name="shootyhelp", 
         description="Show comprehensive help for all ShootyBot commands"
     )
-    async def show_help(self, ctx, category: str = "all"):
+    async def show_help(self, ctx: commands.Context, category: str = "all") -> None:
         """Show comprehensive help organized by command categories"""
         import discord
         
@@ -454,7 +456,7 @@ class SessionCommands(BaseCommandCog):
         name="stend",
         description="End the current session"
     )
-    async def end_session(self, ctx):
+    async def end_session(self, ctx: commands.Context) -> None:
         """End the current session"""
         channel_id = ctx.channel.id
         shooty_context = context_manager.get_context(channel_id)
@@ -465,7 +467,7 @@ class SessionCommands(BaseCommandCog):
         else:
             await self.send_error_embed(ctx, "No Active Session", "No active session to end.")
     
-    async def _end_current_session(self, shooty_context):
+    async def _end_current_session(self, shooty_context) -> None:
         """Helper method to end the current session"""
         if not hasattr(shooty_context, 'current_session_id') or not shooty_context.current_session_id:
             return
@@ -496,5 +498,5 @@ class SessionCommands(BaseCommandCog):
         # Clear session reference
         shooty_context.current_session_id = None
 
-async def setup(bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(SessionCommands(bot))

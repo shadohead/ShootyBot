@@ -13,7 +13,7 @@ class PartyCommands(BaseCommandCog):
         name="shootykick", 
         description="Kick user from party by username prefix"
     )
-    async def kick_user(self, ctx: commands.Context, username: str):
+    async def kick_user(self, ctx: commands.Context, username: str) -> None:
         """Kick a user from the party by username prefix."""
         try:
             channel_id = ctx.channel.id
@@ -44,7 +44,7 @@ class PartyCommands(BaseCommandCog):
         name="shootysize", 
         description="Set maximum party size (1-20 players)"
     )
-    async def set_session_size(self, ctx: commands.Context, size: str):
+    async def set_session_size(self, ctx: commands.Context, size: str) -> None:
         """Set the maximum party size for sessions."""
         try:
             channel_id = ctx.channel.id
@@ -94,7 +94,7 @@ class PartyCommands(BaseCommandCog):
         name="shootyclear",
         description="Clear all users from the current session"
     )
-    async def clear_session(self, ctx: commands.Context):
+    async def clear_session(self, ctx: commands.Context) -> None:
         """Clear all users from the current session with backup."""
         try:
             channel_id = ctx.channel.id

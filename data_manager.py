@@ -12,7 +12,7 @@ from base_models import TimestampedModel, ValidatedModel, StatefulModel, Databas
 class UserData(TimestampedModel, ValidatedModel):
     """Represents a Discord user's persistent data"""
     
-    def __init__(self, discord_id: int):
+    def __init__(self, discord_id: int) -> None:
         TimestampedModel.__init__(self)
         ValidatedModel.__init__(self)
         self.discord_id = discord_id
@@ -26,7 +26,7 @@ class UserData(TimestampedModel, ValidatedModel):
         self._valorant_puuid = None
         self._update_compatibility_properties()
     
-    def _load_from_database(self):
+    def _load_from_database(self) -> None:
         """Load user data from database"""
         data = database_manager.get_user(self.discord_id)
         if data:
@@ -48,7 +48,7 @@ class UserData(TimestampedModel, ValidatedModel):
             self.session_history = []
             # Timestamps already set by TimestampedModel.__init__()
     
-    def _update_compatibility_properties(self):
+    def _update_compatibility_properties(self) -> None:
         """Update backward compatibility properties from primary account"""
         primary_account = self.get_primary_account()
         if primary_account:
@@ -60,7 +60,7 @@ class UserData(TimestampedModel, ValidatedModel):
             self._valorant_tag = None
             self._valorant_puuid = None
     
-    def link_valorant_account(self, username: str, tag: str, puuid: str, set_primary: bool = True):
+    def link_valorant_account(self, username: str, tag: str, puuid: str, set_primary: bool = True) -> bool:
         """Link a Valorant account to this Discord user"""
         success = database_manager.link_valorant_account(
             self.discord_id, username, tag, puuid, set_primary
@@ -70,7 +70,7 @@ class UserData(TimestampedModel, ValidatedModel):
             self._load_from_database()  # Refresh data from database
             self._update_compatibility_properties()
     
-    def _set_primary_account(self, primary_account: dict):
+    def _set_primary_account(self, primary_account: dict) -> None:
         """Set an account as primary"""
         success = database_manager.link_valorant_account(
             self.discord_id, 

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import discord
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from valorant_client import valorant_client
 import random
 from utils import log_error, format_time_ago
@@ -19,14 +19,14 @@ class MatchTracker:
     HIGH_DAMAGE_THRESHOLD = 3000
     RANDOM_CHECK_PROBABILITY = 0.1  # 10%
     
-    def __init__(self, bot):
+    def __init__(self, bot: discord.Client) -> None:
         self.bot = bot
-        self.tracked_members = {}  # {member_id: {'was_playing': bool, 'last_checked': datetime}}
-        self.recent_matches = {}   # {server_id: {match_id: {'timestamp': datetime, 'members': []}}}
-        self.check_interval = self.CHECK_INTERVAL_SECONDS
-        self.running = False
+        self.tracked_members: Dict[int, Dict[str, Any]] = {}  # {member_id: {'was_playing': bool, 'last_checked': datetime}}
+        self.recent_matches: Dict[int, Dict[str, Dict[str, Any]]] = {}   # {server_id: {match_id: {'timestamp': datetime, 'members': []}}}
+        self.check_interval: int = self.CHECK_INTERVAL_SECONDS
+        self.running: bool = False
         
-    async def start_tracking(self):
+    async def start_tracking(self) -> None:
         """Start the background match tracking task"""
         if self.running:
             return
@@ -42,12 +42,12 @@ class MatchTracker:
                 log_error("in match tracker", e)
                 await asyncio.sleep(60)  # Wait 1 minute before retrying
     
-    def stop_tracking(self):
+    def stop_tracking(self) -> None:
         """Stop the background match tracking"""
         self.running = False
         logging.info("Stopped match tracker")
     
-    async def _check_all_servers(self):
+    async def _check_all_servers(self) -> None:
         """Check all servers for recently finished matches"""
         for guild in self.bot.guilds:
             try:
@@ -55,7 +55,7 @@ class MatchTracker:
             except Exception as e:
                 log_error(f"checking server {guild.id}", e)
     
-    async def _check_server_matches(self, guild: discord.Guild):
+    async def _check_server_matches(self, guild: discord.Guild) -> None:
         """Check a specific server for finished matches"""
         current_time = datetime.now(timezone.utc)
         members_to_check = []
@@ -89,7 +89,7 @@ class MatchTracker:
         if members_to_check:
             await self._check_recent_matches(guild, members_to_check)
     
-    async def _check_recent_matches(self, guild: discord.Guild, members: List[discord.Member]):
+    async def _check_recent_matches(self, guild: discord.Guild, members: List[discord.Member]) -> None:
         """Check recent matches for specific members"""
         server_matches = self.recent_matches.setdefault(guild.id, {})
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.MATCH_CUTOFF_HOURS)
@@ -180,7 +180,7 @@ class MatchTracker:
         
         return discord_members
     
-    async def _send_match_results(self, guild: discord.Guild, match: dict, discord_members: List[Dict]):
+    async def _send_match_results(self, guild: discord.Guild, match: Dict[str, Any], discord_members: List[Dict[str, Any]]) -> None:
         """Send match results to the server"""
         # Find an appropriate channel (look for general, valorant, or any text channel)
         channel = None
@@ -519,7 +519,7 @@ class MatchTracker:
 # Global match tracker instance
 match_tracker = None
 
-def get_match_tracker(bot):
+def get_match_tracker(bot: discord.Client) -> MatchTracker:
     """Get or create the global match tracker instance"""
     global match_tracker
     if match_tracker is None:

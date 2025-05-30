@@ -4,7 +4,7 @@ import os
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Union, Optional, Any, Dict, Callable
+from typing import Union, Optional, Any, Dict, Callable, Awaitable, TypeVar
 import discord
 import sqlite3
 from filelock import FileLock
@@ -211,11 +211,13 @@ def execute_with_retry(func: Callable, max_retries: int = 3, delay: float = 0.1)
 
 
 # Async Utilities
-def async_retry(max_retries: int = 3, delay: float = 1.0, backoff: float = 2.0):
+F = TypeVar('F', bound=Callable[..., Awaitable[Any]])
+
+def async_retry(max_retries: int = 3, delay: float = 1.0, backoff: float = 2.0) -> Callable[[F], F]:
     """Decorator for async functions with retry logic."""
-    def decorator(func):
+    def decorator(func: F) -> F:
         @wraps(func)
-        async def wrapper(*args, **kwargs):
+        async def wrapper(*args, **kwargs) -> Any:
             last_error = None
             wait_time = delay
             
@@ -232,7 +234,7 @@ def async_retry(max_retries: int = 3, delay: float = 1.0, backoff: float = 2.0):
                         raise
             
             raise last_error
-        return wrapper
+        return wrapper  # type: ignore
     return decorator
 
 

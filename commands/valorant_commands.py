@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 import discord
 from discord.ext import commands
 from base_commands import GameCommandCog
@@ -10,7 +11,7 @@ from match_tracker import get_match_tracker
 class ValorantCommands(GameCommandCog):
     """Commands for Valorant integration and account management"""
     
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot) -> None:
         super().__init__(bot, game_name="Valorant")
         self.match_tracker = get_match_tracker(bot)
     
@@ -18,7 +19,7 @@ class ValorantCommands(GameCommandCog):
         name="shootylink",
         description="Link your Valorant account (e.g., /shootylink username tag)"
     )
-    async def link_valorant(self, ctx, username: str, tag: str):
+    async def link_valorant(self, ctx: commands.Context, username: str, tag: str) -> None:
         """Link a Valorant account to Discord user"""
         try:
             await self.defer_if_slash(ctx)
@@ -51,7 +52,7 @@ class ValorantCommands(GameCommandCog):
         name="shootymanuallink", 
         description="Manually link Valorant account without API verification"
     )
-    async def manual_link_valorant(self, ctx, username: str, tag: str):
+    async def manual_link_valorant(self, ctx: commands.Context, username: str, tag: str) -> None:
         """Manually link a Valorant account (no verification)"""
         try:
             # Store account info without API verification
@@ -73,7 +74,7 @@ class ValorantCommands(GameCommandCog):
         name="shootyunlink",
         description="Unlink your Valorant account"
     )
-    async def unlink_valorant(self, ctx):
+    async def unlink_valorant(self, ctx: commands.Context) -> None:
         """Unlink Valorant account from Discord user"""
         try:
             success = await valorant_client.unlink_account(ctx.author.id)
@@ -98,7 +99,7 @@ class ValorantCommands(GameCommandCog):
         name="shootyinfo",
         description="Information about Valorant integration and API status"
     )
-    async def valorant_info(self, ctx):
+    async def valorant_info(self, ctx: commands.Context) -> None:
         """Show information about Valorant integration"""
         fields = [
             {
@@ -130,7 +131,7 @@ class ValorantCommands(GameCommandCog):
         name="shootyaddalt",
         description="Add an additional Valorant account (e.g., /shootyaddalt username tag)"
     )
-    async def add_alt_account(self, ctx, username: str, tag: str):
+    async def add_alt_account(self, ctx: commands.Context, username: str, tag: str) -> None:
         """Add an additional Valorant account"""
         try:
             await self.defer_if_slash(ctx)
@@ -179,7 +180,7 @@ class ValorantCommands(GameCommandCog):
         name="shootylist",
         description="List all your linked Valorant accounts"
     )
-    async def list_accounts(self, ctx, member: discord.Member = None):
+    async def list_accounts(self, ctx: commands.Context, member: Optional[discord.Member] = None) -> None:
         """List all linked Valorant accounts"""
         target_user = member or ctx.author
         accounts = valorant_client.get_all_linked_accounts(target_user.id)
@@ -209,7 +210,7 @@ class ValorantCommands(GameCommandCog):
         name="shootyprimary",
         description="Set a Valorant account as your primary (e.g., /shootyprimary username tag)"
     )
-    async def set_primary_account(self, ctx, username: str, tag: str):
+    async def set_primary_account(self, ctx: commands.Context, username: str, tag: str) -> None:
         """Set a Valorant account as primary"""
         try:
             user_data = data_manager.get_user(ctx.author.id)
@@ -235,7 +236,7 @@ class ValorantCommands(GameCommandCog):
         name="shootyremove",
         description="Remove a linked Valorant account (e.g., /shootyremove username tag)"
     )
-    async def remove_account(self, ctx, username: str, tag: str):
+    async def remove_account(self, ctx: commands.Context, username: str, tag: str) -> None:
         """Remove a linked Valorant account"""
         try:
             user_data = data_manager.get_user(ctx.author.id)
@@ -261,7 +262,7 @@ class ValorantCommands(GameCommandCog):
         name="shootywho",
         description="Show who is currently playing Valorant in this server"
     )
-    async def who_playing(self, ctx):
+    async def who_playing(self, ctx: commands.Context) -> None:
         """Show members currently playing Valorant"""
         playing_members = valorant_client.get_playing_members(ctx.guild)
         
@@ -293,7 +294,7 @@ class ValorantCommands(GameCommandCog):
         name="shootystats",
         description="Show your Shooty session stats"
     )
-    async def valorant_stats(self, ctx, member: discord.Member = None):
+    async def valorant_stats(self, ctx: commands.Context, member: Optional[discord.Member] = None) -> None:
         """Show user's session statistics"""
         target_user = member or ctx.author
         user_data = data_manager.get_user(target_user.id)
@@ -377,7 +378,7 @@ class ValorantCommands(GameCommandCog):
         name="shootystatsdetailed",
         description="Show detailed Valorant match statistics (KDA, KAST, headshot %, etc.)"
     )
-    async def detailed_valorant_stats(self, ctx, member: discord.Member = None, account_name: str = None):
+    async def detailed_valorant_stats(self, ctx: commands.Context, member: Optional[discord.Member] = None, account_name: Optional[str] = None) -> None:
         """Show detailed Valorant statistics from match history"""
         target_user = member or ctx.author
         
@@ -597,7 +598,7 @@ class ValorantCommands(GameCommandCog):
         name="shootyleaderboard",
         description="Show server leaderboard for Valorant stats (kda, kd, winrate, headshot, acs)"
     )
-    async def valorant_leaderboard(self, ctx, stat_type: str = "kda"):
+    async def valorant_leaderboard(self, ctx: commands.Context, stat_type: str = "kda") -> None:
         """Show server leaderboard for various Valorant stats"""
         await self.defer_if_slash(ctx)
         
@@ -808,7 +809,7 @@ class ValorantCommands(GameCommandCog):
         name="shootyhistory",
         description="Show session history for this channel"
     )
-    async def session_history(self, ctx, limit: int = 5):
+    async def session_history(self, ctx: commands.Context, limit: int = 5) -> None:
         """Show recent session history for the channel"""
         if limit > 10:
             limit = 10
@@ -853,7 +854,7 @@ class ValorantCommands(GameCommandCog):
         name="shootylastmatch",
         description="Show stats from the most recent match involving Discord members"
     )
-    async def last_match(self, ctx, member: discord.Member = None):
+    async def last_match(self, ctx: commands.Context, member: Optional[discord.Member] = None) -> None:
         """Show the most recent match stats"""
         try:
             await self.defer_if_slash(ctx)
@@ -880,7 +881,7 @@ class ValorantCommands(GameCommandCog):
         description="Control the automatic match tracking system"
     )
     @commands.has_permissions(administrator=True)
-    async def match_tracker_control(self, ctx, action: str = "status"):
+    async def match_tracker_control(self, ctx: commands.Context, action: str = "status") -> None:
         """Control match tracking (start/stop/status)"""
         try:
             if action.lower() == "start":
@@ -937,7 +938,7 @@ class ValorantCommands(GameCommandCog):
         name="shootyfun",
         description="Show fun and quirky Valorant stats with achievements"
     )
-    async def fun_valorant_stats(self, ctx, member: discord.Member = None):
+    async def fun_valorant_stats(self, ctx: commands.Context, member: Optional[discord.Member] = None) -> None:
         """Show fun stats, achievements, and quirky metrics"""
         target_user = member or ctx.author
         
@@ -1160,5 +1161,5 @@ class ValorantCommands(GameCommandCog):
             self.logger.error(f"Error in shootyfun command: {e}")
             await self.send_error_embed(ctx, "Error Fetching Fun Stats", str(e))
 
-async def setup(bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(ValorantCommands(bot))

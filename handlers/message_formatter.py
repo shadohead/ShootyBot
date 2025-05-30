@@ -1,29 +1,30 @@
+from typing import Optional, List, Set
 from config import *
 
-def get_ping_shooty_message(role_code):
+def get_ping_shooty_message(role_code: Optional[str]) -> str:
     """Get the initial ping message for starting a session"""
     if role_code is None:
         return MESSAGES["NO_ROLE"]
     else:
         return f"{DEFAULT_MSG}{role_code}"
 
-def get_kicked_user_message(kicked_usernames_list):
+def get_kicked_user_message(kicked_usernames_list: List[str]) -> str:
     """Get message for kicked users"""
     return "Kicked: " + str(kicked_usernames_list)
 
-def get_max_party_size_message(party_size):
+def get_max_party_size_message(party_size: int) -> str:
     """Get message for party size setting"""
     return f"Current party size: {party_size}"
 
-def bold(text):
+def bold(text: str) -> str:
     """Make text bold for Discord"""
     return f"**{text}**"
 
-def italics(text):
+def italics(text: str) -> str:
     """Make text italic for Discord"""
     return f"*{text}*"
 
-def party_status_message(is_ping, user_sets):
+def party_status_message(is_ping: bool, user_sets: Set[str]) -> str:
     """
     Generate the party status message
     
