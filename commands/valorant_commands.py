@@ -1,16 +1,17 @@
 import logging
 import discord
 from discord.ext import commands
+from base_commands import GameCommandCog
 from valorant_client import valorant_client
 from data_manager import data_manager
 from datetime import datetime, timezone
 from match_tracker import get_match_tracker
 
-class ValorantCommands(commands.Cog):
+class ValorantCommands(GameCommandCog):
     """Commands for Valorant integration and account management"""
     
     def __init__(self, bot):
-        self.bot = bot
+        super().__init__(bot, game_name="Valorant")
         self.match_tracker = get_match_tracker(bot)
     
     @commands.hybrid_command(
@@ -20,49 +21,31 @@ class ValorantCommands(commands.Cog):
     async def link_valorant(self, ctx, username: str, tag: str):
         """Link a Valorant account to Discord user"""
         try:
-            # Use defer() for slash commands, but check if it exists first
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.defer()
+            await self.defer_if_slash(ctx)
             
-            logging.info(f"Linking Valorant account {username}#{tag} for user {ctx.author.id}")
+            self.logger.info(f"Linking Valorant account {username}#{tag} for user {ctx.author.id}")
             
             result = await valorant_client.link_account(ctx.author.id, username, tag)
             
             if result['success']:
-                embed = discord.Embed(
-                    title="✅ Valorant Account Linked",
-                    description=f"Successfully linked **{result['username']}#{result['tag']}**",
-                    color=0x00ff00
+                thumbnail = result.get('card', {}).get('large')
+                await self.send_embed(
+                    ctx,
+                    "✅ Valorant Account Linked",
+                    f"Successfully linked **{result['username']}#{result['tag']}**",
+                    color=0x00ff00,
+                    thumbnail=thumbnail
                 )
-                
-                # Add player card if available
-                if result.get('card', {}).get('large'):
-                    embed.set_thumbnail(url=result['card']['large'])
             else:
-                embed = discord.Embed(
-                    title="❌ Link Failed",
-                    description=f"Could not link account: {result['error']}",
-                    color=0xff0000
+                await self.send_error_embed(
+                    ctx,
+                    "Link Failed",
+                    f"Could not link account: {result['error']}"
                 )
-            
-            # Use appropriate send method based on context type
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.followup.send(embed=embed)
-            else:
-                await ctx.send(embed=embed)
                 
         except Exception as e:
-            error_msg = f"Error linking account: {str(e)}"
-            logging.error(f"Error in shootylink command: {e}")
-            
-            # Send error message using appropriate method
-            try:
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(f"❌ {error_msg}")
-                else:
-                    await ctx.send(f"❌ {error_msg}")
-            except:
-                await ctx.send(f"❌ {error_msg}")
+            self.logger.error(f"Error in shootylink command: {e}")
+            await self.send_error_embed(ctx, "Error Linking Account", str(e))
     
     @commands.hybrid_command(
         name="shootymanuallink", 
@@ -76,17 +59,15 @@ class ValorantCommands(commands.Cog):
             user_data.link_valorant_account(username, tag, f"manual_{username}_{tag}")
             data_manager.save_user(ctx.author.id)
             
-            embed = discord.Embed(
-                title="✅ Valorant Account Linked (Manual)",
-                description=f"Manually linked **{username}#{tag}**\n*Note: Account not verified due to API limitations*",
-                color=0x00ff00
+            await self.send_success_embed(
+                ctx,
+                "Valorant Account Linked (Manual)",
+                f"Manually linked **{username}#{tag}**\n*Note: Account not verified due to API limitations*"
             )
             
-            await ctx.send(embed=embed)
-            
         except Exception as e:
-            logging.error(f"Error in manual link: {e}")
-            await ctx.send(f"❌ Error linking account: {str(e)}")
+            self.logger.error(f"Error in manual link: {e}")
+            await self.send_error_embed(ctx, "Error Linking Account", str(e))
     
     @commands.hybrid_command(
         name="shootyunlink",
@@ -94,22 +75,24 @@ class ValorantCommands(commands.Cog):
     )
     async def unlink_valorant(self, ctx):
         """Unlink Valorant account from Discord user"""
-        success = await valorant_client.unlink_account(ctx.author.id)
-        
-        if success:
-            embed = discord.Embed(
-                title="✅ Account Unlinked",
-                description="Your Valorant account has been unlinked",
-                color=0x00ff00
-            )
-        else:
-            embed = discord.Embed(
-                title="❌ Unlink Failed",
-                description="Could not unlink your account",
-                color=0xff0000
-            )
-        
-        await ctx.send(embed=embed)
+        try:
+            success = await valorant_client.unlink_account(ctx.author.id)
+            
+            if success:
+                await self.send_success_embed(
+                    ctx,
+                    "Account Unlinked",
+                    "Your Valorant account has been unlinked"
+                )
+            else:
+                await self.send_error_embed(
+                    ctx,
+                    "Unlink Failed", 
+                    "Could not unlink your account"
+                )
+        except Exception as e:
+            self.logger.error(f"Error in unlink command: {e}")
+            await self.send_error_embed(ctx, "Error Unlinking Account", str(e))
     
     @commands.hybrid_command(
         name="shootyinfo",
@@ -117,31 +100,31 @@ class ValorantCommands(commands.Cog):
     )
     async def valorant_info(self, ctx):
         """Show information about Valorant integration"""
-        embed = discord.Embed(
-            title="🎯 Valorant Integration Info",
-            description="Current status of Valorant features in ShootyBot",
-            color=0xff4655
-        )
+        fields = [
+            {
+                "name": "📊 Available Features",
+                "value": "• Link multiple accounts (`/shootylink`, `/shootyaddalt`)\n• Account management (`/shootylist`, `/shootyprimary`, `/shootyremove`)\n• Discord presence detection\n• Session stats tracking\n• In-game status display (🎮 emoji)",
+                "inline": False
+            },
+            {
+                "name": "⚠️ API Status",
+                "value": "Henrik's Valorant API now requires authentication.\nAccount verification is temporarily disabled.\nUse `/shootymanuallink` for now.",
+                "inline": False
+            },
+            {
+                "name": "🔑 To Enable Full Features",
+                "value": "1. Get API key from [docs.henrikdev.xyz](https://docs.henrikdev.xyz)\n2. Add `HENRIK_API_KEY=your_key` to .env file\n3. Restart bot to enable `/shootylink` verification",
+                "inline": False
+            }
+        ]
         
-        embed.add_field(
-            name="📊 Available Features",
-            value="• Link multiple accounts (`/shootylink`, `/shootyaddalt`)\n• Account management (`/shootylist`, `/shootyprimary`, `/shootyremove`)\n• Discord presence detection\n• Session stats tracking\n• In-game status display (🎮 emoji)",
-            inline=False
+        await self.send_embed(
+            ctx,
+            "🎯 Valorant Integration Info",
+            "Current status of Valorant features in ShootyBot",
+            color=0xff4655,
+            fields=fields
         )
-        
-        embed.add_field(
-            name="⚠️ API Status",
-            value="Henrik's Valorant API now requires authentication.\nAccount verification is temporarily disabled.\nUse `/shootymanuallink` for now.",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="🔑 To Enable Full Features",
-            value="1. Get API key from [docs.henrikdev.xyz](https://docs.henrikdev.xyz)\n2. Add `HENRIK_API_KEY=your_key` to .env file\n3. Restart bot to enable `/shootylink` verification",
-            inline=False
-        )
-        
-        await ctx.send(embed=embed)
     
     @commands.hybrid_command(
         name="shootyaddalt",
@@ -150,25 +133,20 @@ class ValorantCommands(commands.Cog):
     async def add_alt_account(self, ctx, username: str, tag: str):
         """Add an additional Valorant account"""
         try:
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.defer()
+            await self.defer_if_slash(ctx)
             
-            logging.info(f"Adding alt Valorant account {username}#{tag} for user {ctx.author.id}")
+            self.logger.info(f"Adding alt Valorant account {username}#{tag} for user {ctx.author.id}")
             
             # Get current accounts count
             user_data = data_manager.get_user(ctx.author.id)
             current_accounts = len(user_data.get_all_accounts())
             
             if current_accounts >= 5:  # Limit to 5 accounts per user
-                embed = discord.Embed(
-                    title="❌ Account Limit Reached",
-                    description="You can only link up to 5 Valorant accounts. Use `/shootyremove` to remove an account first.",
-                    color=0xff0000
+                await self.send_error_embed(
+                    ctx,
+                    "Account Limit Reached",
+                    "You can only link up to 5 Valorant accounts. Use `/shootyremove` to remove an account first."
                 )
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(embed=embed)
-                else:
-                    await ctx.send(embed=embed)
                 return
             
             result = await valorant_client.link_account(ctx.author.id, username, tag)
@@ -178,37 +156,24 @@ class ValorantCommands(commands.Cog):
                 user_data.link_valorant_account(result['username'], result['tag'], result['puuid'], set_primary=False)
                 data_manager.save_user(ctx.author.id)
                 
-                embed = discord.Embed(
-                    title="✅ Alt Account Added",
-                    description=f"Added **{result['username']}#{result['tag']}** as alternate account",
-                    color=0x00ff00
+                thumbnail = result.get('card', {}).get('large')
+                await self.send_embed(
+                    ctx,
+                    "✅ Alt Account Added",
+                    f"Added **{result['username']}#{result['tag']}** as alternate account",
+                    color=0x00ff00,
+                    thumbnail=thumbnail
                 )
-                
-                if result.get('card', {}).get('large'):
-                    embed.set_thumbnail(url=result['card']['large'])
             else:
-                embed = discord.Embed(
-                    title="❌ Failed to Add Alt Account",
-                    description=f"Could not add account: {result['error']}",
-                    color=0xff0000
+                await self.send_error_embed(
+                    ctx,
+                    "Failed to Add Alt Account",
+                    f"Could not add account: {result['error']}"
                 )
-            
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.followup.send(embed=embed)
-            else:
-                await ctx.send(embed=embed)
                 
         except Exception as e:
-            error_msg = f"Error adding alt account: {str(e)}"
-            logging.error(f"Error in shootyaddalt command: {e}")
-            
-            try:
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(f"❌ {error_msg}")
-                else:
-                    await ctx.send(f"❌ {error_msg}")
-            except:
-                await ctx.send(f"❌ {error_msg}")
+            self.logger.error(f"Error in shootyaddalt command: {e}")
+            await self.send_error_embed(ctx, "Error Adding Alt Account", str(e))
     
     @commands.hybrid_command(
         name="shootylist",
@@ -220,9 +185,10 @@ class ValorantCommands(commands.Cog):
         accounts = valorant_client.get_all_linked_accounts(target_user.id)
         
         if not accounts:
-            embed = discord.Embed(
-                title="📋 Valorant Accounts",
-                description=f"{target_user.display_name} has no linked Valorant accounts",
+            await self.send_embed(
+                ctx,
+                "📋 Valorant Accounts",
+                f"{target_user.display_name} has no linked Valorant accounts",
                 color=0x808080
             )
         else:
@@ -231,15 +197,13 @@ class ValorantCommands(commands.Cog):
                 primary_marker = " 🌟" if account.get('primary', False) else ""
                 account_list.append(f"{i}. **{account['username']}#{account['tag']}**{primary_marker}")
             
-            embed = discord.Embed(
-                title=f"📋 {target_user.display_name}'s Valorant Accounts",
-                description="\n".join(account_list),
-                color=0xff4655
+            await self.send_embed(
+                ctx,
+                f"📋 {target_user.display_name}'s Valorant Accounts",
+                "\n".join(account_list),
+                color=0xff4655,
+                footer="🌟 = Primary Account"
             )
-            
-            embed.set_footer(text="🌟 = Primary Account")
-        
-        await ctx.send(embed=embed)
     
     @commands.hybrid_command(
         name="shootyprimary",
@@ -247,23 +211,25 @@ class ValorantCommands(commands.Cog):
     )
     async def set_primary_account(self, ctx, username: str, tag: str):
         """Set a Valorant account as primary"""
-        user_data = data_manager.get_user(ctx.author.id)
-        
-        if user_data.set_primary_account(username, tag):
-            data_manager.save_user(ctx.author.id)
-            embed = discord.Embed(
-                title="✅ Primary Account Set",
-                description=f"**{username}#{tag}** is now your primary Valorant account",
-                color=0x00ff00
-            )
-        else:
-            embed = discord.Embed(
-                title="❌ Account Not Found",
-                description=f"Could not find **{username}#{tag}** in your linked accounts",
-                color=0xff0000
-            )
-        
-        await ctx.send(embed=embed)
+        try:
+            user_data = data_manager.get_user(ctx.author.id)
+            
+            if user_data.set_primary_account(username, tag):
+                data_manager.save_user(ctx.author.id)
+                await self.send_success_embed(
+                    ctx,
+                    "Primary Account Set",
+                    f"**{username}#{tag}** is now your primary Valorant account"
+                )
+            else:
+                await self.send_error_embed(
+                    ctx,
+                    "Account Not Found",
+                    f"Could not find **{username}#{tag}** in your linked accounts"
+                )
+        except Exception as e:
+            self.logger.error(f"Error in set primary account: {e}")
+            await self.send_error_embed(ctx, "Error Setting Primary Account", str(e))
     
     @commands.hybrid_command(
         name="shootyremove",
@@ -271,23 +237,25 @@ class ValorantCommands(commands.Cog):
     )
     async def remove_account(self, ctx, username: str, tag: str):
         """Remove a linked Valorant account"""
-        user_data = data_manager.get_user(ctx.author.id)
-        
-        if user_data.remove_valorant_account(username, tag):
-            data_manager.save_user(ctx.author.id)
-            embed = discord.Embed(
-                title="✅ Account Removed",
-                description=f"Removed **{username}#{tag}** from your linked accounts",
-                color=0x00ff00
-            )
-        else:
-            embed = discord.Embed(
-                title="❌ Account Not Found",
-                description=f"Could not find **{username}#{tag}** in your linked accounts",
-                color=0xff0000
-            )
-        
-        await ctx.send(embed=embed)
+        try:
+            user_data = data_manager.get_user(ctx.author.id)
+            
+            if user_data.remove_valorant_account(username, tag):
+                data_manager.save_user(ctx.author.id)
+                await self.send_success_embed(
+                    ctx,
+                    "Account Removed",
+                    f"Removed **{username}#{tag}** from your linked accounts"
+                )
+            else:
+                await self.send_error_embed(
+                    ctx,
+                    "Account Not Found",
+                    f"Could not find **{username}#{tag}** in your linked accounts"
+                )
+        except Exception as e:
+            self.logger.error(f"Error in remove account: {e}")
+            await self.send_error_embed(ctx, "Error Removing Account", str(e))
     
     @commands.hybrid_command(
         name="shootywho",
@@ -298,9 +266,10 @@ class ValorantCommands(commands.Cog):
         playing_members = valorant_client.get_playing_members(ctx.guild)
         
         if not playing_members:
-            embed = discord.Embed(
-                title="🎮 Valorant Players",
-                description="No one is currently playing Valorant",
+            await self.send_embed(
+                ctx,
+                "🎮 Valorant Players",
+                "No one is currently playing Valorant",
                 color=0x808080
             )
         else:
@@ -313,13 +282,12 @@ class ValorantCommands(commands.Cog):
                 else:
                     player_list.append(f"🎯 **{member.display_name}** (no linked account)")
             
-            embed = discord.Embed(
-                title="🎮 Currently Playing Valorant",
-                description="\n".join(player_list),
+            await self.send_embed(
+                ctx,
+                "🎮 Currently Playing Valorant",
+                "\n".join(player_list),
                 color=0xff4655
             )
-        
-        await ctx.send(embed=embed)
     
     @commands.hybrid_command(
         name="shootystats",
@@ -332,57 +300,53 @@ class ValorantCommands(commands.Cog):
         
         # Get linked accounts info
         all_accounts = valorant_client.get_all_linked_accounts(target_user.id)
-        primary_account = valorant_client.get_linked_account(target_user.id)
         
         # Get recent sessions
         recent_sessions = data_manager.get_user_sessions(target_user.id, limit=5)
         
-        embed = discord.Embed(
-            title=f"📊 Stats for {target_user.display_name}",
-            color=0xff4655
-        )
+        fields = []
         
         # Add linked accounts info
         if all_accounts:
             if len(all_accounts) == 1:
                 account = all_accounts[0]
-                embed.add_field(
-                    name="🎯 Valorant Account",
-                    value=f"{account['username']}#{account['tag']}",
-                    inline=False
-                )
+                fields.append({
+                    "name": "🎯 Valorant Account",
+                    "value": f"{account['username']}#{account['tag']}",
+                    "inline": False
+                })
             else:
                 account_list = []
                 for account in all_accounts:
                     primary_marker = " 🌟" if account.get('primary', False) else ""
                     account_list.append(f"• {account['username']}#{account['tag']}{primary_marker}")
                 
-                embed.add_field(
-                    name=f"🎯 Valorant Accounts ({len(all_accounts)})",
-                    value="\n".join(account_list),
-                    inline=False
-                )
+                fields.append({
+                    "name": f"🎯 Valorant Accounts ({len(all_accounts)})",
+                    "value": "\n".join(account_list),
+                    "inline": False
+                })
         else:
-            embed.add_field(
-                name="🎯 Valorant Accounts",
-                value="None linked (use `/shootylink` to link)",
-                inline=False
-            )
+            fields.append({
+                "name": "🎯 Valorant Accounts",
+                "value": "None linked (use `/shootylink` to link)",
+                "inline": False
+            })
         
         # Add session stats
-        embed.add_field(
-            name="📈 Session Stats",
-            value=f"Total Sessions: **{user_data.total_sessions}**\nGames Played: **{user_data.total_games_played}**",
-            inline=True
-        )
+        fields.append({
+            "name": "📈 Session Stats",
+            "value": f"Total Sessions: **{user_data.total_sessions}**\nGames Played: **{user_data.total_games_played}**",
+            "inline": True
+        })
         
         # Add playing status
         if valorant_client.is_playing_valorant(target_user):
-            embed.add_field(
-                name="🎮 Current Status",
-                value="**Currently Playing Valorant!**",
-                inline=True
-            )
+            fields.append({
+                "name": "🎮 Current Status",
+                "value": "**Currently Playing Valorant!**",
+                "inline": True
+            })
         
         # Add recent sessions
         if recent_sessions:
@@ -396,13 +360,18 @@ class ValorantCommands(commands.Cog):
                 else:
                     session_list.append(f"• {formatted_time} - {participants_count} players (ongoing)")
             
-            embed.add_field(
-                name="📋 Recent Sessions",
-                value="\n".join(session_list) or "No recent sessions",
-                inline=False
-            )
+            fields.append({
+                "name": "📋 Recent Sessions",
+                "value": "\n".join(session_list) or "No recent sessions",
+                "inline": False
+            })
         
-        await ctx.send(embed=embed)
+        await self.send_embed(
+            ctx,
+            f"📊 Stats for {target_user.display_name}",
+            color=0xff4655,
+            fields=fields
+        )
     
     @commands.hybrid_command(
         name="shootystatsdetailed",
@@ -413,22 +382,17 @@ class ValorantCommands(commands.Cog):
         target_user = member or ctx.author
         
         try:
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.defer()
+            await self.defer_if_slash(ctx)
             
             # Get user's Valorant accounts
             accounts = valorant_client.get_all_linked_accounts(target_user.id)
             
             if not accounts:
-                embed = discord.Embed(
-                    title="❌ No Linked Accounts",
-                    description=f"{target_user.display_name} has no linked Valorant accounts",
-                    color=0xff0000
+                await self.send_error_embed(
+                    ctx,
+                    "No Linked Accounts",
+                    f"{target_user.display_name} has no linked Valorant accounts"
                 )
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(embed=embed)
-                else:
-                    await ctx.send(embed=embed)
                 return
             
             # Select which account to analyze
@@ -440,15 +404,11 @@ class ValorantCommands(commands.Cog):
                         selected_account = account
                         break
                 if not selected_account:
-                    embed = discord.Embed(
-                        title="❌ Account Not Found",
-                        description=f"Could not find account '{account_name}' for {target_user.display_name}",
-                        color=0xff0000
+                    await self.send_error_embed(
+                        ctx,
+                        "Account Not Found",
+                        f"Could not find account '{account_name}' for {target_user.display_name}"
                     )
-                    if hasattr(ctx, 'interaction') and ctx.interaction:
-                        await ctx.followup.send(embed=embed)
-                    else:
-                        await ctx.send(embed=embed)
                     return
             else:
                 # Use primary account
@@ -464,49 +424,37 @@ class ValorantCommands(commands.Cog):
             )
             
             if not matches:
-                embed = discord.Embed(
-                    title="❌ No Match Data",
-                    description="Could not fetch match history. Account may be private or no recent matches found.",
-                    color=0xff0000
+                await self.send_error_embed(
+                    ctx,
+                    "No Match Data",
+                    "Could not fetch match history. Account may be private or no recent matches found."
                 )
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(embed=embed)
-                else:
-                    await ctx.send(embed=embed)
                 return
             
             # Calculate comprehensive stats
             stats = valorant_client.calculate_player_stats(matches, selected_account['puuid'])
             
             if not stats or stats.get('total_matches', 0) == 0:
-                embed = discord.Embed(
-                    title="❌ No Stats Available",
-                    description="No valid match data found for analysis",
-                    color=0xff0000
+                await self.send_error_embed(
+                    ctx,
+                    "No Stats Available",
+                    "No valid match data found for analysis"
                 )
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(embed=embed)
-                else:
-                    await ctx.send(embed=embed)
                 return
             
-            # Create detailed stats embed
-            embed = discord.Embed(
-                title=f"🎯 Detailed Stats: {selected_account['username']}#{selected_account['tag']}",
-                description=f"Analysis of last {stats['total_matches']} matches",
-                color=0xff4655
-            )
+            # Create detailed stats embed with fields
+            fields = []
             
             # Performance Stats
             performance_ratings = stats.get('performance_ratings', {})
-            embed.add_field(
-                name="📊 Core Performance",
-                value=f"**ACS:** {stats.get('acs', 0):.0f}\n"
-                      f"**KD Ratio:** {stats.get('kd_ratio', 0):.2f}\n"
-                      f"**KDA Ratio:** {stats.get('kda_ratio', 0):.2f}\n"
-                      f"**KAST:** {stats.get('kast_percentage', 0):.1f}%",
-                inline=True
-            )
+            fields.append({
+                "name": "📊 Core Performance",
+                "value": f"**ACS:** {stats.get('acs', 0):.0f}\n"
+                        f"**KD Ratio:** {stats.get('kd_ratio', 0):.2f}\n"
+                        f"**KDA Ratio:** {stats.get('kda_ratio', 0):.2f}\n"
+                        f"**KAST:** {stats.get('kast_percentage', 0):.1f}%",
+                "inline": True
+            })
             
             # Performance Badges
             if performance_ratings:
@@ -515,31 +463,31 @@ class ValorantCommands(commands.Cog):
                     performance_ratings.get('support', ''),
                     performance_ratings.get('accuracy', '')
                 ])
-                embed.add_field(
-                    name="🏆 Performance Badges",
-                    value=badge_text or "No badges yet",
-                    inline=True
-                )
+                fields.append({
+                    "name": "🏆 Performance Badges",
+                    "value": badge_text or "No badges yet",
+                    "inline": True
+                })
             
             # Damage Stats
-            embed.add_field(
-                name="💥 Damage",
-                value=f"**ADR:** {stats.get('adr', 0):.0f}\n"
-                      f"**DD (Δ):** {stats.get('damage_delta_per_round', 0):+.0f}\n"
-                      f"**Damage/Game:** {stats.get('avg_damage_made', 0):.0f}\n"
-                      f"**Headshot %:** {stats.get('headshot_percentage', 0):.1f}%",
-                inline=True
-            )
+            fields.append({
+                "name": "💥 Damage",
+                "value": f"**ADR:** {stats.get('adr', 0):.0f}\n"
+                        f"**DD (Δ):** {stats.get('damage_delta_per_round', 0):+.0f}\n"
+                        f"**Damage/Game:** {stats.get('avg_damage_made', 0):.0f}\n"
+                        f"**Headshot %:** {stats.get('headshot_percentage', 0):.1f}%",
+                "inline": True
+            })
             
             # Match Results
-            embed.add_field(
-                name="🏆 Match Results",
-                value=f"**Win Rate:** {stats.get('win_rate', 0):.1f}%\n"
-                      f"**Wins:** {stats.get('wins', 0)}\n"
-                      f"**Losses:** {stats.get('losses', 0)}\n"
-                      f"**Total Matches:** {stats.get('total_matches', 0)}",
-                inline=True
-            )
+            fields.append({
+                "name": "🏆 Match Results",
+                "value": f"**Win Rate:** {stats.get('win_rate', 0):.1f}%\n"
+                        f"**Wins:** {stats.get('wins', 0)}\n"
+                        f"**Losses:** {stats.get('losses', 0)}\n"
+                        f"**Total Matches:** {stats.get('total_matches', 0)}",
+                "inline": True
+            })
             
             # Averages
             embed.add_field(
@@ -639,22 +587,11 @@ class ValorantCommands(commands.Cog):
             
             embed.set_footer(text="📊 Enhanced stats with performance tracking • ShootyBot")
             
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.followup.send(embed=embed)
-            else:
-                await ctx.send(embed=embed)
+            await ctx.send(embed=embed)
                 
         except Exception as e:
-            error_msg = f"Error fetching detailed stats: {str(e)}"
-            logging.error(f"Error in shootystatsdetailed command: {e}")
-            
-            try:
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(f"❌ {error_msg}")
-                else:
-                    await ctx.send(f"❌ {error_msg}")
-            except:
-                await ctx.send(f"❌ {error_msg}")
+            self.logger.error(f"Error in shootystatsdetailed command: {e}")
+            await self.send_error_embed(ctx, "Error Fetching Detailed Stats", str(e))
     
     @commands.hybrid_command(
         name="shootyleaderboard",
@@ -662,20 +599,15 @@ class ValorantCommands(commands.Cog):
     )
     async def valorant_leaderboard(self, ctx, stat_type: str = "kda"):
         """Show server leaderboard for various Valorant stats"""
-        if hasattr(ctx, 'interaction') and ctx.interaction:
-            await ctx.defer()
+        await self.defer_if_slash(ctx)
         
         valid_stats = ["kda", "kd", "winrate", "headshot", "acs", "clutch", "multikill"]
         if stat_type.lower() not in valid_stats:
-            embed = discord.Embed(
-                title="❌ Invalid Stat Type",
-                description=f"Valid options: {', '.join(valid_stats)}",
-                color=0xff0000
+            await self.send_error_embed(
+                ctx,
+                "Invalid Stat Type",
+                f"Valid options: {', '.join(valid_stats)}"
             )
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.followup.send(embed=embed)
-            else:
-                await ctx.send(embed=embed)
             return
         
         try:
@@ -711,19 +643,16 @@ class ValorantCommands(commands.Cog):
                                 'stats': stats
                             })
                 except Exception as e:
-                    logging.warning(f"Error getting stats for {member.display_name}: {e}")
+                    self.logger.warning(f"Error getting stats for {member.display_name}: {e}")
                     continue
             
             if not member_stats:
-                embed = discord.Embed(
-                    title="🏆 Server Valorant Leaderboard",
-                    description="No qualifying players found (need 3+ recent matches)",
+                await self.send_embed(
+                    ctx,
+                    "🏆 Server Valorant Leaderboard",
+                    "No qualifying players found (need 3+ recent matches)",
                     color=0x808080
                 )
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(embed=embed)
-                else:
-                    await ctx.send(embed=embed)
                 return
             
             # Sort by requested stat
@@ -865,22 +794,15 @@ class ValorantCommands(commands.Cog):
             
             embed.set_footer(text=f"🔄 Use /shootyleaderboard {' | '.join(valid_stats)} to see different rankings")
             
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.followup.send(embed=embed)
-            else:
-                await ctx.send(embed=embed)
+            await ctx.send(embed=embed)
         
         except Exception as e:
-            logging.error(f"Error in leaderboard command: {e}")
-            embed = discord.Embed(
-                title="❌ Leaderboard Error",
-                description="Sorry, there was an error generating the leaderboard. Please try again later.",
-                color=0xff0000
+            self.logger.error(f"Error in leaderboard command: {e}")
+            await self.send_error_embed(
+                ctx,
+                "Leaderboard Error",
+                "Sorry, there was an error generating the leaderboard. Please try again later."
             )
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.followup.send(embed=embed)
-            else:
-                await ctx.send(embed=embed)
     
     @commands.hybrid_command(
         name="shootyhistory",
@@ -894,17 +816,14 @@ class ValorantCommands(commands.Cog):
         recent_sessions = data_manager.get_channel_sessions(ctx.channel.id, limit)
         
         if not recent_sessions:
-            embed = discord.Embed(
-                title="📋 Session History",
-                description="No sessions found for this channel",
+            await self.send_embed(
+                ctx,
+                "📋 Session History",
+                "No sessions found for this channel",
                 color=0x808080
             )
         else:
-            embed = discord.Embed(
-                title=f"📋 Recent Sessions ({len(recent_sessions)})",
-                color=0xff4655
-            )
-            
+            fields = []
             for i, session in enumerate(recent_sessions):
                 start_time = datetime.fromisoformat(session.start_time)
                 formatted_time = start_time.strftime("%m/%d/%Y %H:%M")
@@ -917,13 +836,18 @@ class ValorantCommands(commands.Cog):
                 participants_count = len(session.participants)
                 duration = f"{session.duration_minutes}m" if session.end_time else "ongoing"
                 
-                embed.add_field(
-                    name=f"Session {i+1} - {formatted_time}",
-                    value=f"Started by: {starter_name}\nParticipants: {participants_count}\nDuration: {duration}",
-                    inline=True
-                )
-        
-        await ctx.send(embed=embed)
+                fields.append({
+                    "name": f"Session {i+1} - {formatted_time}",
+                    "value": f"Started by: {starter_name}\nParticipants: {participants_count}\nDuration: {duration}",
+                    "inline": True
+                })
+            
+            await self.send_embed(
+                ctx,
+                f"📋 Recent Sessions ({len(recent_sessions)})",
+                color=0xff4655,
+                fields=fields
+            )
     
     @commands.hybrid_command(
         name="shootylastmatch",
@@ -932,39 +856,24 @@ class ValorantCommands(commands.Cog):
     async def last_match(self, ctx, member: discord.Member = None):
         """Show the most recent match stats"""
         try:
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.defer()
+            await self.defer_if_slash(ctx)
             
             # Use manual check to find recent match
             embed = await self.match_tracker.manual_check_recent_match(ctx.guild, member)
             
             if embed:
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(embed=embed)
-                else:
-                    await ctx.send(embed=embed)
+                await ctx.send(embed=embed)
             else:
-                no_match_embed = discord.Embed(
-                    title="🔍 No Recent Matches",
-                    description="No recent matches found with Discord members from this server.",
+                await self.send_embed(
+                    ctx,
+                    "🔍 No Recent Matches",
+                    "No recent matches found with Discord members from this server.",
                     color=0x808080
                 )
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(embed=no_match_embed)
-                else:
-                    await ctx.send(embed=no_match_embed)
                     
         except Exception as e:
-            error_msg = f"Error fetching last match: {str(e)}"
-            logging.error(f"Error in shootylastmatch command: {e}")
-            
-            try:
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(f"❌ {error_msg}")
-                else:
-                    await ctx.send(f"❌ {error_msg}")
-            except:
-                await ctx.send(f"❌ {error_msg}")
+            self.logger.error(f"Error in shootylastmatch command: {e}")
+            await self.send_error_embed(ctx, "Error Fetching Last Match", str(e))
     
     @commands.hybrid_command(
         name="shootymatchtracker",
@@ -978,23 +887,24 @@ class ValorantCommands(commands.Cog):
                 if not self.match_tracker.running:
                     # Start the tracker in background
                     self.bot.loop.create_task(self.match_tracker.start_tracking())
-                    embed = discord.Embed(
-                        title="✅ Match Tracker Started",
-                        description="Auto-detection of completed matches is now enabled.\nThe bot will check every 5 minutes for new matches.",
-                        color=0x00ff00
+                    await self.send_success_embed(
+                        ctx,
+                        "Match Tracker Started",
+                        "Auto-detection of completed matches is now enabled.\nThe bot will check every 5 minutes for new matches."
                     )
                 else:
-                    embed = discord.Embed(
-                        title="ℹ️ Already Running",
-                        description="Match tracker is already running.",
-                        color=0x808080
+                    await self.send_info_embed(
+                        ctx,
+                        "Already Running",
+                        "Match tracker is already running."
                     )
                     
             elif action.lower() == "stop":
                 self.match_tracker.stop_tracking()
-                embed = discord.Embed(
-                    title="⏹️ Match Tracker Stopped",
-                    description="Auto-detection has been disabled.\nYou can still use `/shootylastmatch` for manual checks.",
+                await self.send_embed(
+                    ctx,
+                    "⏹️ Match Tracker Stopped",
+                    "Auto-detection has been disabled.\nYou can still use `/shootylastmatch` for manual checks.",
                     color=0xff4655
                 )
                 
@@ -1002,40 +912,26 @@ class ValorantCommands(commands.Cog):
                 status = "🟢 Running" if self.match_tracker.running else "🔴 Stopped"
                 tracked_count = len(self.match_tracker.tracked_members)
                 
-                embed = discord.Embed(
-                    title="📊 Match Tracker Status",
-                    color=0x00ff00 if self.match_tracker.running else 0xff0000
-                )
-                embed.add_field(
-                    name="Status",
-                    value=status,
-                    inline=True
-                )
-                embed.add_field(
-                    name="Tracked Members",
-                    value=str(tracked_count),
-                    inline=True
-                )
-                embed.add_field(
-                    name="Check Interval",
-                    value=f"{self.match_tracker.check_interval // 60} minutes",
-                    inline=True
-                )
+                fields = [
+                    {"name": "Status", "value": status, "inline": True},
+                    {"name": "Tracked Members", "value": str(tracked_count), "inline": True},
+                    {"name": "Check Interval", "value": f"{self.match_tracker.check_interval // 60} minutes", "inline": True}
+                ]
                 
                 if ctx.guild.id in self.match_tracker.recent_matches:
                     recent_count = len(self.match_tracker.recent_matches[ctx.guild.id])
-                    embed.add_field(
-                        name="Recent Matches (Last 2h)",
-                        value=str(recent_count),
-                        inline=True
-                    )
-            
-            await ctx.send(embed=embed)
+                    fields.append({"name": "Recent Matches (Last 2h)", "value": str(recent_count), "inline": True})
+                
+                await self.send_embed(
+                    ctx,
+                    "📊 Match Tracker Status",
+                    color=0x00ff00 if self.match_tracker.running else 0xff0000,
+                    fields=fields
+                )
             
         except Exception as e:
-            error_msg = f"Error controlling match tracker: {str(e)}"
-            logging.error(f"Error in shootymatchtracker command: {e}")
-            await ctx.send(f"❌ {error_msg}")
+            self.logger.error(f"Error in shootymatchtracker command: {e}")
+            await self.send_error_embed(ctx, "Error Controlling Match Tracker", str(e))
 
     @commands.hybrid_command(
         name="shootyfun",
@@ -1046,22 +942,17 @@ class ValorantCommands(commands.Cog):
         target_user = member or ctx.author
         
         try:
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.defer()
+            await self.defer_if_slash(ctx)
             
             # Get user's Valorant accounts
             accounts = valorant_client.get_all_linked_accounts(target_user.id)
             
             if not accounts:
-                embed = discord.Embed(
-                    title="❌ No Linked Accounts",
-                    description=f"{target_user.display_name} has no linked Valorant accounts",
-                    color=0xff0000
+                await self.send_error_embed(
+                    ctx,
+                    "No Linked Accounts",
+                    f"{target_user.display_name} has no linked Valorant accounts"
                 )
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(embed=embed)
-                else:
-                    await ctx.send(embed=embed)
                 return
             
             # Use primary account
@@ -1077,30 +968,22 @@ class ValorantCommands(commands.Cog):
             )
             
             if not matches:
-                embed = discord.Embed(
-                    title="❌ No Match Data",
-                    description="Could not fetch match history for fun stats analysis.",
-                    color=0xff0000
+                await self.send_error_embed(
+                    ctx,
+                    "No Match Data",
+                    "Could not fetch match history for fun stats analysis."
                 )
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(embed=embed)
-                else:
-                    await ctx.send(embed=embed)
                 return
             
             # Calculate stats
             stats = valorant_client.calculate_player_stats(matches, selected_account['puuid'])
             
             if not stats or stats.get('total_matches', 0) == 0:
-                embed = discord.Embed(
-                    title="❌ No Stats Available",
-                    description="No valid match data found for fun stats analysis",
-                    color=0xff0000
+                await self.send_error_embed(
+                    ctx,
+                    "No Stats Available",
+                    "No valid match data found for fun stats analysis"
                 )
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(embed=embed)
-                else:
-                    await ctx.send(embed=embed)
                 return
             
             # Create fun stats embed
@@ -1271,22 +1154,11 @@ class ValorantCommands(commands.Cog):
             
             embed.set_footer(text="🎉 Fun stats that make you unique! • ShootyBot")
             
-            if hasattr(ctx, 'interaction') and ctx.interaction:
-                await ctx.followup.send(embed=embed)
-            else:
-                await ctx.send(embed=embed)
+            await ctx.send(embed=embed)
                 
         except Exception as e:
-            error_msg = f"Error fetching fun stats: {str(e)}"
-            logging.error(f"Error in shootyfun command: {e}")
-            
-            try:
-                if hasattr(ctx, 'interaction') and ctx.interaction:
-                    await ctx.followup.send(f"❌ {error_msg}")
-                else:
-                    await ctx.send(f"❌ {error_msg}")
-            except:
-                await ctx.send(f"❌ {error_msg}")
+            self.logger.error(f"Error in shootyfun command: {e}")
+            await self.send_error_embed(ctx, "Error Fetching Fun Stats", str(e))
 
 async def setup(bot):
     await bot.add_cog(ValorantCommands(bot))
