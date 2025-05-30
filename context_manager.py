@@ -240,6 +240,21 @@ class ContextManager:
         except Exception as e:
             log_error(f"saving context for {channel_id}", e)
     
+    def save_all_contexts(self):
+        """Save all active contexts to database."""
+        saved_count = 0
+        for channel_id in self.contexts:
+            try:
+                self.save_context(channel_id)
+                saved_count += 1
+            except Exception as e:
+                log_error(f"saving context {channel_id} during save_all", e)
+        logging.info(f"Saved {saved_count}/{len(self.contexts)} contexts")
+    
+    def _write_json_atomic(self, data):
+        """Write JSON data atomically (legacy method, kept for compatibility)"""
+        # This method is no longer used but kept for compatibility
+        pass
 
 
 # Global context manager instance

@@ -4,9 +4,15 @@ from dotenv import load_dotenv
 # Load environment variables from .env file if it exists
 load_dotenv()
 
+# Bot Information
+APP_VERSION = "2.1.0"
+
 # Discord Configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 COMMAND_PREFIX = "$"
+
+# Logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # Default Settings
 DEFAULT_PARTY_SIZE = 5
@@ -14,6 +20,9 @@ MAX_SCHEDULED_HOURS = 4
 
 # Default role code (can be overridden per channel)
 DEFAULT_SHOOTY_ROLE_CODE = os.getenv("SHOOTY_ROLE_CODE", "<@&773770148070424657>")
+
+# Data Directory
+DATA_DIR = os.getenv("DATA_DIR", "data")
 
 # Henrik API Configuration
 HENRIK_API_KEY = os.getenv("HENRIK_API_KEY", "")
