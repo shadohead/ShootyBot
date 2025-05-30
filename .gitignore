@@ -54,7 +54,7 @@ htmlcov/
 coverage.xml
 *.cover
 .hypothesis/
-
+.bot_health
 # OS files
 .DS_Store
 .DS_Store?

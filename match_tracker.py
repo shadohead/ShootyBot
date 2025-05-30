@@ -239,6 +239,7 @@ class MatchTracker:
         rounds_played = metadata.get('rounds_played', 0)
         game_length = metadata.get('game_length', 0)
         game_start = metadata.get('game_start', '')
+        match_id = metadata.get('matchid', '')
         
         # Calculate match duration
         if game_length:
@@ -271,9 +272,14 @@ class MatchTracker:
         else:
             time_ago_str = "Recently"
         
+        # Create tracker.gg link if match ID is available
+        tracker_link = ""
+        if match_id:
+            tracker_link = f"\n[📊 View on Tracker.gg](https://tracker.gg/valorant/match/{match_id})"
+        
         embed = discord.Embed(
             title="🎯 Match Results",
-            description=f"**{map_name}** • {rounds_played} rounds • {duration_str} • {time_ago_str}",
+            description=f"**{map_name}** • {rounds_played} rounds • {duration_str} • {time_ago_str}{tracker_link}",
             color=0xff4655,
             timestamp=match_timestamp
         )
