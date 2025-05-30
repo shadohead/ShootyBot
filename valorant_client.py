@@ -494,6 +494,9 @@ class ValorantClient(BaseAPIClient):
                 stats['kd_ratio'] = float(stats['total_kills'])
                 stats['kda_ratio'] = float(stats['total_kills'] + stats['total_assists'])
             
+            # Calculate Plus/Minus (+/-) - kills minus deaths
+            stats['plus_minus'] = stats['total_kills'] - stats['total_deaths']
+            
             total_shots = stats['total_headshots'] + stats['total_bodyshots'] + stats['total_legshots']
             if total_shots > 0:
                 stats['headshot_percentage'] = (stats['total_headshots'] / total_shots) * 100
