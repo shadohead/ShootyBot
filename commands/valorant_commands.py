@@ -963,7 +963,7 @@ class ValorantCommands(GameCommandCog):
         embed.add_field(
             name="📊 Other Key Stats",
             value=(
-                "**First Blood Rate** - % of matches with opening kill\n"
+                "**First Blood Rate** - % of rounds where you got first blood\n"
                 "**Win/Loss Streaks** - Current & best streaks\n"
                 "**Multi-kills** - 2K/3K/4K/ACE counts\n"
                 "**Map/Agent Performance** - Win rates by map/agent"
