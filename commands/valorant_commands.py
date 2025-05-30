@@ -307,20 +307,23 @@ class ValorantCommands(GameCommandCog):
         
         fields = []
         
-        # Add linked accounts info
+        # Add linked accounts info with tracker.gg links
         if all_accounts:
             if len(all_accounts) == 1:
                 account = all_accounts[0]
+                # Create tracker.gg URL
+                tracker_url = f"https://tracker.gg/valorant/profile/riot/{account['username']}%23{account['tag']}/overview"
                 fields.append({
                     "name": "🎯 Valorant Account",
-                    "value": f"{account['username']}#{account['tag']}",
+                    "value": f"{account['username']}#{account['tag']}\n🔗 [View on Tracker.gg]({tracker_url})",
                     "inline": False
                 })
             else:
                 account_list = []
                 for account in all_accounts:
                     primary_marker = " 🌟" if account.get('primary', False) else ""
-                    account_list.append(f"• {account['username']}#{account['tag']}{primary_marker}")
+                    tracker_url = f"https://tracker.gg/valorant/profile/riot/{account['username']}%23{account['tag']}/overview"
+                    account_list.append(f"• {account['username']}#{account['tag']}{primary_marker}\n  🔗 [Tracker.gg]({tracker_url})")
                 
                 fields.append({
                     "name": f"🎯 Valorant Accounts ({len(all_accounts)})",
@@ -447,11 +450,14 @@ class ValorantCommands(GameCommandCog):
             # Get performance ratings first
             performance_ratings = stats.get('performance_ratings', {})
             
+            # Create tracker.gg URL for this account
+            tracker_url = f"https://tracker.gg/valorant/profile/riot/{selected_account['username']}%23{selected_account['tag']}/overview"
+            
             # Create detailed stats embed
             await self.send_embed(
                 ctx,
                 f"📊 Detailed Stats: {selected_account['username']}#{selected_account['tag']}",
-                f"Comprehensive performance analysis from the last {stats['total_matches']} matches",
+                f"Analysis from last {stats['total_matches']} competitive matches\n🔗 [View on Tracker.gg]({tracker_url})",
                 color=0xff4655,
                 fields=[
                     {
@@ -506,8 +512,11 @@ class ValorantCommands(GameCommandCog):
                         "inline": True
                     },
                     {
-                        "name": "🔥 Multi-Kills & Achievements",
-                        "value": "\n".join([f"**{mk_type.upper()}s:** {count}" for mk_type, count in stats.get('multikills', {}).items() if count > 0]) or "No multi-kills recorded",
+                        "name": "🔥 Advanced Stats",
+                        "value": f"**First Kills:** {stats.get('first_bloods', 0)}\n"
+                                f"**First Deaths:** {stats.get('first_deaths', 0)}\n" 
+                                f"**Multi-Kills:** {sum(stats.get('multikills', {}).values())} *(3+ kill rounds)*\n"
+                                f"**FB Rate:** {stats.get('first_blood_rate', 0):.1f}%",
                         "inline": True
                     },
                     {
@@ -531,7 +540,7 @@ class ValorantCommands(GameCommandCog):
                         "inline": False
                     } if performance_ratings and (performance_ratings.get('survival') or performance_ratings.get('clutch')) else None
                 ],
-                footer="📊 Enhanced stats • Use /shootystatshelp to understand badges"
+                footer="📊 Competitive match analysis • /shootystatshelp for details"
             )
                 
         except Exception as e:
@@ -737,7 +746,7 @@ class ValorantCommands(GameCommandCog):
                         inline=True
                     )
             
-            embed.set_footer(text=f"🔄 Use /shootyleaderboard {' | '.join(valid_stats)} to see different rankings")
+            embed.set_footer(text=f"🔄 Use /shootyleaderboard {' | '.join(valid_stats)} • Use /shootystatsdetailed for tracker.gg links")
             
             await ctx.send(embed=embed)
         
@@ -1028,10 +1037,13 @@ class ValorantCommands(GameCommandCog):
                 )
                 return
             
+            # Create tracker.gg URL for this account
+            tracker_url = f"https://tracker.gg/valorant/profile/riot/{selected_account['username']}%23{selected_account['tag']}/overview"
+            
             # Create fun stats embed
             embed = discord.Embed(
                 title=f"🎉 Fun Stats: {selected_account['username']}#{selected_account['tag']}",
-                description=f"Quirky metrics from the last {stats['total_matches']} matches",
+                description=f"Last {stats['total_matches']} competitive matches\n🔗 [View on Tracker.gg]({tracker_url})",
                 color=0xff4655
             )
             
