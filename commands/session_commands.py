@@ -49,6 +49,9 @@ class SessionCommands(BaseCommandCog):
         # Reset users
         shooty_context.reset_users()
         
+        # Update bot status after resetting users
+        await self.bot.update_status_with_queue_count()
+        
         # Send ping message
         response_string = get_ping_shooty_message(shooty_context.role_code)
         message = await ctx.send(response_string)
@@ -119,6 +122,9 @@ class SessionCommands(BaseCommandCog):
             "Restoring shooty_context: " + 
             str([user.name for user in shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set)])
         )
+        
+        # Update bot status after restoring users
+        await self.bot.update_status_with_queue_count()
         
         await self.send_success_embed(ctx, "Session Restored", MESSAGES["RESTORED_SESSION"])
         await ctx.send(party_status_message(ctx.channel, shooty_context))
@@ -463,6 +469,8 @@ class SessionCommands(BaseCommandCog):
         
         if hasattr(shooty_context, 'current_session_id') and shooty_context.current_session_id:
             await self._end_current_session(shooty_context)
+            # Update bot status after ending session
+            await self.bot.update_status_with_queue_count()
             await self.send_success_embed(ctx, "Session Ended", "Session ended and stats recorded!")
         else:
             await self.send_error_embed(ctx, "No Active Session", "No active session to end.")
@@ -495,8 +503,9 @@ class SessionCommands(BaseCommandCog):
             
             self.logger.info(f"Ended session {session_id} with {len(all_users)} participants")
         
-        # Clear session reference
+        # Clear session reference and reset users
         shooty_context.current_session_id = None
+        shooty_context.reset_users()
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(SessionCommands(bot))

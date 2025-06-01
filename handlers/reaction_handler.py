@@ -48,6 +48,9 @@ class ReactionHandler(commands.Cog):
             
             new_message = party_status_message(True, shooty_context)
             await reaction.message.edit(content=new_message)
+            
+            # Update bot status
+            await self.bot.update_status_with_queue_count()
         
         # Handle 5️⃣ (fullstack only)
         elif str(reaction.emoji) == EMOJI["FULL_STACK"]:
@@ -60,6 +63,9 @@ class ReactionHandler(commands.Cog):
                 
                 new_message = party_status_message(True, shooty_context)
                 await reaction.message.edit(content=new_message)
+                
+                # Update bot status
+                await self.bot.update_status_with_queue_count()
         
         # Handle ✅ (ready)
         elif str(reaction.emoji) == EMOJI["READY"]:
@@ -104,6 +110,9 @@ class ReactionHandler(commands.Cog):
             
             new_message = party_status_message(True, shooty_context)
             await reaction.message.edit(content=new_message)
+            
+            # Update bot status
+            await self.bot.update_status_with_queue_count()
         
         # Handle 5️⃣ removal (fullstack)
         elif str(reaction.emoji) == EMOJI["FULL_STACK"] and user in shooty_context.bot_fullstack_user_set:
@@ -112,6 +121,9 @@ class ReactionHandler(commands.Cog):
             
             new_message = party_status_message(True, shooty_context)
             await reaction.message.edit(content=new_message)
+            
+            # Update bot status
+            await self.bot.update_status_with_queue_count()
         
         # Handle ✅ removal (ready)
         elif str(reaction.emoji) == EMOJI["READY"] and user in shooty_context.bot_ready_user_set:

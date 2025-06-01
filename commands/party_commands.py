@@ -26,6 +26,8 @@ class PartyCommands(BaseCommandCog):
                 message = get_kicked_user_message(kicked_usernames_list)
                 await ctx.reply(message)
                 self.logger.info(f"Kicked users {kicked_usernames_list} from channel {channel_id}")
+                # Update bot status after kicking users
+                await self.bot.update_status_with_queue_count()
             else:
                 await self.send_error_embed(
                     ctx, 
