@@ -140,7 +140,9 @@ class MatchTracker:
                 
                 # Check if this member has a new most recent match
                 latest_match = matches[0]  # Most recent match
-                latest_match_id = latest_match.get('metadata', {}).get('matchid')
+                # Handle both v3 (matchid) and v4 (match_id) API formats
+                metadata = latest_match.get('metadata', {})
+                latest_match_id = metadata.get('match_id') or metadata.get('matchid')
                 
                 if not latest_match_id:
                     continue
@@ -198,7 +200,15 @@ class MatchTracker:
     async def _find_discord_members_in_match(self, guild: discord.Guild, match: dict) -> List[Dict]:
         """Find which Discord members were in a specific match"""
         discord_members = []
-        all_players = match.get('players', {}).get('all_players', [])
+        
+        # Handle both v3 and v4 data structures
+        players = match.get('players', {})
+        if isinstance(players, list):
+            # v4 format: players is directly a list
+            all_players = players
+        else:
+            # v3 format: players.all_players is the list
+            all_players = players.get('all_players', [])
         
         for member in guild.members:
             if member.bot:
@@ -251,7 +261,8 @@ class MatchTracker:
         rounds_played = metadata.get('rounds_played', 0)
         game_length = metadata.get('game_length', 0)
         game_start = metadata.get('game_start', '')
-        match_id = metadata.get('matchid', '')
+        # Handle both v3 (matchid) and v4 (match_id) API formats
+        match_id = metadata.get('match_id') or metadata.get('matchid', '')
         
         # Calculate match duration
         if game_length:
@@ -404,7 +415,8 @@ class MatchTracker:
                 'score': pstats.get('score', 0),
                 'damage_made': player_data.get('damage_made', 0),
                 'damage_received': player_data.get('damage_received', 0),
-                'agent': player_data.get('character', 'Unknown')
+                # Handle both v3 (character) and v4 (agent.name) formats
+                'agent': player_data.get('character') or (player_data.get('agent', {}).get('name') if isinstance(player_data.get('agent'), dict) else player_data.get('agent', 'Unknown'))
             })
         
         # Calculate enhanced highlights
