@@ -4,7 +4,7 @@
 # This creates a cron job that runs every hour to check for updates
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MONITOR_CRON_JOB="*/5 * * * * cd ${SCRIPT_DIR} && ./run_python_script.sh --monitor >> cron.log 2>&1"
+MONITOR_CRON_JOB="*/15 * * * * cd ${SCRIPT_DIR} && ./run_python_script.sh --monitor >> cron.log 2>&1"
 STARTUP_CRON_JOB="@reboot cd ${SCRIPT_DIR} && ./run_python_script.sh --start >> cron.log 2>&1"
 
 echo "🔧 Setting up ShootyBot auto-update cron job..."
@@ -30,7 +30,7 @@ if crontab -l 2>/dev/null | grep -q "run_python_script.sh"; then
     echo ""
     echo "ℹ️ The bot will now:"
     echo "   • Auto-start on system reboot"
-    echo "   • Health check every 5 minutes"
+    echo "   • Health check every 15 minutes"
     echo "   • Auto-restart if bot goes down"
     echo "   • Check for updates daily at 5 AM"
     echo "   • Restart automatically if updates are found"
