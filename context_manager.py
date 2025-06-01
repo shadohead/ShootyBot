@@ -127,7 +127,7 @@ class ShootyContext:
         
         # Apply formatting: bold if ready or in voice channel
         if is_in_voice_channel:
-            return f"**{name}** 🔊"
+            return f"**{name}**"
         elif is_ready:
             return f"**{name}**"
         else:
@@ -148,6 +148,22 @@ class ShootyContext:
             return user in voice_channel.members
         except Exception:
             return False
+    
+    def get_voice_channel_user_count(self) -> int:
+        """Get count of users in the configured voice channel"""
+        if not self.voice_channel_id or not self.channel:
+            return 0
+        
+        try:
+            # Get the voice channel
+            voice_channel = self.channel.guild.get_channel(self.voice_channel_id)
+            if not voice_channel:
+                return 0
+            
+            # Return count of members in voice channel
+            return len(voice_channel.members)
+        except Exception:
+            return 0
     
     def get_user_list_string(self) -> str:
         """Get formatted string of all users"""

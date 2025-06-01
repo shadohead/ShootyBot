@@ -167,9 +167,10 @@ class ShootyBot(commands.Bot):
             logging.warning("Bot will continue without match tracking")
 
     async def update_status_with_queue_count(self) -> None:
-        """Update bot status with total queue count across all channels."""
+        """Update bot status with total queue count and voice chat users across all channels."""
         try:
             total_queued = 0
+            total_voice = 0
             total_max_size = 0
             active_channels = 0
 
@@ -180,11 +181,24 @@ class ShootyBot(commands.Bot):
                     total_queued += unique_count
                     total_max_size += context.get_party_max_size()
                     active_channels += 1
+                
+                # Count users in voice channel for this context
+                voice_count = context.get_voice_channel_user_count()
+                total_voice += voice_count
 
             # Update status based on queue state
             if total_queued > 0:
+                if total_voice > 0:
+                    activity = discord.Game(
+                        name=f"{total_queued} queued, {total_voice} in voice | {COMMAND_PREFIX}shooty"
+                    )
+                else:
+                    activity = discord.Game(
+                        name=f"{total_queued} queued | {COMMAND_PREFIX}shooty"
+                    )
+            elif total_voice > 0:
                 activity = discord.Game(
-                    name=f"{total_queued} queued | {COMMAND_PREFIX}shooty"
+                    name=f"{total_voice} in voice | {COMMAND_PREFIX}shooty"
                 )
             else:
                 activity = discord.Game(name=f"{COMMAND_PREFIX}shooty | v{APP_VERSION}")
