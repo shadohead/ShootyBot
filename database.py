@@ -160,6 +160,9 @@ class DatabaseManager:
                     )
                 """)
                 
+                # Database migrations for existing installations
+                self._run_migrations(conn)
+                
                 # Create indexes for better query performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_valorant_accounts_discord_id ON valorant_accounts(discord_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_valorant_accounts_primary ON valorant_accounts(discord_id, is_primary)")
@@ -189,6 +192,21 @@ class DatabaseManager:
                 raise
             finally:
                 conn.close()
+    
+    def _run_migrations(self, conn) -> None:
+        """Run database migrations for existing installations"""
+        try:
+            # Migration 1: Add voice_channel_id to channel_settings if missing
+            cursor = conn.execute("PRAGMA table_info(channel_settings)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'voice_channel_id' not in columns:
+                conn.execute("ALTER TABLE channel_settings ADD COLUMN voice_channel_id INTEGER")
+                logging.info("Added voice_channel_id column to channel_settings table")
+        
+        except Exception as e:
+            logging.error(f"Error running database migrations: {e}")
+            raise
     
     # User management methods
     def get_user(self, discord_id: int) -> Optional[Dict[str, Any]]:
