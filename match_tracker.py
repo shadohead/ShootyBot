@@ -7,6 +7,7 @@ from valorant_client import valorant_client
 import random
 from utils import log_error, format_time_ago
 from context_manager import context_manager
+from database import database_manager
 
 class MatchTracker:
     """Tracks Discord members' Valorant matches by polling for newly completed games in active shooty stacks"""
@@ -22,17 +23,24 @@ class MatchTracker:
     
     def __init__(self, bot: discord.Client) -> None:
         self.bot = bot
+        # State is now persisted to database - these are kept as memory caches for performance
         self.tracked_members: Dict[int, Dict[str, Any]] = {}  # {member_id: {'last_checked': datetime, 'last_match_id': str}}
         self.recent_matches: Dict[int, Dict[str, Dict[str, Any]]] = {}   # {server_id: {match_id: {'timestamp': datetime, 'members': []}}}
         self.stack_last_activity: Dict[int, datetime] = {}  # {channel_id: last_match_timestamp}
         self.stack_has_played: Dict[int, bool] = {}  # {channel_id: has_had_games}
         self.check_interval: int = self.CHECK_INTERVAL_SECONDS
         self.running: bool = False
+        self._state_loaded: bool = False
         
     async def start_tracking(self) -> None:
         """Start the background match tracking task"""
         if self.running:
             return
+        
+        # Load state from database on startup
+        if not self._state_loaded:
+            await self._load_state_from_database()
+            self._state_loaded = True
         
         self.running = True
         logging.info("Starting match tracker with 1-minute polling for active shooty stacks...")
@@ -41,6 +49,8 @@ class MatchTracker:
             try:
                 await self._check_all_servers()
                 await self._check_inactive_stacks()
+                # Periodically save state to database
+                await self._save_state_to_database()
                 await asyncio.sleep(self.check_interval)
             except Exception as e:
                 log_error("in match tracker", e)
@@ -49,6 +59,8 @@ class MatchTracker:
     def stop_tracking(self) -> None:
         """Stop the background match tracking"""
         self.running = False
+        # Save final state to database before stopping
+        asyncio.create_task(self._save_state_to_database())
         logging.info("Stopped match tracker")
     
     async def _check_all_servers(self) -> None:
@@ -860,6 +872,94 @@ class MatchTracker:
                 log_error(f"in manual check for {member.display_name}", e)
         
         return None
+
+    async def _load_state_from_database(self) -> None:
+        """Load match tracker state from database on startup"""
+        try:
+            # Load tracked members for all servers
+            for guild in self.bot.guilds:
+                tracked_users = database_manager.get_all_tracked_users(guild.id)
+                for user_id, tracking_data in tracked_users.items():
+                    # Convert stored datetime strings back to datetime objects
+                    if 'last_checked' in tracking_data and tracking_data['last_checked']:
+                        try:
+                            tracking_data['last_checked'] = datetime.fromisoformat(tracking_data['last_checked'])
+                        except (ValueError, TypeError):
+                            tracking_data['last_checked'] = datetime.now(timezone.utc)
+                    
+                    self.tracked_members[user_id] = tracking_data
+            
+            # Load stack states
+            stack_states = database_manager.get_all_stack_states()
+            for channel_id, state_data in stack_states.items():
+                self.stack_has_played[channel_id] = state_data['has_played']
+                if state_data['last_activity']:
+                    self.stack_last_activity[channel_id] = state_data['last_activity']
+            
+            logging.info(f"Loaded match tracker state: {len(self.tracked_members)} tracked users, {len(self.stack_has_played)} stack states")
+            
+        except Exception as e:
+            log_error("loading match tracker state from database", e)
+    
+    async def _save_state_to_database(self) -> None:
+        """Save current match tracker state to database"""
+        try:
+            # Save tracked members by server
+            servers_processed = set()
+            for guild in self.bot.guilds:
+                server_id = guild.id
+                if server_id in servers_processed:
+                    continue
+                servers_processed.add(server_id)
+                
+                # Collect tracking data for users in this server
+                for user_id, tracking_data in self.tracked_members.items():
+                    # Check if user is in this guild
+                    member = guild.get_member(user_id)
+                    if member:
+                        # Convert datetime objects to strings for JSON storage
+                        tracking_data_copy = tracking_data.copy()
+                        if 'last_checked' in tracking_data_copy and isinstance(tracking_data_copy['last_checked'], datetime):
+                            tracking_data_copy['last_checked'] = tracking_data_copy['last_checked'].isoformat()
+                        
+                        database_manager.save_match_tracker_state(user_id, server_id, tracking_data_copy)
+            
+            # Save stack states
+            for channel_id, has_played in self.stack_has_played.items():
+                last_activity = self.stack_last_activity.get(channel_id)
+                # Get participant count from context if available
+                try:
+                    context = context_manager.get_context(channel_id)
+                    participant_count = len(context.bot_soloq_user_set.union(context.bot_fullstack_user_set))
+                except:
+                    participant_count = 0
+                
+                database_manager.save_stack_state(
+                    channel_id=channel_id,
+                    has_played=has_played,
+                    last_activity=last_activity,
+                    participant_count=participant_count
+                )
+            
+            # Clean up old state data (older than 30 days)
+            database_manager.cleanup_old_tracker_state(days=30)
+            
+        except Exception as e:
+            log_error("saving match tracker state to database", e)
+    
+    def get_persistence_stats(self) -> Dict[str, int]:
+        """Get statistics about persisted state"""
+        try:
+            stats = database_manager.get_database_stats()
+            return {
+                'tracked_users_persisted': stats.get('match_tracker_state', 0),
+                'stack_states_persisted': stats.get('stack_state', 0),
+                'tracked_users_memory': len(self.tracked_members),
+                'stack_states_memory': len(self.stack_has_played)
+            }
+        except Exception as e:
+            log_error("getting persistence stats", e)
+            return {}
 
 # Global match tracker instance
 match_tracker = None

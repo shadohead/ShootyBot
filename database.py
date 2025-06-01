@@ -122,6 +122,28 @@ class DatabaseManager:
                     )
                 """)
                 
+                # Match tracker state persistence tables
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS match_tracker_state (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        server_id INTEGER NOT NULL,
+                        tracking_data TEXT NOT NULL,  -- JSON: recent matches, last activity, etc.
+                        last_updated TEXT NOT NULL,
+                        UNIQUE(user_id, server_id)
+                    )
+                """)
+                
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS stack_state (
+                        channel_id INTEGER PRIMARY KEY,
+                        has_played BOOLEAN DEFAULT 0,
+                        last_activity TEXT,
+                        participant_count INTEGER DEFAULT 0,
+                        last_updated TEXT NOT NULL
+                    )
+                """)
+
                 # Henrik API persistent storage tables
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS henrik_matches (
@@ -171,6 +193,11 @@ class DatabaseManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_session_participants_session_id ON session_participants(session_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_session_participants_discord_id ON session_participants(discord_id)")
+                
+                # Match tracker state indexes
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_match_tracker_state_user_server ON match_tracker_state(user_id, server_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_match_tracker_state_last_updated ON match_tracker_state(last_updated)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_stack_state_last_activity ON stack_state(last_activity)")
                 
                 # Henrik storage indexes
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_matches_last_accessed ON henrik_matches(last_accessed)")
@@ -725,7 +752,7 @@ class DatabaseManager:
                 stats = {}
                 
                 tables = ['users', 'valorant_accounts', 'sessions', 'session_participants', 'channel_settings', 
-                         'henrik_matches', 'henrik_player_stats', 'henrik_accounts']
+                         'match_tracker_state', 'stack_state', 'henrik_matches', 'henrik_player_stats', 'henrik_accounts']
                 for table in tables:
                     row = conn.execute(f"SELECT COUNT(*) as count FROM {table}").fetchone()
                     stats[table] = row['count']
@@ -1056,6 +1083,233 @@ class DatabaseManager:
                 logging.error(f"Error clearing Henrik storage: {e}")
                 conn.rollback()
                 return False
+            finally:
+                conn.close()
+    
+    # Match tracker state persistence methods
+    def save_match_tracker_state(self, user_id: int, server_id: int, tracking_data: Dict[str, Any]) -> bool:
+        """Save match tracker state for a user in a server"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                tracking_json = json.dumps(tracking_data)
+                
+                conn.execute("""
+                    INSERT INTO match_tracker_state (user_id, server_id, tracking_data, last_updated)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(user_id, server_id) DO UPDATE SET
+                        tracking_data = ?,
+                        last_updated = ?
+                """, (user_id, server_id, tracking_json, now, tracking_json, now))
+                
+                conn.commit()
+                return True
+            
+            except Exception as e:
+                logging.error(f"Error saving match tracker state for user {user_id}: {e}")
+                conn.rollback()
+                return False
+            finally:
+                conn.close()
+    
+    def get_match_tracker_state(self, user_id: int, server_id: int) -> Optional[Dict[str, Any]]:
+        """Get match tracker state for a user in a server"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute("""
+                    SELECT tracking_data FROM match_tracker_state 
+                    WHERE user_id = ? AND server_id = ?
+                """, (user_id, server_id)).fetchone()
+                
+                if row:
+                    return json.loads(row['tracking_data'])
+                return None
+            
+            except Exception as e:
+                logging.error(f"Error getting match tracker state for user {user_id}: {e}")
+                return None
+            finally:
+                conn.close()
+    
+    def get_all_tracked_users(self, server_id: int) -> Dict[int, Dict[str, Any]]:
+        """Get all tracked users for a server"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                rows = conn.execute("""
+                    SELECT user_id, tracking_data FROM match_tracker_state 
+                    WHERE server_id = ?
+                """, (server_id,)).fetchall()
+                
+                tracked_users = {}
+                for row in rows:
+                    tracked_users[row['user_id']] = json.loads(row['tracking_data'])
+                
+                return tracked_users
+            
+            except Exception as e:
+                logging.error(f"Error getting all tracked users for server {server_id}: {e}")
+                return {}
+            finally:
+                conn.close()
+    
+    def save_stack_state(self, channel_id: int, has_played: bool = False, 
+                        last_activity: Optional[datetime] = None, participant_count: int = 0) -> bool:
+        """Save stack state for a channel"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                last_activity_str = last_activity.isoformat() if last_activity else None
+                
+                conn.execute("""
+                    INSERT INTO stack_state (channel_id, has_played, last_activity, participant_count, last_updated)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(channel_id) DO UPDATE SET
+                        has_played = ?,
+                        last_activity = COALESCE(?, last_activity),
+                        participant_count = ?,
+                        last_updated = ?
+                """, (channel_id, has_played, last_activity_str, participant_count, now,
+                      has_played, last_activity_str, participant_count, now))
+                
+                conn.commit()
+                return True
+            
+            except Exception as e:
+                logging.error(f"Error saving stack state for channel {channel_id}: {e}")
+                conn.rollback()
+                return False
+            finally:
+                conn.close()
+    
+    def get_stack_state(self, channel_id: int) -> Optional[Dict[str, Any]]:
+        """Get stack state for a channel"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute("""
+                    SELECT has_played, last_activity, participant_count, last_updated 
+                    FROM stack_state WHERE channel_id = ?
+                """, (channel_id,)).fetchone()
+                
+                if row:
+                    last_activity = None
+                    if row['last_activity']:
+                        last_activity = datetime.fromisoformat(row['last_activity'])
+                    
+                    return {
+                        'has_played': bool(row['has_played']),
+                        'last_activity': last_activity,
+                        'participant_count': row['participant_count'],
+                        'last_updated': row['last_updated']
+                    }
+                return None
+            
+            except Exception as e:
+                logging.error(f"Error getting stack state for channel {channel_id}: {e}")
+                return None
+            finally:
+                conn.close()
+    
+    def get_all_stack_states(self) -> Dict[int, Dict[str, Any]]:
+        """Get all stack states"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                rows = conn.execute("""
+                    SELECT channel_id, has_played, last_activity, participant_count, last_updated 
+                    FROM stack_state
+                """).fetchall()
+                
+                stack_states = {}
+                for row in rows:
+                    last_activity = None
+                    if row['last_activity']:
+                        last_activity = datetime.fromisoformat(row['last_activity'])
+                    
+                    stack_states[row['channel_id']] = {
+                        'has_played': bool(row['has_played']),
+                        'last_activity': last_activity,
+                        'participant_count': row['participant_count'],
+                        'last_updated': row['last_updated']
+                    }
+                
+                return stack_states
+            
+            except Exception as e:
+                logging.error(f"Error getting all stack states: {e}")
+                return {}
+            finally:
+                conn.close()
+    
+    def remove_match_tracker_state(self, user_id: int, server_id: int) -> bool:
+        """Remove match tracker state for a user in a server"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("""
+                    DELETE FROM match_tracker_state 
+                    WHERE user_id = ? AND server_id = ?
+                """, (user_id, server_id))
+                
+                conn.commit()
+                return True
+            
+            except Exception as e:
+                logging.error(f"Error removing match tracker state for user {user_id}: {e}")
+                conn.rollback()
+                return False
+            finally:
+                conn.close()
+    
+    def remove_stack_state(self, channel_id: int) -> bool:
+        """Remove stack state for a channel"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("DELETE FROM stack_state WHERE channel_id = ?", (channel_id,))
+                conn.commit()
+                return True
+            
+            except Exception as e:
+                logging.error(f"Error removing stack state for channel {channel_id}: {e}")
+                conn.rollback()
+                return False
+            finally:
+                conn.close()
+    
+    def cleanup_old_tracker_state(self, days: int = 30) -> int:
+        """Clean up old match tracker state data"""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+                
+                # Remove old tracker states
+                tracker_deleted = conn.execute("""
+                    DELETE FROM match_tracker_state WHERE last_updated < ?
+                """, (cutoff_date,)).rowcount
+                
+                # Remove old stack states  
+                stack_deleted = conn.execute("""
+                    DELETE FROM stack_state WHERE last_updated < ?
+                """, (cutoff_date,)).rowcount
+                
+                conn.commit()
+                
+                total_deleted = tracker_deleted + stack_deleted
+                if total_deleted > 0:
+                    logging.info(f"Cleaned up {total_deleted} old tracker state entries (older than {days} days)")
+                
+                return total_deleted
+            
+            except Exception as e:
+                logging.error(f"Error cleaning up old tracker state: {e}")
+                conn.rollback()
+                return 0
             finally:
                 conn.close()
 
