@@ -27,10 +27,6 @@ class ValorantClient(BaseAPIClient):
             timeout=30
         )
         
-        # API version preferences (for gradual migration to v4)
-        self.use_v4_apis = True  # Enable v4 API usage
-        self.platform = "pc"  # Default platform for v4 APIs
-        
         if HENRIK_API_KEY:
             logging.info("Using Henrik API with Advanced key")
         else:
@@ -209,7 +205,7 @@ class ValorantClient(BaseAPIClient):
         
         return playing_members
     
-    async def get_match_history(self, username: str, tag: str, size: int = 5, mode: str = None, puuid: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
+    async def get_match_history(self, username: str, tag: str, size: int = 5, mode: str = None) -> Optional[List[Dict[str, Any]]]:
         """Get match history for a player
         
         Args:
@@ -235,241 +231,42 @@ class ValorantClient(BaseAPIClient):
                 logging.debug(f"Using stored match history for {username}#{tag}")
                 return match_history_data
             
-            # Use v4 API if enabled, fallback to v3
-            if self.use_v4_apis:
-                # v4 API requires platform parameter
-                original_base_url = self.base_url
-                self.base_url = "https://api.henrikdev.xyz/valorant/v4"
-                
-                try:
-                    params = {'size': size}
-                    if mode:
-                        params['mode'] = mode  # v4 uses 'mode' parameter
-                        
-                    response = await self.get(
-                        f'by-puuid/matches/na/{self.platform}/{puuid}',
-                        params=params,
-                        cache_ttl=180  # Cache for 3 minutes
-                    )
-                    
-                    if response.success:
-                        # Henrik API wraps data in 'data' field
-                        match_history = response.data['data'] if 'data' in response.data else response.data
-                        
-                        # Calculate stats and store both together
-                        stats = self.calculate_player_stats(match_history, puuid, competitive_only=(mode == 'competitive'))
-                        database_manager.store_player_stats(puuid, mode, size, stats, match_history)
-                        
-                        return match_history
-                    else:
-                        log_error("fetching match history (v4)", Exception(f"Status {response.status_code}"))
-                        # Fallback to v3 on error
-                        logging.info("Falling back to v3 API for match history")
-                        self.use_v4_apis = False
-                finally:
-                    # Restore original base URL
-                    self.base_url = original_base_url
+            # Match history uses v3 API with different base URL
+            # Temporarily change the base URL for this request
+            original_base_url = self.base_url
+            self.base_url = "https://api.henrikdev.xyz/valorant/v3"
             
-            # v3 API fallback or when v4 is disabled
-            if not self.use_v4_apis:
-                original_base_url = self.base_url
-                self.base_url = "https://api.henrikdev.xyz/valorant/v3"
+            try:
+                params = {'size': size}
+                if mode:
+                    params['filter'] = mode
+                    
+                response = await self.get(
+                    f'matches/na/{username}/{tag}',
+                    params=params,
+                    cache_ttl=180  # Cache for 3 minutes
+                )
                 
-                try:
-                    params = {'size': size}
-                    if mode:
-                        params['filter'] = mode
-                        
-                    response = await self.get(
-                        f'by-puuid/matches/na/{puuid}',
-                        params=params,
-                        cache_ttl=180  # Cache for 3 minutes
-                    )
+                if response.success:
+                    # Henrik API wraps data in 'data' field
+                    match_history = response.data['data'] if 'data' in response.data else response.data
                     
-                    if response.success:
-                        # Henrik API wraps data in 'data' field
-                        match_history = response.data['data'] if 'data' in response.data else response.data
-                        
-                        # Calculate stats and store both together
-                        stats = self.calculate_player_stats(match_history, puuid, competitive_only=(mode == 'competitive'))
-                        database_manager.store_player_stats(puuid, mode, size, stats, match_history)
-                        
-                        return match_history
-                    else:
-                        log_error("fetching match history (v3)", Exception(f"Status {response.status_code}"))
-                        return None
-                finally:
-                    # Restore original base URL
-                    self.base_url = original_base_url
+                    # Calculate stats and store both together
+                    stats = self.calculate_player_stats(match_history, puuid, competitive_only=(mode == 'competitive'))
+                    database_manager.store_player_stats(puuid, mode, size, stats, match_history)
                     
+                    return match_history
+                else:
+                    log_error("fetching match history", Exception(f"Status {response.status_code}"))
+                    return None
+            finally:
+                # Restore original base URL
+                self.base_url = original_base_url
+                
         except Exception as e:
             log_error("fetching match history", e)
             return None
     
-    async def get_match_data(self, match_id: str, region: str = "na") -> Optional[Dict[str, Any]]:
-        """Get detailed match data by match ID
-        
-        Args:
-            match_id: The match ID to fetch
-            region: Region for v4 API (na, eu, ap, etc.)
-        """
-        try:
-            # Use v4 API if enabled, fallback to v2
-            if self.use_v4_apis:
-                # v4 API requires region parameter
-                original_base_url = self.base_url
-                self.base_url = "https://api.henrikdev.xyz/valorant/v4"
-                
-                try:
-                    response = await self.get(
-                        f'match/{region}/{match_id}',
-                        cache_ttl=3600  # Cache for 1 hour (match data doesn't change)
-                    )
-                    
-                    if response.success:
-                        # Henrik API wraps data in 'data' field
-                        match_data = response.data['data'] if 'data' in response.data else response.data
-                        return match_data
-                    else:
-                        log_error("fetching match data (v4)", Exception(f"Status {response.status_code}"))
-                        # Fallback to v2 on error
-                        logging.info("Falling back to v2 API for match data")
-                        self.use_v4_apis = False
-                finally:
-                    # Restore original base URL
-                    self.base_url = original_base_url
-            
-            # v2 API fallback or when v4 is disabled
-            if not self.use_v4_apis:
-                original_base_url = self.base_url
-                self.base_url = "https://api.henrikdev.xyz/valorant/v2"
-                
-                try:
-                    response = await self.get(
-                        f'match/{match_id}',
-                        cache_ttl=3600  # Cache for 1 hour
-                    )
-                    
-                    if response.success:
-                        # Henrik API wraps data in 'data' field
-                        match_data = response.data['data'] if 'data' in response.data else response.data
-                        return match_data
-                    else:
-                        log_error("fetching match data (v2)", Exception(f"Status {response.status_code}"))
-                        return None
-                finally:
-                    # Restore original base URL
-                    self.base_url = original_base_url
-                    
-        except Exception as e:
-            log_error("fetching match data", e)
-            return None
-    
-    def _is_v4_data_structure(self, match: Dict[str, Any]) -> bool:
-        """Detect if match data uses v4 API structure"""
-        metadata = match.get('metadata', {})
-        
-        # v4 has 'match_id' instead of 'matchid'
-        if 'match_id' in metadata:
-            return True
-        
-        # v4 has players[] array instead of players.all_players[]
-        players = match.get('players')
-        if isinstance(players, list):
-            return True
-            
-        # v4 has teams[] array instead of teams.red/blue objects
-        teams = match.get('teams')
-        if isinstance(teams, list):
-            return True
-            
-        return False
-    
-    def _normalize_match_data_to_v3(self, match: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert v4 match data structure to v3 format for compatibility"""
-        if not self._is_v4_data_structure(match):
-            return match  # Already v3 format
-        
-        normalized = match.copy()
-        
-        # Convert metadata
-        metadata = normalized.get('metadata', {})
-        if 'match_id' in metadata:
-            metadata['matchid'] = metadata['match_id']
-        
-        # Convert map structure (v4 has map.name, v3 has map as string)
-        if isinstance(metadata.get('map'), dict):
-            metadata['map'] = metadata['map'].get('name', 'Unknown')
-        
-        # Convert queue structure (v4 has queue.id, v3 has mode_id)
-        if isinstance(metadata.get('queue'), dict):
-            queue = metadata['queue']
-            metadata['mode'] = queue.get('name', 'Unknown')
-            metadata['mode_id'] = queue.get('id', 'unknown')
-        
-        # Convert players structure (v4: players[], v3: players.all_players[])
-        players = normalized.get('players')
-        if isinstance(players, list):
-            # Group players by team_id
-            red_players = []
-            blue_players = []
-            
-            for player in players:
-                # Convert agent structure (v4 has agent.name, v3 has character)
-                if isinstance(player.get('agent'), dict):
-                    player['character'] = player['agent'].get('name', 'Unknown')
-                
-                # Convert damage structure (v4 has stats.damage.dealt/received, v3 has damage_made/received)
-                stats = player.get('stats', {})
-                if isinstance(stats.get('damage'), dict):
-                    player['damage_made'] = stats['damage'].get('dealt', 0)
-                    player['damage_received'] = stats['damage'].get('received', 0)
-                
-                # Convert team_id to team field
-                team_id = player.get('team_id', 'Red')
-                player['team'] = team_id
-                
-                if team_id.lower() == 'red':
-                    red_players.append(player)
-                else:
-                    blue_players.append(player)
-            
-            # Reconstruct v3 players structure
-            normalized['players'] = {
-                'all_players': players,
-                'red': red_players,
-                'blue': blue_players
-            }
-        
-        # Convert teams structure (v4: teams[], v3: teams.red/blue)
-        teams = normalized.get('teams')
-        if isinstance(teams, list):
-            teams_dict = {}
-            for team in teams:
-                team_id = team.get('team_id', 'Red').lower()
-                teams_dict[team_id] = {
-                    'has_won': team.get('won', False),
-                    'rounds_won': team.get('rounds', {}).get('won', 0),
-                    'rounds_lost': team.get('rounds', {}).get('lost', 0)
-                }
-            normalized['teams'] = teams_dict
-        
-        # Convert rounds structure if needed (v4 format is similar to v3)
-        rounds = normalized.get('rounds', [])
-        for round_data in rounds:
-            # Convert round stats if needed
-            round_stats = round_data.get('stats', [])
-            if round_stats:
-                # Convert player reference format in round stats
-                for stat in round_stats:
-                    player = stat.get('player', {})
-                    if isinstance(player, dict):
-                        stat['player_puuid'] = player.get('puuid', '')
-                        stat['player_display_name'] = f"{player.get('name', '')}#{player.get('tag', '')}"
-                        stat['player_team'] = player.get('team', '')
-        
-        return normalized
-
     def calculate_player_stats(self, matches: List[Dict[str, Any]], player_puuid: str, competitive_only: bool = True) -> Dict[str, Any]:
         """Calculate comprehensive player statistics from match history using tournament-grade accuracy
         
@@ -535,32 +332,12 @@ class ValorantClient(BaseAPIClient):
             if not match.get('is_available', True):
                 continue
             
-            # Normalize v4 data to v3 format for compatibility
-            match = self._normalize_match_data_to_v3(match)
-            
             # Filter by game mode if requested
             if competitive_only:
                 metadata = match.get('metadata', {})
-                mode = metadata.get('mode', '')
-                if isinstance(mode, str):
-                    mode = mode.lower()
-                else:
-                    mode = ''
-                    
-                mode_id = metadata.get('mode_id', '')
-                if isinstance(mode_id, str):
-                    mode_id = mode_id.lower()
-                else:
-                    mode_id = ''
-                    
-                queue = metadata.get('queue', '')
-                if isinstance(queue, str):
-                    queue = queue.lower()
-                elif isinstance(queue, dict):
-                    # v4 format: queue is an object with id/name
-                    queue = queue.get('id', '').lower()
-                else:
-                    queue = ''
+                mode = metadata.get('mode', '').lower()
+                mode_id = metadata.get('mode_id', '').lower()
+                queue = metadata.get('queue', '').lower()
                 
                 # Skip non-competitive matches
                 if not any('competitive' in field for field in [mode, mode_id, queue]):
@@ -803,8 +580,7 @@ class ValorantClient(BaseAPIClient):
         if not rounds_data:
             # Fallback to basic estimations if no round data
             player_data = players[player_puuid]
-            rounds_played = match.get('metadata', {}).get('rounds_played', 0)
-            self._calculate_basic_estimates(player_data, stats, rounds_played, match_won)
+            self._calculate_basic_estimates(player_data, stats, len(rounds_data), match_won)
             return
         
         total_rounds = len(rounds_data)
@@ -1250,14 +1026,6 @@ class ValorantClient(BaseAPIClient):
             estimated_survival_rate = max(0.3, 1.0 - death_rate)  # At least 30% survival
             estimated_rounds_survived = int(rounds_played * estimated_survival_rate)
             stats['rounds_survived'] += estimated_rounds_survived
-        
-        # Basic KAST estimation (without round data)
-        assists = player_stats.get('assists', 0)
-        if rounds_played > 0:
-            # Estimate KAST rounds: min(rounds, kills + assists) for conservative estimate
-            # This follows the algorithm expected by the test
-            estimated_kast_rounds = min(rounds_played, kills + assists)
-            stats['kast_rounds'] += estimated_kast_rounds
         
         # Shot tracking (estimate from hit stats)
         total_shots_hit = player_stats.get('headshots', 0) + player_stats.get('bodyshots', 0) + player_stats.get('legshots', 0)
