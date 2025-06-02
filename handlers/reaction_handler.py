@@ -1,18 +1,25 @@
 import logging
+import asyncio
 from typing import Union
 import discord
 from discord.ext import commands
-from context_manager import context_manager, to_names_list
+from context_manager import context_manager
 from handlers.message_formatter import party_status_message
 from data_manager import data_manager
 from config import *
 
 async def add_react_options(message: discord.Message) -> None:
-    """Add reaction options to a message"""
-    await message.add_reaction(EMOJI["THUMBS_UP"])
-    await message.add_reaction(EMOJI["FULL_STACK"])
-    await message.add_reaction(EMOJI["REFRESH"])
-    await message.add_reaction(EMOJI["MENTION"])
+    """Add reaction options to a message using concurrent execution"""
+    # Add all reactions concurrently for better performance
+    reactions = [
+        EMOJI["THUMBS_UP"],
+        EMOJI["FULL_STACK"],
+        EMOJI["REFRESH"],
+        EMOJI["MENTION"]
+    ]
+    
+    tasks = [message.add_reaction(emoji) for emoji in reactions]
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 class ReactionHandler(commands.Cog):
     """Handles all reaction-based interactions"""
@@ -155,11 +162,9 @@ class ReactionHandler(commands.Cog):
             await message.channel.send(MESSAGES["NO_MEMBERS"])
             return
         
-        mention_message = "".join(
-            user.mention + " "
-            for user in shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set)
-            if not user.bot
-        )
+        all_users = shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set)
+        mentions = [user.mention for user in all_users if not user.bot]
+        mention_message = " ".join(mentions)
         
         await message.channel.send(mention_message)
     

@@ -34,6 +34,10 @@ class ShootyBot(commands.Bot):
         self.match_tracker: Optional[object] = None
         self._cogs_loaded: bool = False
         self.health_check_file = ".bot_health"
+        
+        # Status update debouncing
+        self._status_update_pending = False
+        self._status_update_task: Optional[asyncio.Task] = None
 
     @tasks.loop(minutes=2)
     async def health_check_task(self) -> None:
@@ -169,8 +173,20 @@ class ShootyBot(commands.Bot):
             logging.warning("Bot will continue without match tracking")
 
     async def update_status_with_queue_count(self) -> None:
-        """Update bot status with total queue count and voice chat users across all channels."""
+        """Update bot status with debouncing to reduce Discord API calls."""
+        # Cancel existing pending update
+        if self._status_update_task and not self._status_update_task.done():
+            self._status_update_task.cancel()
+        
+        # Schedule new update with 1.5 second delay
+        self._status_update_task = asyncio.create_task(self._debounced_status_update())
+    
+    async def _debounced_status_update(self) -> None:
+        """Actual status update implementation with debouncing."""
         try:
+            # Wait for debounce period
+            await asyncio.sleep(1.5)
+            
             total_queued = 0
             total_voice = 0
             total_max_size = 0
@@ -207,6 +223,9 @@ class ShootyBot(commands.Bot):
 
             await self.change_presence(activity=activity)
 
+        except asyncio.CancelledError:
+            # Task was cancelled, this is expected
+            pass
         except Exception as e:
             log_error("updating bot status", e)
 
