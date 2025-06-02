@@ -122,12 +122,14 @@ class ShootyBot(commands.Bot):
         await self.start_match_tracker()
 
         # Start health check task
-        self.health_check_task.start()
-        logging.info("💗 Health monitoring started")
+        if not self.health_check_task.is_running():
+            self.health_check_task.start()
+            logging.info("💗 Health monitoring started")
 
         # Start storage monitoring task
-        self.storage_monitoring_task.start()
-        logging.info("📊 Storage monitoring started")
+        if not self.storage_monitoring_task.is_running():
+            self.storage_monitoring_task.start()
+            logging.info("📊 Storage monitoring started")
 
         logging.info("🤖 ShootyBot is fully operational!")
 
@@ -243,34 +245,43 @@ class ShootyBot(commands.Bot):
                 await ctx.send(MESSAGES["COMMAND_NOT_FOUND"])
             return
 
+        # Helper function to safely send messages
+        async def safe_send(message: str):
+            try:
+                if hasattr(ctx, 'interaction') and ctx.interaction:
+                    if not ctx.interaction.response.is_done():
+                        await ctx.send(message)
+                else:
+                    await ctx.send(message)
+            except discord.HTTPException:
+                pass
+
         # Handle missing permissions
         if isinstance(error, commands.MissingPermissions):
-            await ctx.send("❌ You don't have permission to use this command.")
+            await safe_send("❌ You don't have permission to use this command.")
             return
 
         # Handle missing required argument
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send(f"❌ Missing required argument: `{error.param.name}`")
+            await safe_send(f"❌ Missing required argument: `{error.param.name}`")
             return
 
         # Handle bad argument
         if isinstance(error, commands.BadArgument):
-            await ctx.send(f"❌ Invalid argument: {str(error)}")
+            await safe_send(f"❌ Invalid argument: {str(error)}")
             return
 
         # Handle command on cooldown
         if isinstance(error, commands.CommandOnCooldown):
-            await ctx.send(
-                f"⏱️ Command on cooldown. Try again in {error.retry_after:.1f}s"
-            )
+            await safe_send(f"⏱️ Command on cooldown. Try again in {error.retry_after:.1f}s")
             return
 
         # Log unhandled errors
         command_name = ctx.command.qualified_name if ctx.command else "Unknown"
         log_error(f"executing command '{command_name}'", error)
 
-        # Send generic error message
-        await ctx.send("❌ An error occurred while processing this command.")
+        # Send generic error message only if interaction hasn't been handled
+        await safe_send("❌ An error occurred while processing this command.")
 
     async def load_cogs(self) -> None:
         """Load all command cogs."""

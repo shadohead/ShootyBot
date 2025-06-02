@@ -36,8 +36,16 @@ class BaseCommandCog(commands.Cog):
         command_name = ctx.command.qualified_name if ctx.command else 'Unknown'
         log_error(f"in {self.__class__.__name__}.{command_name}", error)
         
-        # Send user-friendly error message
-        await self.send_error_embed(ctx, "An unexpected error occurred", str(error))
+        # Only send error message if interaction hasn't been responded to
+        try:
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                if not ctx.interaction.response.is_done():
+                    await self.send_error_embed(ctx, "An unexpected error occurred", str(error))
+            else:
+                await self.send_error_embed(ctx, "An unexpected error occurred", str(error))
+        except discord.HTTPException:
+            # Interaction already handled, skip response
+            pass
     
     async def send_embed(self, ctx: Union[commands.Context, discord.Interaction],
                         title: str, description: str = None, color: int = 0x00ff00,
@@ -100,7 +108,7 @@ class BaseCommandCog(commands.Cog):
     
     async def defer_if_slash(self, ctx: commands.Context) -> None:
         """Defer response if this is a slash command."""
-        if hasattr(ctx, 'interaction') and ctx.interaction:
+        if hasattr(ctx, 'interaction') and ctx.interaction and not ctx.interaction.response.is_done():
             await ctx.defer()
     
     def is_admin(self, member: discord.Member) -> bool:
