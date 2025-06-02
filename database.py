@@ -826,7 +826,7 @@ class DatabaseManager:
             finally:
                 conn.close()
     
-    def get_stored_player_stats(self, puuid: str, game_mode: str = None, match_count: int = 5) -> Optional[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
+    def get_stored_player_stats(self, puuid: str, game_mode: str = None, match_count: int = 5, max_age_minutes: int = 10) -> Optional[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
         """Get stored player stats and match history if they exist"""
         with self._lock:
             conn = self._get_connection()
@@ -835,11 +835,19 @@ class DatabaseManager:
                 stats_key = f"{puuid}_{game_mode or 'all'}_{match_count}"
                 
                 row = conn.execute("""
-                    SELECT stats_data, match_history_data FROM henrik_player_stats 
+                    SELECT stats_data, match_history_data, stored_at FROM henrik_player_stats 
                     WHERE stats_key = ?
                 """, (stats_key,)).fetchone()
                 
                 if row:
+                    # Check if data is still fresh
+                    stored_at = datetime.fromisoformat(row['stored_at'])
+                    age_minutes = (datetime.now(timezone.utc) - stored_at).total_seconds() / 60
+                    
+                    if age_minutes > max_age_minutes:
+                        logging.debug(f"Cached player stats for {puuid} are {age_minutes:.1f} minutes old, exceeding {max_age_minutes} minute limit")
+                        return None  # Data is too old, force refresh
+                    
                     # Update last_accessed
                     conn.execute("""
                         UPDATE henrik_player_stats SET last_accessed = ? WHERE stats_key = ?

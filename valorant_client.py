@@ -205,7 +205,7 @@ class ValorantClient(BaseAPIClient):
         
         return playing_members
     
-    async def get_match_history(self, username: str, tag: str, size: int = 5, mode: str = None) -> Optional[List[Dict[str, Any]]]:
+    async def get_match_history(self, username: str, tag: str, size: int = 5, mode: str = None, force_refresh: bool = False) -> Optional[List[Dict[str, Any]]]:
         """Get match history for a player
         
         Args:
@@ -224,12 +224,15 @@ class ValorantClient(BaseAPIClient):
             if not puuid:
                 return None
             
-            # Check database storage first
-            stored_data = database_manager.get_stored_player_stats(puuid, mode, size)
-            if stored_data:
-                stats_data, match_history_data = stored_data
-                logging.debug(f"Using stored match history for {username}#{tag}")
-                return match_history_data
+            # Check database storage first (unless forcing refresh)
+            if not force_refresh:
+                # Use shorter cache time for manual checks to get fresher data
+                max_age = 2 if force_refresh else 10  # 2 minutes for fresh, 10 for normal
+                stored_data = database_manager.get_stored_player_stats(puuid, mode, size, max_age_minutes=max_age)
+                if stored_data:
+                    stats_data, match_history_data = stored_data
+                    logging.debug(f"Using stored match history for {username}#{tag}")
+                    return match_history_data
             
             # Match history uses v3 API with different base URL
             # Temporarily change the base URL for this request

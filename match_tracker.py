@@ -825,7 +825,7 @@ class MatchTracker:
         except Exception as e:
             log_error(f"auto-ending stack in channel {channel.id}", e)
     
-    async def manual_check_recent_match(self, guild: discord.Guild, member: discord.Member = None) -> Optional[discord.Embed]:
+    async def manual_check_recent_match(self, guild: discord.Guild, member: discord.Member = None, force_fresh: bool = False) -> Optional[discord.Embed]:
         """Manually check for a recent match and return embed if found"""
         if member:
             members_to_check = [member]
@@ -842,31 +842,46 @@ class MatchTracker:
         # Check the most recent match for each member
         for member in members_to_check:
             try:
-                primary_account = valorant_client.get_linked_account(member.id)
-                if not primary_account:
+                # Get all linked accounts for this user, not just primary
+                all_accounts = valorant_client.get_all_linked_accounts(member.id)
+                if not all_accounts:
                     continue
                 
-                matches = await valorant_client.get_match_history(
-                    primary_account['username'],
-                    primary_account['tag'],
-                    size=1,
-                    mode='competitive'  # Only check competitive matches
-                )
-                
-                if not matches:
-                    continue
-                
-                match = matches[0]
-                
-                # Find Discord members in this match
-                discord_members_in_match = await self._find_discord_members_in_match(guild, match)
-                
-                if len(discord_members_in_match) >= 1:
-                    embed = await self._create_match_embed(match, discord_members_in_match)
-                    # Add manual check indicator
-                    if embed:
-                        embed.set_footer(text="🔍 Manual match lookup • ShootyBot")
-                    return embed
+                # Check matches for all linked accounts to get better coverage
+                for account in all_accounts:
+                    matches = await valorant_client.get_match_history(
+                        account['username'],
+                        account['tag'],
+                        size=5,  # Get more recent matches for better coverage
+                        mode='competitive',  # Only check competitive matches
+                        force_refresh=force_fresh  # Use the parameter to control freshness
+                    )
+                    
+                    if not matches:
+                        continue
+                    
+                    # Check each match to find the most recent one with Discord members
+                    for match in matches:
+                        # Check if this match is already processed
+                        match_id = match.get('metadata', {}).get('matchid')
+                        if not match_id:
+                            continue
+                        
+                        # Find Discord members in this match
+                        discord_members_in_match = await self._find_discord_members_in_match(guild, match)
+                        
+                        if len(discord_members_in_match) >= 1:
+                            # Check if we already have this match in our database
+                            stored_match = database_manager.get_stored_match(match_id)
+                            
+                            embed = await self._create_match_embed(match, discord_members_in_match)
+                            # Add manual check indicator
+                            if embed:
+                                if stored_match:
+                                    embed.set_footer(text="🔍 Manual match lookup (cached) • ShootyBot")
+                                else:
+                                    embed.set_footer(text="🔍 Manual match lookup (fresh) • ShootyBot")
+                            return embed
                     
             except Exception as e:
                 log_error(f"in manual check for {member.display_name}", e)

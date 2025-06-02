@@ -807,13 +807,18 @@ class ValorantCommands(GameCommandCog):
         name="shootylastmatch",
         description="Show stats from the most recent match involving Discord members"
     )
-    async def last_match(self, ctx: commands.Context, member: Optional[discord.Member] = None) -> None:
-        """Show the most recent match stats"""
+    async def last_match(self, ctx: commands.Context, member: Optional[discord.Member] = None, fresh: bool = False) -> None:
+        """Show the most recent match stats
+        
+        Args:
+            member: Optional Discord member to check specifically 
+            fresh: If True, force fresh data from API (bypass cache)
+        """
         try:
             await self.defer_if_slash(ctx)
             
             # Use manual check to find recent match
-            embed = await self.match_tracker.manual_check_recent_match(ctx.guild, member)
+            embed = await self.match_tracker.manual_check_recent_match(ctx.guild, member, force_fresh=fresh)
             
             if embed:
                 await ctx.send(embed=embed)
