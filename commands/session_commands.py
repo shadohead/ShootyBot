@@ -60,7 +60,7 @@ class SessionCommands(BaseCommandCog):
         shooty_context.current_st_message_id = message.id
         
         # Save context to persist the message ID
-        shooty_context_manager.save_context(ctx.channel.id)
+        context_manager.save_context(ctx.channel.id)
         
         # Add reaction options
         await add_react_options(message)
