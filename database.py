@@ -210,6 +210,9 @@ class DatabaseManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_accounts_last_accessed ON henrik_accounts(last_accessed)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_accounts_data_size ON henrik_accounts(data_size)")
                 
+                # Run migrations for existing installations
+                self._run_migrations(conn)
+                
                 conn.commit()
                 logging.info("Database tables initialized successfully")
             
@@ -230,6 +233,11 @@ class DatabaseManager:
             if 'voice_channel_id' not in columns:
                 conn.execute("ALTER TABLE channel_settings ADD COLUMN voice_channel_id INTEGER")
                 logging.info("Added voice_channel_id column to channel_settings table")
+            
+            # Migration 2: Add current_st_message_id to channel_settings if missing
+            if 'current_st_message_id' not in columns:
+                conn.execute("ALTER TABLE channel_settings ADD COLUMN current_st_message_id INTEGER")
+                logging.info("Added current_st_message_id column to channel_settings table")
         
         except Exception as e:
             logging.error(f"Error running database migrations: {e}")
@@ -609,7 +617,8 @@ class DatabaseManager:
                 conn.close()
     
     def save_channel_settings(self, channel_id: int, role_code: str = None, 
-                             game_name: str = None, party_max_size: int = 5, voice_channel_id: int = None) -> bool:
+                             game_name: str = None, party_max_size: int = 5, voice_channel_id: int = None,
+                             current_st_message_id: int = None) -> bool:
         """Save channel settings"""
         with self._lock:
             conn = self._get_connection()
@@ -617,16 +626,17 @@ class DatabaseManager:
                 now = datetime.now(timezone.utc).isoformat()
                 
                 conn.execute("""
-                    INSERT INTO channel_settings (channel_id, role_code, game_name, party_max_size, voice_channel_id, last_updated)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO channel_settings (channel_id, role_code, game_name, party_max_size, voice_channel_id, current_st_message_id, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(channel_id) DO UPDATE SET
                         role_code = COALESCE(?, role_code),
                         game_name = COALESCE(?, game_name),
                         party_max_size = COALESCE(?, party_max_size),
                         voice_channel_id = COALESCE(?, voice_channel_id),
+                        current_st_message_id = COALESCE(?, current_st_message_id),
                         last_updated = ?
-                """, (channel_id, role_code, game_name, party_max_size, voice_channel_id, now,
-                      role_code, game_name, party_max_size, voice_channel_id, now))
+                """, (channel_id, role_code, game_name, party_max_size, voice_channel_id, current_st_message_id, now,
+                      role_code, game_name, party_max_size, voice_channel_id, current_st_message_id, now))
                 
                 conn.commit()
                 return True

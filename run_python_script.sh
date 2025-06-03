@@ -93,7 +93,7 @@ is_bot_healthy() {
             return 1  # Invalid timestamp
         fi
         
-        if [ $time_diff -gt 300 ]; then  # 5 minutes
+        if [ $time_diff -gt 600 ]; then  # 10 minutes (more generous timeout)
             return 1  # Health check is stale
         fi
     else
@@ -157,8 +157,8 @@ monitor_bot() {
             monitor_log "❌ Bot restart failed - will retry next check"
         fi
     else
-        # Update health file to show monitoring is active
-        touch "$HEALTH_CHECK_FILE"
+        monitor_log "✅ Bot is healthy"
+        # Don't touch the health file - let the bot manage it
     fi
 }
 

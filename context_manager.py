@@ -204,7 +204,8 @@ class ShootyContext:
             'role_code': self.role_code,
             'game_name': self.game_name,
             'party_max_size': self.party_max_size,
-            'voice_channel_id': self.voice_channel_id
+            'voice_channel_id': self.voice_channel_id,
+            'current_st_message_id': self.current_st_message_id
         }
     
     @classmethod
@@ -215,6 +216,7 @@ class ShootyContext:
         context.game_name = data.get('game_name')
         context.party_max_size = data.get('party_max_size', DEFAULT_PARTY_SIZE)
         context.voice_channel_id = data.get('voice_channel_id')
+        context.current_st_message_id = data.get('current_st_message_id')
         return context
 
 
@@ -252,6 +254,7 @@ class ContextManager:
                 context.game_name = settings.get('game_name')
                 context.party_max_size = settings.get('party_max_size', DEFAULT_PARTY_SIZE)
                 context.voice_channel_id = settings.get('voice_channel_id')
+                context.current_st_message_id = settings.get('current_st_message_id')
                 logging.info(f"Loaded data for channel {channel_id} from database")
             else:
                 logging.debug(f"No existing settings found for channel {channel_id}")
@@ -268,7 +271,8 @@ class ContextManager:
                     context.role_code,
                     context.game_name,
                     context.party_max_size,
-                    context.voice_channel_id
+                    context.voice_channel_id,
+                    context.current_st_message_id
                 )
                 if success:
                     logging.info(f"Saved context for channel {channel_id} to database")
