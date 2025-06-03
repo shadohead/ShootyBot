@@ -94,6 +94,7 @@ class ShootyBot(commands.Bot):
                 logging.StreamHandler(sys.stdout),
                 logging.FileHandler("shooty_bot.log", encoding="utf-8"),
             ],
+            force=True,
         )
 
         # Reduce Discord.py logging verbosity
