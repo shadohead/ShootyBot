@@ -65,5 +65,4 @@ CHANNEL_DATA_FILE = os.path.join(DATA_DIR, "channel_data.json")
 # Special Characters
 DEFAULT_MSG = "‎"  # Invisible character for message formatting
 
-# Logging Configuration
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
