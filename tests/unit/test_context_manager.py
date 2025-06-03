@@ -45,8 +45,9 @@ class TestShootyContext:
         assert len(context.bot_ready_user_set) == 0
         
         # Restore state
-        context.restore_state()
-        
+        restored = context.restore_state()
+
+        assert restored is True
         assert user1 in context.bot_soloq_user_set
         assert user2 in context.bot_fullstack_user_set
         assert user1 in context.bot_ready_user_set
@@ -55,9 +56,10 @@ class TestShootyContext:
         """Test restore when no backup exists"""
         context = ShootyContext(12345)
         
-        # Should not raise exception
-        context.restore_state()
-        
+        # Should not raise exception and return False
+        restored = context.restore_state()
+
+        assert restored is False
         assert context._backup is None
     
     def test_reset_users(self):
