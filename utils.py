@@ -140,6 +140,62 @@ def format_channel_mention(channel_id: int) -> str:
     return f"<#{channel_id}>"
 
 
+def resolve_role(guild: discord.Guild, role_input: str) -> Optional[discord.Role]:
+    """Resolve a guild role from a mention, ID, or name."""
+    if not role_input:
+        return None
+
+    cleaned = role_input.strip()
+    role_id = None
+
+    if cleaned.startswith("<@&") and cleaned.endswith(">"):
+        try:
+            role_id = int(cleaned[3:-1])
+        except ValueError:
+            pass
+    elif cleaned.isdigit():
+        role_id = int(cleaned)
+
+    role: Optional[discord.Role] = None
+    if role_id is not None:
+        role = guild.get_role(role_id)
+
+    if role is None:
+        role = discord.utils.get(guild.roles, name=cleaned)
+
+    return role
+
+
+def resolve_voice_channel(
+    guild: discord.Guild, channel_input: str
+) -> Optional[discord.VoiceChannel]:
+    """Resolve a voice channel from a mention, ID, or name."""
+    if not channel_input:
+        return None
+
+    cleaned = channel_input.strip()
+    channel_id = None
+
+    if cleaned.startswith("<#") and cleaned.endswith(">"):
+        try:
+            channel_id = int(cleaned[2:-1])
+        except ValueError:
+            pass
+    elif cleaned.isdigit():
+        channel_id = int(cleaned)
+
+    channel = None
+    if channel_id is not None:
+        channel = guild.get_channel(channel_id)
+        if not isinstance(channel, discord.VoiceChannel):
+            channel = None
+
+    if channel is None:
+        channel = discord.utils.get(guild.voice_channels, name=cleaned)
+
+    return channel
+
+
 def safe_embed_field(embed: discord.Embed, name: str, value: str, inline: bool = True) -> None:
     """Add field to embed with length validation."""
     # Discord limits: name=256, value=1024

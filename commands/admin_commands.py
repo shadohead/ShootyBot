@@ -4,7 +4,11 @@ from discord.ext import commands
 from context_manager import context_manager
 from config import MESSAGES
 from base_commands import BaseCommandCog
-from utils import validate_discord_id
+from utils import (
+    validate_discord_id,
+    resolve_role,
+    resolve_voice_channel,
+)
 
 
 class AdminCommands(BaseCommandCog):
@@ -20,20 +24,17 @@ class AdminCommands(BaseCommandCog):
         try:
             channel_id = ctx.channel.id
             shooty_context = context_manager.get_context(channel_id)
-            
-            # Validate role mention format
-            if not (role_mention.startswith('<@&') and role_mention.endswith('>')):
-                # Try to find role by name if not a mention
-                role = discord.utils.get(ctx.guild.roles, name=role_mention)
-                if role:
-                    role_mention = f"<@&{role.id}>"
-                else:
-                    await self.send_error_embed(
-                        ctx,
-                        "Invalid Role",
-                        "Please provide a valid role mention (@role) or role name"
-                    )
-                    return
+
+            role = resolve_role(ctx.guild, role_mention)
+            if role is None:
+                await self.send_error_embed(
+                    ctx,
+                    "Invalid Role",
+                    "Please provide a valid role mention (@role), ID, or role name",
+                )
+                return
+
+            role_mention = role.mention
             
             old_role = shooty_context.role_code
             shooty_context.role_code = role_mention
@@ -141,27 +142,8 @@ class AdminCommands(BaseCommandCog):
                 self.logger.info(f"Cleared voice channel setting (was {old_voice_channel_id}) in channel {channel_id}")
                 return
             
-            # Parse voice channel input (can be mention, ID, or name)
-            voice_channel = None
-            voice_channel_input = voice_channel_input.strip()
-            
-            # Try to parse as channel mention (<#123456789>)
-            if voice_channel_input.startswith('<#') and voice_channel_input.endswith('>'):
-                try:
-                    voice_channel_id = int(voice_channel_input[2:-1])
-                    voice_channel = ctx.guild.get_channel(voice_channel_id)
-                except ValueError:
-                    pass
-            # Try to parse as channel ID
-            elif voice_channel_input.isdigit():
-                try:
-                    voice_channel_id = int(voice_channel_input)
-                    voice_channel = ctx.guild.get_channel(voice_channel_id)
-                except ValueError:
-                    pass
-            # Try to find by name
-            else:
-                voice_channel = discord.utils.get(ctx.guild.voice_channels, name=voice_channel_input)
+            # Resolve the voice channel from input
+            voice_channel = resolve_voice_channel(ctx.guild, voice_channel_input)
             
             if voice_channel is None:
                 await self.send_error_embed(
@@ -171,16 +153,8 @@ class AdminCommands(BaseCommandCog):
                 )
                 return
             
-            # Validate it's actually a voice channel
-            if not isinstance(voice_channel, discord.VoiceChannel):
-                await self.send_error_embed(
-                    ctx,
-                    "Invalid Channel Type",
-                    "The channel must be a voice channel, not a text channel"
-                )
-                return
             
-            # Validate voice channel is in the same guild
+            # Ensure channel belongs to this guild
             if voice_channel.guild != ctx.guild:
                 await self.send_error_embed(
                     ctx,
