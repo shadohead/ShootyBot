@@ -29,11 +29,15 @@ if [ ! -f ".env" ]; then
     exit 1
 fi
 
-# Check dependencies
-python3 -c "import discord; print('✅ Discord.py is installed')" || {
-    echo "❌ Dependencies missing. Run: pip install -r requirements.txt"
+# Install/update dependencies
+echo "📦 Checking and updating dependencies..."
+pip install -r requirements.txt --quiet --upgrade
+if [ $? -eq 0 ]; then
+    echo "✅ Dependencies are up to date"
+else
+    echo "❌ Failed to install dependencies"
     exit 1
-}
+fi
 
 echo "🚀 Starting bot..."
 echo "💡 Press Ctrl+C to stop the bot"

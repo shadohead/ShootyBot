@@ -118,6 +118,17 @@ start_bot() {
     pkill -f "python.*bot.py" 2>/dev/null
     sleep 2
     
+    # Update dependencies before starting
+    monitor_log "📦 Updating dependencies..."
+    if [ -f "venv/bin/activate" ]; then
+        source venv/bin/activate && pip install -r requirements.txt --quiet --upgrade
+        if [ $? -eq 0 ]; then
+            monitor_log "✅ Dependencies updated"
+        else
+            monitor_log "⚠️ Failed to update some dependencies, continuing anyway..."
+        fi
+    fi
+    
     # Start new instance
     screen -dmS ${SCREEN_NAME} ./run.sh
     sleep 3
