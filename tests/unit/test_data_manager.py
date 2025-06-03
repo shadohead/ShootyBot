@@ -496,7 +496,7 @@ class TestDataManager:
         assert session.started_by == 123456789
         assert session.game_name == "Valorant"
         assert session.session_id in manager.sessions
-        assert session.session_id.startswith("111222333_")
+        assert len(session.session_id) == 36  # UUID4 length
     
     @patch('data_manager.os.makedirs')
     @patch('data_manager.json.dump')
