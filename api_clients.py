@@ -141,20 +141,6 @@ class BaseAPIClient(ABC):
         """Get data from cache."""
         return self._cache.get(cache_key)
     
-    def _get_cache_if_valid(self, cache_key: str, ttl_seconds: int = 300) -> Optional[Any]:
-        """Get cached data if still valid, combining validation and retrieval."""
-        if cache_key not in self._cache_ttl:
-            return None
-        
-        expiry = self._cache_ttl[cache_key] + timedelta(seconds=ttl_seconds)
-        if datetime.utcnow() >= expiry:
-            # Clean up expired entry
-            self._cache.pop(cache_key, None)
-            self._cache_ttl.pop(cache_key, None)
-            return None
-        
-        return self._cache.get(cache_key)
-    
     def _clear_expired_cache(self) -> None:
         """Clear expired cache entries."""
         now = datetime.utcnow()
@@ -197,10 +183,10 @@ class BaseAPIClient(ABC):
         """Make HTTP request with rate limiting and caching."""
         await self._ensure_session()
         
-        # Check cache first with single lookup
+        # Check cache first
         cache_key = self._get_cache_key(endpoint, params)
-        if use_cache:
-            cached_data = self._get_cache_if_valid(cache_key, cache_ttl)
+        if use_cache and self._is_cache_valid(cache_key, cache_ttl):
+            cached_data = self._get_cache(cache_key)
             if cached_data is not None:
                 return APIResponse(
                     data=cached_data,

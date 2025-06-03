@@ -315,13 +315,8 @@ class DatabaseManager:
             try:
                 now = datetime.now(timezone.utc).isoformat()
                 
-                # Ensure user exists (inline to avoid nested connection)
-                conn.execute("""
-                    INSERT INTO users (discord_id, last_updated)
-                    VALUES (?, ?)
-                    ON CONFLICT(discord_id) DO UPDATE SET
-                        last_updated = ?
-                """, (discord_id, now, now))
+                # Ensure user exists
+                self.create_or_update_user(discord_id)
                 
                 # If setting as primary, unmark other primary accounts
                 if set_primary:
@@ -339,6 +334,11 @@ class DatabaseManager:
                         puuid = ?,
                         is_primary = ?
                 """, (discord_id, username, tag, puuid, set_primary, now, puuid, set_primary))
+                
+                # Update user last_updated
+                conn.execute("""
+                    UPDATE users SET last_updated = ? WHERE discord_id = ?
+                """, (now, discord_id))
                 
                 conn.commit()
                 return True

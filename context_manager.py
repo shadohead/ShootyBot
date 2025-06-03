@@ -167,29 +167,35 @@ class ShootyContext:
     
     def get_user_list_string(self) -> str:
         """Get formatted string of all users"""
+        result_string = ""
         all_users_set = self.bot_soloq_user_set.union(self.bot_fullstack_user_set)
         
-        formatted_users = []
-        for user in all_users_set:
+        for index, user in enumerate(all_users_set):
             if user in self.bot_fullstack_user_set and user not in self.bot_soloq_user_set:
-                formatted_users.append(f"*{self.bold_readied_user(user)}*")
+                result_string += f"*{self.bold_readied_user(user)}*"
             else:
-                formatted_users.append(self.bold_readied_user(user))
+                result_string += self.bold_readied_user(user)
+            
+            if index < len(all_users_set) - 1:
+                result_string += ", "
         
-        return ", ".join(formatted_users)
+        return result_string
     
     def get_user_list_string_with_hashtag(self) -> str:
         """Get formatted string of all users with hashtags"""
+        result_string = ""
         all_users_set = self.bot_soloq_user_set.union(self.bot_fullstack_user_set)
         
-        formatted_users = []
-        for user in all_users_set:
+        for index, user in enumerate(all_users_set):
             if user in self.bot_fullstack_user_set and user not in self.bot_soloq_user_set:
-                formatted_users.append(f"*{self.bold_readied_user(user, True)}*")
+                result_string += f"*{self.bold_readied_user(user, True)}*"
             else:
-                formatted_users.append(self.bold_readied_user(user, True))
+                result_string += self.bold_readied_user(user, True)
+            
+            if index < len(all_users_set) - 1:
+                result_string += ", "
         
-        return ", ".join(formatted_users)
+        return result_string
     
     # Persistence methods
     def to_dict(self) -> Dict[str, Any]:
