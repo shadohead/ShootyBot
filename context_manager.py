@@ -44,14 +44,20 @@ class ShootyContext:
         logging.info(f"Backed up state for channel {self.channel_id}")
     
     def restore_state(self) -> bool:
-        """Restore from backup"""
+        """Restore from backup.
+
+        Returns ``True`` if a backup was available and restored, ``False``
+        otherwise.
+        """
         if self._backup:
             self.bot_soloq_user_set = self._backup['soloq']
             self.bot_fullstack_user_set = self._backup['fullstack']
             self.bot_ready_user_set = self._backup['ready']
             logging.info(f"Restored state for channel {self.channel_id}")
+            return True
         else:
             logging.warning(f"No backup available for channel {self.channel_id}")
+            return False
     
     def reset_users(self) -> None:
         """Clear all user sets"""

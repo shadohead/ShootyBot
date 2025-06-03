@@ -10,6 +10,7 @@ from freezegun import freeze_time
 pytestmark = pytest.mark.skip("Module refactored - tests need updating for new inheritance structure")
 
 from data_manager import UserData, SessionData, DataManager
+from database import database_manager
 
 
 class TestUserData:
