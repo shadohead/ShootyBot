@@ -336,6 +336,26 @@ class ShootyBot(commands.Bot):
 
 async def main() -> None:
     """Main bot startup function."""
+    # Check for existing bot instances
+    import psutil
+    import os
+    current_pid = os.getpid()
+    
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            # Skip current process
+            if proc.info['pid'] == current_pid:
+                continue
+                
+            # Check if it's a Python process running bot.py
+            if proc.info['name'] and 'python' in proc.info['name'].lower():
+                if proc.info['cmdline'] and any('bot.py' in arg for arg in proc.info['cmdline']):
+                    print(f"\n⚠️  Another bot instance is already running (PID: {proc.info['pid']})")
+                    print("Run './run_python_script.sh --start' to restart the bot properly")
+                    sys.exit(1)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    
     bot = ShootyBot()
     bot.setup_logging()
 

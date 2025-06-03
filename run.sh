@@ -4,6 +4,16 @@
 echo "🤖 Starting ShootyBot..."
 echo "📂 Working directory: $(pwd)"
 
+# Check for existing bot instances
+existing_pids=$(pgrep -f "python.*bot.py" 2>/dev/null)
+if [ ! -z "$existing_pids" ]; then
+    echo "⚠️  Found existing bot instance(s) with PID(s): $existing_pids"
+    echo "🛑 Stopping existing instances..."
+    pkill -f "python.*bot.py" 2>/dev/null
+    sleep 2
+    echo "✅ Existing instances stopped"
+fi
+
 # Activate virtual environment
 if [ -f "venv/bin/activate" ]; then
     source venv/bin/activate

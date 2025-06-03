@@ -114,6 +114,10 @@ start_bot() {
         sleep 3
     fi
     
+    # Kill any lingering Python bot processes
+    pkill -f "python.*bot.py" 2>/dev/null
+    sleep 2
+    
     # Start new instance
     screen -dmS ${SCREEN_NAME} ./run.sh
     sleep 3
