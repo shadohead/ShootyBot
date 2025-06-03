@@ -9,6 +9,7 @@ import discord
 import sqlite3
 from filelock import FileLock
 import asyncio
+import time
 from functools import wraps
 
 
@@ -196,14 +197,16 @@ def execute_with_retry(func: Callable, max_retries: int = 3, delay: float = 0.1)
             if "database is locked" in str(e) and attempt < max_retries - 1:
                 wait_time = delay * (2 ** attempt)
                 logging.warning(f"Database locked, retrying in {wait_time}s...")
-                asyncio.sleep(wait_time)
+                # Blocking sleep since this helper is synchronous
+                time.sleep(wait_time)
             else:
                 raise
         except Exception as e:
             last_error = e
             if attempt < max_retries - 1:
                 logging.warning(f"Attempt {attempt + 1} failed: {e}, retrying...")
-                asyncio.sleep(delay)
+                # Blocking sleep between generic failures
+                time.sleep(delay)
             else:
                 raise
     
