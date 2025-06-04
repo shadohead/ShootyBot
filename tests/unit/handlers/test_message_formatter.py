@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import Mock, patch
+from context_manager import ShootyContext
 import sys
 import os
 
@@ -80,7 +81,7 @@ class TestPartyStatusMessage:
     @pytest.fixture
     def mock_user_sets(self):
         """Create a mock ShootyContext object"""
-        user_sets = Mock()
+        user_sets = Mock(spec=ShootyContext)
         user_sets.role_code = "<@&123456789>"
         user_sets.get_party_max_size.return_value = 5
         user_sets.get_user_list_string.return_value = "TestUser1, TestUser2"

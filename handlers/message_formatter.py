@@ -1,4 +1,5 @@
-from typing import Optional, List, Set
+from typing import Optional, List
+from context_manager import ShootyContext
 from config import *
 
 def get_ping_shooty_message(role_code: Optional[str]) -> str:
@@ -24,7 +25,7 @@ def italics(text: str) -> str:
     """Make text italic for Discord"""
     return f"*{text}*"
 
-def party_status_message(is_ping: bool, user_sets: Set[str]) -> str:
+def party_status_message(is_ping: bool, user_sets: ShootyContext) -> str:
     """
     Generate the party status message
     
