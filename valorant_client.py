@@ -161,9 +161,20 @@ class ValorantClient(BaseAPIClient):
         """Unlink a Discord user's Valorant account"""
         try:
             user_data = data_manager.get_user(discord_id)
+
+            # Remove all linked accounts from the database
+            for account in user_data.get_all_accounts():
+                database_manager.remove_valorant_account(
+                    discord_id,
+                    account.get("username"),
+                    account.get("tag"),
+                )
+
+            # Clear cached compatibility fields
             user_data.valorant_username = None
             user_data.valorant_tag = None
             user_data.valorant_puuid = None
+
             data_manager.save_user(discord_id)
             return True
         except Exception as e:
