@@ -2,6 +2,7 @@ import logging
 import json
 import os
 from datetime import datetime, timezone
+import uuid
 from typing import Dict, List, Optional, Any
 from filelock import FileLock
 from config import DATA_DIR
@@ -471,7 +472,7 @@ class DataManager(DatabaseBackedManager[UserData]):
     
     def create_session(self, channel_id: int, started_by: int, game_name: str = None) -> SessionData:
         """Create a new session"""
-        session_id = f"{channel_id}_{int(datetime.now(timezone.utc).timestamp())}"
+        session_id = str(uuid.uuid4())
         session = SessionData(session_id, channel_id, started_by)
         
         # Update game name if provided
