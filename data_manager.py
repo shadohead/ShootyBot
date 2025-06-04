@@ -282,9 +282,16 @@ class SessionData(StatefulModel):
                 if len(self.participants) >= self.party_size:
                     self.was_full = True
     
-    def end_session(self):
-        """End the session and calculate duration"""
-        self.state = 'completed'  # Update state
+    def end_session(self, final_state: str = 'completed'):
+        """End the session and calculate duration
+
+        Parameters
+        ----------
+        final_state: str, optional
+            The state to mark the session with once ended. Defaults to
+            ``'completed'``.
+        """
+        self.state = final_state  # Update state
         success = database_manager.end_session(self.session_id, self.was_full)
         if success:
             # Refresh data from database
@@ -294,10 +301,9 @@ class SessionData(StatefulModel):
                 self.duration_minutes = session_data['duration_minutes']
     
     def cancel_session(self):
-        """Cancel the session"""
-        self.state = 'cancelled'
-        # You might want to call end_session here as well
-        self.end_session()
+        """Cancel the session while recording its duration."""
+        # Reuse end_session logic but keep the cancelled state
+        self.end_session(final_state='cancelled')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for compatibility"""
