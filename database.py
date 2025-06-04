@@ -1003,14 +1003,15 @@ class DatabaseManager:
                 
                 deleted = conn.execute("""
                     DELETE FROM henrik_matches WHERE match_id IN (
-                        SELECT match_id FROM henrik_matches 
-                        ORDER BY last_accessed ASC 
+                        SELECT match_id FROM henrik_matches
+                        ORDER BY last_accessed ASC
                         LIMIT (SELECT COUNT(*) / 4 FROM henrik_matches)
                     )
                 """).rowcount
-                
+
                 if deleted > 0:
                     logging.info(f"Cleaned up {deleted} old match entries (size limit exceeded)")
+                    conn.commit()
                     
         except Exception as e:
             logging.error(f"Error during match cleanup: {e}")
@@ -1024,14 +1025,15 @@ class DatabaseManager:
             if total_size_mb > max_size_mb:
                 deleted = conn.execute("""
                     DELETE FROM henrik_player_stats WHERE stats_key IN (
-                        SELECT stats_key FROM henrik_player_stats 
-                        ORDER BY last_accessed ASC 
+                        SELECT stats_key FROM henrik_player_stats
+                        ORDER BY last_accessed ASC
                         LIMIT (SELECT COUNT(*) / 4 FROM henrik_player_stats)
                     )
                 """).rowcount
-                
+
                 if deleted > 0:
                     logging.info(f"Cleaned up {deleted} old player stats entries (size limit exceeded)")
+                    conn.commit()
                     
         except Exception as e:
             logging.error(f"Error during player stats cleanup: {e}")
@@ -1045,14 +1047,15 @@ class DatabaseManager:
             if total_size_mb > max_size_mb:
                 deleted = conn.execute("""
                     DELETE FROM henrik_accounts WHERE account_key IN (
-                        SELECT account_key FROM henrik_accounts 
-                        ORDER BY last_accessed ASC 
+                        SELECT account_key FROM henrik_accounts
+                        ORDER BY last_accessed ASC
                         LIMIT (SELECT COUNT(*) / 4 FROM henrik_accounts)
                     )
                 """).rowcount
-                
+
                 if deleted > 0:
                     logging.info(f"Cleaned up {deleted} old account entries (size limit exceeded)")
+                    conn.commit()
                     
         except Exception as e:
             logging.error(f"Error during account cleanup: {e}")
