@@ -1,0 +1,12 @@
+# Example systemd service to check ShootyBot updates
+# Copy to /etc/systemd/system/shootybot-update.service and replace <PATH_TO_SHOOTYBOT> and <BOT_USER>
+
+[Unit]
+Description=ShootyBot Daily Update Check
+
+[Service]
+Type=oneshot
+WorkingDirectory=<PATH_TO_SHOOTYBOT>
+ExecStart=<PATH_TO_SHOOTYBOT>/run_python_script.sh --force-update
+User=<BOT_USER>
+Environment=PYTHONUNBUFFERED=1

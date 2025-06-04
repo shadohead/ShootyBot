@@ -78,29 +78,28 @@ apply_updates() {
 
 # Function to check if bot is healthy
 is_bot_healthy() {
-    # Check if screen session exists
-    if ! screen -list | grep -q "${SCREEN_NAME}"; then
-        return 1  # Bot not running
+    # Verify a python process is running for the bot
+    if ! pgrep -f "python.*bot.py" >/dev/null; then
+        return 1  # Bot process not found
     fi
-    
-    # Check if health file is recent (updated within last 5 minutes)
+
+    # If health file exists, ensure it's been updated recently
     if [ -f "$HEALTH_CHECK_FILE" ]; then
-        local last_health=$(stat -f %m "$HEALTH_CHECK_FILE" 2>/dev/null || stat -c %Y "$HEALTH_CHECK_FILE" 2>/dev/null || echo "0")
+        local last_health=$(stat -c %Y "$HEALTH_CHECK_FILE" 2>/dev/null || echo "0")
         local current_time=$(date +%s)
         if [[ "$last_health" =~ ^[0-9]+$ ]]; then
             local time_diff=$((current_time - last_health))
-        else
-            return 1  # Invalid timestamp
-        fi
-        
-        if [ $time_diff -gt 600 ]; then  # 10 minutes (more generous timeout)
-            return 1  # Health check is stale
+            # Allow up to 15 minutes before considering the bot unhealthy
+            if [ $time_diff -gt 900 ]; then
+                monitor_log "Health check file stale ($time_diff s)"
+                return 1
+            fi
         fi
     else
-        return 1  # No health file
+        monitor_log "Health check file missing but process running"
     fi
-    
-    return 0  # Bot is healthy
+
+    return 0
 }
 
 # Function to start the bot

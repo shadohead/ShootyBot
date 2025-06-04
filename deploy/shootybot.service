@@ -1,0 +1,18 @@
+# Example systemd service for ShootyBot
+# Copy to /etc/systemd/system/shootybot.service and replace <PATH_TO_SHOOTYBOT> and <BOT_USER>
+
+[Unit]
+Description=ShootyBot Discord Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=<PATH_TO_SHOOTYBOT>
+ExecStart=<PATH_TO_SHOOTYBOT>/run.sh
+Restart=on-failure
+RestartSec=10
+User=<BOT_USER>
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

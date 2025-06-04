@@ -1,0 +1,11 @@
+# Timer to run the ShootyBot update check daily at 5 AM
+
+[Unit]
+Description=Run ShootyBot update check daily
+
+[Timer]
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
