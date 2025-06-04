@@ -3,6 +3,9 @@
 Test tracker.gg URL generation for Valorant profiles
 """
 import unittest
+import pytest
+
+pytestmark = pytest.mark.integration
 
 class TestTrackerURLGeneration(unittest.TestCase):
     """Test that tracker.gg URLs are generated correctly"""

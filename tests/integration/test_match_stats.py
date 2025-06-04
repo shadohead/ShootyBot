@@ -7,7 +7,10 @@ import unittest
 import json
 import requests
 import os
+import pytest
 from calculate_match_stats import get_match_data, calculate_stats
+
+pytestmark = pytest.mark.integration
 
 class TestMatchStatsAccuracy(unittest.TestCase):
     """Test that our calculated stats match tracker.gg exactly"""
