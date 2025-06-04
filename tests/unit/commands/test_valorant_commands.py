@@ -188,5 +188,29 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
         # Verify command completed without error
         self.assertTrue(True)
 
+    @patch('valorant_client.database_manager.remove_valorant_account')
+    @patch('valorant_client.data_manager')
+    async def test_unlink_account_removes_database_rows(self, mock_data_manager, mock_remove_account):
+        """Unlinking should remove all Valorant accounts from the database"""
+
+        # Mock user with two linked accounts
+        mock_user = MagicMock()
+        mock_user.get_all_accounts.return_value = [
+            {'username': 'Player1', 'tag': 'NA1'},
+            {'username': 'Player2', 'tag': 'EU1'}
+        ]
+        mock_data_manager.get_user.return_value = mock_user
+
+        from valorant_client import ValorantClient
+        client = ValorantClient()
+
+        result = await client.unlink_account(1111)
+
+        self.assertTrue(result)
+        self.assertEqual(mock_remove_account.call_count, 2)
+        mock_remove_account.assert_any_call(1111, 'Player1', 'NA1')
+        mock_remove_account.assert_any_call(1111, 'Player2', 'EU1')
+        mock_data_manager.save_user.assert_called_once_with(1111)
+
 if __name__ == '__main__':
     unittest.main()
