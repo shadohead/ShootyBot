@@ -10,6 +10,9 @@ import sqlite3
 import os
 import tempfile
 from datetime import datetime, timezone
+import pytest
+
+pytestmark = pytest.mark.integration
 
 def test_basic_database():
     """Test basic database operations quickly"""

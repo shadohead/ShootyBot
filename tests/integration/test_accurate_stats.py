@@ -5,9 +5,12 @@ Test the accurate stats calculation implementation in valorant_client.py
 import unittest
 import sys
 import os
+import pytest
 
 # Add the project root to the path so we can import our modules
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+pytestmark = pytest.mark.integration
 
 class TestAccurateStatsIntegration(unittest.TestCase):
     """Test that the accurate stats calculation is properly integrated"""
