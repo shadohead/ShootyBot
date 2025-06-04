@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 from valorant_client import valorant_client
 import random
-from utils import log_error, format_time_ago
+from utils import log_error, format_time_ago, parse_henrik_timestamp
 from context_manager import context_manager
 from database import database_manager
 
@@ -158,13 +158,12 @@ class MatchTracker:
                     
                     # Skip old matches
                     started_at = latest_match.get('metadata', {}).get('game_start', '')
-                    if started_at:
-                        try:
-                            match_time = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
-                            if match_time < cutoff_time:
-                                continue
-                        except:
+                    match_time = parse_henrik_timestamp(started_at)
+                    if match_time:
+                        if match_time < cutoff_time:
                             continue
+                    else:
+                        continue
                     
                     # Skip if match is not completed
                     if not latest_match.get('metadata', {}).get('game_length', 0):
@@ -269,13 +268,8 @@ class MatchTracker:
             duration_str = "Unknown"
         
         # Parse match start time
-        match_timestamp = None
-        if game_start:
-            try:
-                match_timestamp = datetime.fromisoformat(game_start.replace('Z', '+00:00'))
-            except:
-                match_timestamp = datetime.now(timezone.utc)
-        else:
+        match_timestamp = parse_henrik_timestamp(game_start)
+        if match_timestamp is None:
             match_timestamp = datetime.now(timezone.utc)
         
         # Calculate relative time
@@ -704,16 +698,10 @@ class MatchTracker:
     
     async def _update_stack_activity(self, guild: discord.Guild, discord_members_in_match: List[Dict], match_data: Dict[str, Any]) -> None:
         """Update stack activity tracking when matches are found"""
-        match_timestamp = None
-        
         # Get match timestamp
         started_at = match_data.get('metadata', {}).get('game_start', '')
-        if started_at:
-            try:
-                match_timestamp = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
-            except:
-                match_timestamp = datetime.now(timezone.utc)
-        else:
+        match_timestamp = parse_henrik_timestamp(started_at)
+        if match_timestamp is None:
             match_timestamp = datetime.now(timezone.utc)
         
         # Find which channels have these members in their stacks

@@ -48,6 +48,27 @@ def format_time_ago(dt: datetime) -> str:
         return "just now"
 
 
+def parse_henrik_timestamp(value: Any) -> Optional[datetime]:
+    """Parse a Henrik API timestamp which may be ISO8601 or UNIX epoch."""
+    if value is None or value == "":
+        return None
+
+    try:
+        # If numeric (or numeric string), treat as epoch seconds or ms
+        if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
+            ts = float(value)
+            if ts > 1e12:  # likely milliseconds
+                ts /= 1000.0
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+        if isinstance(value, str):
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception as e:
+        logging.debug(f"Failed to parse timestamp {value}: {e}")
+
+    return None
+
+
 # File/Directory Utilities
 def ensure_directory_exists(path: str) -> None:
     """Ensure directory exists, create if it doesn't."""
