@@ -11,7 +11,9 @@ from calculate_match_stats import get_match_data, calculate_stats
 
 def analyze_kast_differences():
     match_id = "dae1b62d-c3dd-4663-9131-2771c7f66b5a"
-    api_key = "HDEV-8dad4f6e-ec7b-425c-a34f-74895abdbf19"
+    # Get the Henrik API key from the environment. Create a `.env` file or
+    # export HENRIK_API_KEY before running this script.
+    api_key = os.getenv("HENRIK_API_KEY")
     
     match_data = get_match_data(match_id, api_key)
     calculated_stats = calculate_stats(match_data)
