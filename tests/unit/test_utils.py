@@ -1,7 +1,8 @@
 import pytest
 from unittest.mock import Mock
 
-from utils import resolve_role, resolve_voice_channel
+from utils import resolve_role, resolve_voice_channel, parse_henrik_timestamp
+from datetime import timezone
 
 
 def _mock_guild():
@@ -45,3 +46,24 @@ def test_resolve_voice_channel_by_name():
     vc.name = "General"
     guild.voice_channels = [vc]
     assert resolve_voice_channel(guild, "General") is vc
+
+
+def test_parse_henrik_timestamp_iso():
+    ts = "2024-01-01T00:00:00Z"
+    dt = parse_henrik_timestamp(ts)
+    assert dt.year == 2024
+    assert dt.tzinfo == timezone.utc
+
+
+def test_parse_henrik_timestamp_epoch_ms():
+    ts_ms = 1609459200000  # 2021-01-01T00:00:00Z
+    dt = parse_henrik_timestamp(ts_ms)
+    assert dt.year == 2021
+    assert dt.tzinfo == timezone.utc
+
+
+def test_parse_henrik_timestamp_epoch_s_string():
+    ts_s = "1609459200"  # 2021-01-01T00:00:00Z
+    dt = parse_henrik_timestamp(ts_s)
+    assert dt.year == 2021
+    assert dt.tzinfo == timezone.utc
