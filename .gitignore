@@ -63,3 +63,7 @@ coverage.xml
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Local data files
+match_rounds.json
+tracker_image.jpeg
