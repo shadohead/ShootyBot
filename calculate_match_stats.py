@@ -224,7 +224,9 @@ def calculate_stats(match_data):
 def main():
     # Configuration
     match_id = "dae1b62d-c3dd-4663-9131-2771c7f66b5a"
-    api_key = os.getenv("HENRIK_API_KEY", "HDEV-8dad4f6e-ec7b-425c-a34f-74895abdbf19")
+    # Pull the Henrik API key from the environment. Populate HENRIK_API_KEY via
+    # a `.env` file or export it before running this script.
+    api_key = os.getenv("HENRIK_API_KEY")
     
     try:
         print(f"Fetching match data for {match_id}...")

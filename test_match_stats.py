@@ -16,7 +16,9 @@ class TestMatchStatsAccuracy(unittest.TestCase):
     def setUpClass(cls):
         """Load match data once for all tests"""
         cls.match_id = "dae1b62d-c3dd-4663-9131-2771c7f66b5a"
-        cls.api_key = os.getenv("HENRIK_API_KEY", "HDEV-8dad4f6e-ec7b-425c-a34f-74895abdbf19")
+        # API key is read from the environment. Set HENRIK_API_KEY in your
+        # environment or `.env` file for tests that require it.
+        cls.api_key = os.getenv("HENRIK_API_KEY")
         
         # Expected values from tracker.gg
         cls.expected_stats = {
