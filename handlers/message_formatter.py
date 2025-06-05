@@ -3,11 +3,11 @@ from context_manager import ShootyContext
 from config import *
 
 def get_ping_shooty_message(role_code: Optional[str]) -> str:
-    """Get the initial ping message for starting a session"""
-    if role_code is None:
+    """Get the initial ping message for starting a session."""
+    if not role_code or not role_code.strip():
         return MESSAGES["NO_ROLE"]
-    else:
-        return f"{DEFAULT_MSG}{role_code}"
+
+    return f"{DEFAULT_MSG}{role_code}"
 
 def get_kicked_user_message(kicked_usernames_list: List[str]) -> str:
     """Get message for kicked users"""
