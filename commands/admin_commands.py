@@ -38,6 +38,7 @@ class AdminCommands(BaseCommandCog):
             
             old_role = shooty_context.role_code
             shooty_context.role_code = role_mention
+            shooty_context.channel = ctx.channel
             
             # Save the context
             context_manager.save_context(channel_id)
