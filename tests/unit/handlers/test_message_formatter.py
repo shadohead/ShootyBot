@@ -31,6 +31,12 @@ class TestMessageFormatterHelpers:
         result = get_ping_shooty_message(None)
         expected = "First set the role for the bot to ping with ```$stsr <Role>```"
         assert result == expected
+
+    def test_get_ping_shooty_message_blank_role(self):
+        """Test ping message when role code is blank"""
+        result = get_ping_shooty_message("")
+        expected = "First set the role for the bot to ping with ```$stsr <Role>```"
+        assert result == expected
     
     def test_get_kicked_user_message_single_user(self):
         """Test kicked user message with single user"""
