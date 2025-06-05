@@ -220,26 +220,39 @@ class MatchTracker:
         return discord_members
     
     async def _send_match_results(self, guild: discord.Guild, match: Dict[str, Any], discord_members: List[Dict[str, Any]]) -> None:
-        """Send match results to the server"""
-        # Find an appropriate channel (look for general, valorant, or any text channel)
-        channel = None
-        for ch in guild.text_channels:
-            if ch.name.lower() in ['general', 'valorant', 'gaming', 'shooty']:
-                channel = ch
-                break
-        
-        if not channel:
-            # Use first available text channel
-            channel = guild.text_channels[0] if guild.text_channels else None
-        
-        if not channel:
+        """Send match results to relevant stack channels"""
+
+        target_channels = []
+
+        # Determine which channels have these members queued
+        for channel in guild.text_channels:
+            context = context_manager.get_context(channel.id)
+            all_stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
+            if not all_stack_users:
+                continue
+
+            participants = [dm for dm in discord_members if dm['member'] in all_stack_users]
+            if len(participants) >= self.MIN_DISCORD_MEMBERS:
+                target_channels.append(channel)
+
+        # Fallback to a general channel if none matched
+        if not target_channels:
+            for ch in guild.text_channels:
+                if ch.name.lower() in ['general', 'valorant', 'gaming', 'shooty']:
+                    target_channels.append(ch)
+                    break
+
+        if not target_channels and guild.text_channels:
+            target_channels.append(guild.text_channels[0])
+
+        if not target_channels:
             return
-        
+
         try:
-            # Calculate fun stats and create embed
             embed = await self._create_match_embed(match, discord_members)
-            await channel.send(embed=embed)
-            
+            for ch in target_channels:
+                await ch.send(embed=embed)
+
         except Exception as e:
             log_error("sending match results", e)
     
