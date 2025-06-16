@@ -672,9 +672,20 @@ class ValorantClient(BaseAPIClient):
                             round_assists[puuid] += 1
                             break
             
-            # Multi-kills - CRITICAL: tracker.gg only counts 3+ kill rounds as multi-kills
-            if round_kills[player_puuid] >= 3:
+            # Multi-kills - record exact kill counts from round data
+            kills_in_round = round_kills[player_puuid]
+
+            if kills_in_round >= 5:
+                stats['multikills']['5k'] += 1
                 match_multi_kills += 1
+            elif kills_in_round == 4:
+                stats['multikills']['4k'] += 1
+                match_multi_kills += 1
+            elif kills_in_round == 3:
+                stats['multikills']['3k'] += 1
+                match_multi_kills += 1
+            elif kills_in_round == 2:
+                stats['multikills']['2k'] += 1
             
             # Determine first kill and first death
             if all_kill_events:
@@ -751,7 +762,8 @@ class ValorantClient(BaseAPIClient):
         stats['kast_rounds'] += match_kast_rounds
         stats['first_bloods'] += match_first_kills
         stats['first_deaths'] += match_first_deaths
-        stats['multikills']['3k'] += match_multi_kills  # All 3+ kill rounds count as one type
+        # match_multi_kills tracks total 3+ kill rounds for reference but
+        # individual multikill counts were already recorded above
         stats['rounds_survived'] += match_rounds_survived
     
     def _calculate_match_advanced_stats(self, match: Dict[str, Any], player_data: Dict[str, Any], stats: Dict[str, Any], rounds_played: int, match_won: bool):
