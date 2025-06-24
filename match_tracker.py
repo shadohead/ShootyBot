@@ -324,20 +324,21 @@ class MatchTracker:
         # Add Discord members who played
         member_list = []
         stack_result = ""
-        
+        team_color = None
+        team_won = False
+
         for dm in discord_members:
             member = dm['member']
             player_data = dm['player_data']
             stats = player_data.get('stats', {})
-            
+
             # Determine stack result (same for all players since they're together)
             if not stack_result:
                 team_color = player_data.get('team', '').lower()
-                team_won = False
                 if teams and team_color in teams:
                     team_won = teams[team_color].get('has_won', False)
                 stack_result = "🏆 WON" if team_won else "❌ LOST"
-            
+
             kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
             member_list.append(f"• **{member.display_name}**: {kda}")
         
@@ -372,12 +373,41 @@ class MatchTracker:
                     value="**INCREDIBLE GAME!** 🎆 Outstanding teamwork!",
                     inline=False
                 )
+
             elif total_kills >= 25:
                 embed.add_field(
                     name="💪 Match Rating",
                     value="**SOLID MATCH!** 🎉 Good coordination!",
                     inline=False
                 )
+
+        # Add humorous roast if the stack lost badly
+        if not team_won:
+            my_rounds = teams.get(team_color, {}).get('rounds_won', 0) if teams else 0
+            opponent_rounds = 0
+            if teams:
+                for color, data in teams.items():
+                    if color != team_color:
+                        opponent_rounds = data.get('rounds_won', 0)
+                        break
+
+            total_kills = sum(dm['player_data'].get('stats', {}).get('kills', 0) for dm in discord_members)
+            total_deaths = sum(dm['player_data'].get('stats', {}).get('deaths', 0) for dm in discord_members)
+            total_assists = sum(dm['player_data'].get('stats', {}).get('assists', 0) for dm in discord_members)
+            team_kda = (total_kills + total_assists) / max(total_deaths, 1)
+
+            roast_lines = [f"Score {my_rounds}-{opponent_rounds}."]
+            if team_kda < 1.0:
+                roast_lines.append(f"Team KDA {team_kda:.2f} - rough outing!")
+            if opponent_rounds - my_rounds >= 5:
+                roast_lines.append("Got steamrolled harder than a bronze lobby!")
+            roast_lines.append("Better luck next time! 😂")
+
+            embed.add_field(
+                name="😅 Tough Loss",
+                value="\n".join(roast_lines),
+                inline=False,
+            )
         
         embed.set_footer(text="🔍 Auto-detected from shooty stack • ShootyBot tracking your epic moments!")
         return embed
