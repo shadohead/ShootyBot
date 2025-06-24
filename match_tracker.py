@@ -397,11 +397,8 @@ class MatchTracker:
             team_kda = (total_kills + total_assists) / max(total_deaths, 1)
 
             roast_lines = [f"Score {my_rounds}-{opponent_rounds}."]
-            if team_kda < 1.0:
-                roast_lines.append(f"Team KDA {team_kda:.2f} - rough outing!")
-            if opponent_rounds - my_rounds >= 5:
-                roast_lines.append("Got steamrolled harder than a bronze lobby!")
-            roast_lines.append("Better luck next time! 😂")
+            roast_lines.append("Warm up game 🔥")
+            roast_lines.append("Can't end it on that one 😅")
 
             embed.add_field(
                 name="😅 Tough Loss",
