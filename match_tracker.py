@@ -811,17 +811,10 @@ class MatchTracker:
             if channel.id in self.stack_has_played:
                 del self.stack_has_played[channel.id]
             
-            # Send notification message
-            hours = int(inactivity_duration.total_seconds() // 3600)
-            minutes = int((inactivity_duration.total_seconds() % 3600) // 60)
-            
-            auto_end_message = (
-                f"🤖 **Auto-ended inactive stack** after {hours}h {minutes}m of no games detected.\n"
-                f"Start a new session with `/st` when you're ready to play again!"
+            # Silently end the stack and log the action
+            logging.info(
+                f"Auto-ended inactive stack in channel {channel.id} after {inactivity_duration}"
             )
-            
-            await channel.send(auto_end_message)
-            logging.info(f"Auto-ended inactive stack in channel {channel.id} after {inactivity_duration}")
             
         except Exception as e:
             log_error(f"auto-ending stack in channel {channel.id}", e)
