@@ -422,13 +422,18 @@ class MatchTracker:
         
         # Collect player stats
         player_stats = []
+        puuid_to_member = {}
         for dm in discord_members:
             member = dm['member']
             player_data = dm['player_data']
             pstats = player_data.get('stats', {})
-            
+            puuid = dm.get('account', {}).get('puuid') or player_data.get('puuid')
+
+            puuid_to_member[puuid] = member
+
             player_stats.append({
                 'member': member,
+                'puuid': puuid,
                 'kills': pstats.get('kills', 0),
                 'deaths': pstats.get('deaths', 0),
                 'assists': pstats.get('assists', 0),
@@ -441,6 +446,23 @@ class MatchTracker:
                 'agent': player_data.get('character', 'Unknown')
             })
         
+        # Gather multikill counts from round data
+        mk_counts = {puuid: {'2k': 0, '3k': 0, '4k': 0, '5k': 0} for puuid in puuid_to_member}
+
+        for round_data in match_data.get('rounds', []):
+            for ps in round_data.get('player_stats', []):
+                puuid = ps.get('player_puuid')
+                if puuid in mk_counts:
+                    kills_in_round = len(ps.get('kill_events', []))
+                    if kills_in_round >= 5:
+                        mk_counts[puuid]['5k'] += 1
+                    elif kills_in_round >= 4:
+                        mk_counts[puuid]['4k'] += 1
+                    elif kills_in_round >= 3:
+                        mk_counts[puuid]['3k'] += 1
+                    elif kills_in_round >= 2:
+                        mk_counts[puuid]['2k'] += 1
+
         # Calculate enhanced highlights
         if len(player_stats) >= 2:
             # Top Fragger with more flair
@@ -500,13 +522,25 @@ class MatchTracker:
                     stats['highlights'].append(f"🤝 **SUPPORT HERO**: {assist_king['member'].display_name} ({assist_king['assists']} assists) - Team Player!")
                 elif assist_king['assists'] >= 7:
                     stats['highlights'].append(f"🤝 **Team Player**: {assist_king['member'].display_name} ({assist_king['assists']} assists)")
-                
-                # Multi-kill detection (estimated)
-                potential_ace = max(player_stats, key=lambda x: x['kills'])
-                if potential_ace['kills'] >= 25:  # Very high kill count suggests aces
-                    stats['highlights'].append(f"🔥 **ACE ALERT**: {potential_ace['member'].display_name} likely got an ACE! ({potential_ace['kills']} total kills)")
-                elif potential_ace['kills'] >= 20:
-                    stats['highlights'].append(f"⚡ **MULTIKILL MASTER**: {potential_ace['member'].display_name} probably got some 4Ks! ({potential_ace['kills']} kills)")
+
+                # Multi-kill highlights using round data
+                for p in player_stats:
+                    counts = mk_counts.get(p['puuid'], {})
+                    if counts.get('5k', 0) > 0:
+                        ace_count = counts['5k']
+                        plural = 's' if ace_count > 1 else ''
+                        stats['highlights'].append(
+                            f"🔥 **ACE ALERT**: {p['member'].display_name} scored {ace_count} ACE{plural}!")
+                    elif counts.get('4k', 0) > 0:
+                        fourk = counts['4k']
+                        plural = 's' if fourk > 1 else ''
+                        stats['highlights'].append(
+                            f"⚡ **MULTIKILL MASTER**: {p['member'].display_name} landed {fourk} 4K{plural}!")
+                    elif counts.get('3k', 0) >= 2:
+                        threek = counts['3k']
+                        plural = 's' if threek > 1 else ''
+                        stats['highlights'].append(
+                            f"💥 {p['member'].display_name} racked up {threek} 3K{plural}!")
             
             # Enhanced damage analysis
             tank_player = max(player_stats, key=lambda x: x['damage_received'])
