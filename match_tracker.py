@@ -267,7 +267,8 @@ class MatchTracker:
         
         # Calculate match duration
         if game_length:
-            duration_seconds = game_length // 1000
+            # game_length is already in seconds
+            duration_seconds = int(game_length)
             duration_minutes = duration_seconds // 60
             duration_seconds_remainder = duration_seconds % 60
             
