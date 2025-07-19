@@ -115,6 +115,3 @@ class TestAccurateStatsIntegration(unittest.TestCase):
         self.assertEqual(first_kill["time"], 3000, "First blood should be earliest by time")
         self.assertEqual(first_kill["killer"], "player2", "Wrong player credited with first blood")
 
-if __name__ == "__main__":
-    # Run tests with detailed output
-    unittest.main(verbosity=2)
