@@ -765,11 +765,62 @@ class MatchTracker:
                 fun_facts.append("💰 **ECONOMY KINGS**: Minimal losses!")
             elif total_team_deaths >= 100:
                 fun_facts.append("💸 **HIGH RISK, HIGH REWARD**: Going for broke!")
-            
-            
+
+            # Swing round analysis
+            swing_rounds = self._identify_swing_rounds(match_data)
+            if swing_rounds:
+                stack_team = None
+                for dm in discord_members:
+                    team = dm['player_data'].get('team')
+                    if team:
+                        stack_team = team.lower()
+                        break
+
+                stack_swing = None
+                enemy_swing = None
+                for sr in swing_rounds:
+                    if sr['winner'] == stack_team:
+                        if not stack_swing or sr['diff'] > stack_swing['diff']:
+                            stack_swing = sr
+                    else:
+                        if not enemy_swing or sr['diff'] > enemy_swing['diff']:
+                            enemy_swing = sr
+
+                if stack_swing:
+                    stats['highlights'].append(
+                        f"💸 **Swing Round**: Round {stack_swing['round']} won with {stack_swing['diff']:,} credit deficit!"
+                    )
+                if enemy_swing:
+                    stats['highlights'].append(
+                        f"😱 **Enemy Swing Round**: Opponents stole Round {enemy_swing['round']} with {enemy_swing['diff']:,} credit disadvantage!"
+                    )
+
             stats['highlights'].extend(random.sample(fun_facts, min(2, len(fun_facts))))
         
         return stats
+
+    def _identify_swing_rounds(self, match_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Identify rounds where the lower economy team won."""
+        swing_rounds = []
+        for idx, round_data in enumerate(match_data.get('rounds', []), start=1):
+            team_totals = {'red': 0, 'blue': 0}
+            for ps in round_data.get('player_stats', []):
+                team = (ps.get('team') or ps.get('player_team') or '').lower()
+                if team in team_totals:
+                    loadout = ps.get('economy', {}).get('loadout_value', 0)
+                    team_totals[team] += loadout
+
+            diff = abs(team_totals['red'] - team_totals['blue'])
+            if diff >= 6000:
+                winner = round_data.get('winning_team', '').lower()
+                if not winner:
+                    continue
+                underdog = 'red' if team_totals['red'] < team_totals['blue'] else 'blue'
+                if winner == underdog:
+                    swing_rounds.append({'round': idx, 'diff': diff, 'winner': winner})
+
+        swing_rounds.sort(key=lambda r: r['diff'], reverse=True)
+        return swing_rounds
     
     async def _update_stack_activity(self, guild: discord.Guild, discord_members_in_match: List[Dict], match_data: Dict[str, Any]) -> None:
         """Update stack activity tracking when matches are found"""
