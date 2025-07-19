@@ -6,6 +6,10 @@ import tempfile
 import os
 import json
 import shutil
+import importlib
+import config
+import database
+import data_manager
 
 
 @pytest.fixture
@@ -226,3 +230,15 @@ def mock_datetime(mocker):
     mock_dt.now.return_value = datetime(2024, 1, 1, 12, 0, 0)
     mock_dt.utcnow.return_value = datetime(2024, 1, 1, 12, 0, 0)
     return mock_dt
+
+@pytest.fixture
+def temp_manager(tmp_path, monkeypatch):
+    """Provide a DataManager using a temporary SQLite database."""
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    db_path = os.path.join(tmp_path, "test.db")
+    test_db = database.DatabaseManager(db_path=db_path)
+    monkeypatch.setattr(database, "database_manager", test_db)
+    monkeypatch.setattr(data_manager, "database_manager", test_db)
+    manager = data_manager.DataManager()
+    yield manager, test_db
+
