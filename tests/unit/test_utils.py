@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import Mock
+import discord
 
 from utils import resolve_role, resolve_voice_channel, parse_henrik_timestamp
 from datetime import timezone
@@ -33,7 +34,7 @@ def test_resolve_role_by_name():
 
 def test_resolve_voice_channel_by_mention():
     guild = _mock_guild()
-    channel = Mock()
+    channel = Mock(spec=discord.VoiceChannel)
     channel.id = 5
     guild.get_channel.return_value = channel
     assert resolve_voice_channel(guild, "<#5>") is channel

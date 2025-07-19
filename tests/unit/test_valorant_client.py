@@ -79,8 +79,9 @@ class TestAccountAPI:
             return ValorantClient()
     
     @patch.object(ValorantClient, 'get')
+    @patch('valorant_client.database_manager.get_stored_account', return_value=None)
     @pytest.mark.asyncio
-    async def test_get_account_info_success(self, mock_get, client):
+    async def test_get_account_info_success(self, mock_get_stored, mock_get, client):
         """Test successful account info retrieval with real API response structure"""
         # Mock the BaseAPIClient.get method
         api_response = APIResponse(
@@ -104,7 +105,7 @@ class TestAccountAPI:
         result = await client.get_account_info("TestPlayer", "NA1")
         
         # Verify the call
-        mock_get.assert_called_once_with('account/TestPlayer/NA1')
+        mock_get.assert_called_once_with('account/TestPlayer/NA1', cache_ttl=300)
         
         # Verify the result
         assert result is not None
@@ -113,8 +114,9 @@ class TestAccountAPI:
         assert result['tag'] == 'NA1'
     
     @patch.object(ValorantClient, 'get')
+    @patch('valorant_client.database_manager.get_stored_account', return_value=None)
     @pytest.mark.asyncio
-    async def test_get_account_info_error(self, mock_get, client):
+    async def test_get_account_info_error(self, mock_get_stored, mock_get, client):
         """Test account info with error response"""
         # Mock error response
         api_response = APIResponse(
@@ -127,7 +129,7 @@ class TestAccountAPI:
         result = await client.get_account_info("NonExistent", "USER")
 
         assert result is None
-        mock_get.assert_called_once_with('account/NonExistent/USER')
+        mock_get.assert_called_once_with('account/NonExistent/USER', cache_ttl=300)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status_code,expected_none", [
@@ -146,7 +148,7 @@ class TestAccountAPI:
 
             result = await client.get_account_info("User", "TAG")
 
-            mock_get.assert_called_once_with('account/User/TAG')
+            mock_get.assert_called_once_with('account/User/TAG', cache_ttl=300)
 
             if expected_none:
                 assert result is None
@@ -188,7 +190,7 @@ class TestAccountLinking:
         assert result['puuid'] == 'test-puuid'
         mock_get_account.assert_called_once_with("TestPlayer", "NA1")
         mock_user.link_valorant_account.assert_called_once_with("TestPlayer", "NA1", "test-puuid")
-        mock_save_user.assert_called_once_with(mock_user)
+        mock_save_user.assert_called_once_with(123456789)
 
 
 class TestMatchHistoryAPI:
