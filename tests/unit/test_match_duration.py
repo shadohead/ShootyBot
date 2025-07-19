@@ -6,7 +6,7 @@ from match_tracker import MatchTracker
 
 
 @pytest.mark.asyncio
-async def test_embed_duration_seconds_to_minutes():
+async def test_embed_duration_seconds_to_minutes(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
 
@@ -24,8 +24,7 @@ async def test_embed_duration_seconds_to_minutes():
         }
     }
 
-    member = MagicMock(spec=discord.Member)
-    member.display_name = 'Player1'
+    member = discord_member_factory(user_id=1, name='Player1')
     discord_members = [
         {
             'member': member,
@@ -41,7 +40,7 @@ async def test_embed_duration_seconds_to_minutes():
 
 
 @pytest.mark.asyncio
-async def test_embed_duration_hours_format():
+async def test_embed_duration_hours_format(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
 
@@ -59,8 +58,7 @@ async def test_embed_duration_hours_format():
         }
     }
 
-    member = MagicMock(spec=discord.Member)
-    member.display_name = 'Player1'
+    member = discord_member_factory(user_id=1, name='Player1')
     discord_members = [
         {
             'member': member,

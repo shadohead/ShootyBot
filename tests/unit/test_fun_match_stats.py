@@ -6,7 +6,7 @@ from match_tracker import MatchTracker
 
 
 @pytest.mark.asyncio
-async def test_multikill_highlights():
+async def test_multikill_highlights(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
 
@@ -61,10 +61,8 @@ async def test_multikill_highlights():
         }
     }
 
-    member1 = MagicMock(spec=discord.Member)
-    member1.display_name = 'Player1'
-    member2 = MagicMock(spec=discord.Member)
-    member2.display_name = 'Player2'
+    member1 = discord_member_factory(user_id=1, name='Player1')
+    member2 = discord_member_factory(user_id=2, name='Player2')
 
     discord_members = [
         {'member': member1, 'account': {'puuid': 'p1'}, 'player_data': match_data['players']['all_players'][0]},
