@@ -72,6 +72,3 @@ class TestTrackerURLGeneration(unittest.TestCase):
         self.assertTrue(short_link.startswith("[Tracker.gg]("))
         self.assertTrue(short_link.endswith(")"))
 
-if __name__ == "__main__":
-    # Run tests with detailed output
-    unittest.main(verbosity=2)

@@ -171,6 +171,3 @@ def main():
         traceback.print_exc()
         return 1
 
-if __name__ == "__main__":
-    import sys
-    sys.exit(main())

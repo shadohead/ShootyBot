@@ -160,6 +160,3 @@ class TestMatchStatsAccuracy(unittest.TestCase):
         
         self.assertTrue(all_passed, "Not all stats match tracker.gg values")
 
-if __name__ == "__main__":
-    # Run tests with verbose output
-    unittest.main(verbosity=2)
