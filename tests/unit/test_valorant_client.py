@@ -37,6 +37,38 @@ class TestValorantClientInit:
         assert 'Authorization' not in auth_headers
 
 
+class TestAuthorizationHeaders:
+    """Ensure aiohttp sessions include auth headers only with API key."""
+
+    @pytest.mark.asyncio
+    async def test_session_headers_with_key(self):
+        with patch('valorant_client.HENRIK_API_KEY', 'secret'), \
+             patch('api_clients.aiohttp.ClientSession') as mock_session, \
+             patch('api_clients.aiohttp.TCPConnector'), \
+             patch('api_clients.aiohttp.ClientTimeout'):
+
+            client = ValorantClient()
+            mock_session.return_value.closed = False
+            await client._ensure_session()
+
+            headers = mock_session.call_args.kwargs.get('headers', {})
+            assert headers.get('Authorization') == 'secret'
+
+    @pytest.mark.asyncio
+    async def test_session_headers_without_key(self):
+        with patch('valorant_client.HENRIK_API_KEY', ''), \
+             patch('api_clients.aiohttp.ClientSession') as mock_session, \
+             patch('api_clients.aiohttp.TCPConnector'), \
+             patch('api_clients.aiohttp.ClientTimeout'):
+
+            client = ValorantClient()
+            mock_session.return_value.closed = False
+            await client._ensure_session()
+
+            headers = mock_session.call_args.kwargs.get('headers', {})
+            assert 'Authorization' not in headers
+
+
 class TestAccountAPI:
     """Test API methods for account information"""
     
@@ -91,11 +123,35 @@ class TestAccountAPI:
             headers={}
         )
         mock_get.return_value = api_response
-        
+
         result = await client.get_account_info("NonExistent", "USER")
-        
+
         assert result is None
         mock_get.assert_called_once_with('account/NonExistent/USER')
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code,expected_none", [
+        (200, False),
+        (404, True),
+        (429, True),
+    ])
+    async def test_get_account_info_various_responses(self, status_code, expected_none, client):
+        """Parametrized test for different HTTP responses."""
+        with patch.object(ValorantClient, 'get') as mock_get, \
+             patch('valorant_client.database_manager.get_stored_account', return_value=None), \
+             patch('valorant_client.database_manager.store_account'):
+
+            data = {'data': {'puuid': 'abc'}} if status_code == 200 else {}
+            mock_get.return_value = APIResponse(data=data, status_code=status_code, headers={})
+
+            result = await client.get_account_info("User", "TAG")
+
+            mock_get.assert_called_once_with('account/User/TAG')
+
+            if expected_none:
+                assert result is None
+            else:
+                assert result == {'puuid': 'abc'}
 
 
 class TestAccountLinking:
@@ -133,6 +189,44 @@ class TestAccountLinking:
         mock_get_account.assert_called_once_with("TestPlayer", "NA1")
         mock_user.link_valorant_account.assert_called_once_with("TestPlayer", "NA1", "test-puuid")
         mock_save_user.assert_called_once_with(mock_user)
+
+
+class TestMatchHistoryAPI:
+    """Parametrized tests for match history retrieval"""
+
+    @pytest.fixture
+    def client(self):
+        with patch('valorant_client.HENRIK_API_KEY', ''):
+            return ValorantClient()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code,expected_none", [
+        (200, False),
+        (404, True),
+        (429, True),
+    ])
+    async def test_get_match_history_various_responses(self, status_code, expected_none, client):
+        with patch.object(ValorantClient, 'get_account_info', return_value={'puuid': 'abc'}), \
+             patch('valorant_client.database_manager.get_stored_player_stats', return_value=None), \
+             patch('valorant_client.database_manager.store_player_stats'), \
+             patch.object(ValorantClient, 'calculate_player_stats', return_value={}), \
+             patch.object(ValorantClient, 'get') as mock_get:
+
+            data = {'data': [{'id': 'match1'}]} if status_code == 200 else {}
+            mock_get.return_value = APIResponse(data=data, status_code=status_code, headers={})
+
+            result = await client.get_match_history("User", "TAG")
+
+            mock_get.assert_called_once_with(
+                'matches/na/User/TAG',
+                params={'size': 5},
+                cache_ttl=180
+            )
+
+            if expected_none:
+                assert result is None
+            else:
+                assert result == [{'id': 'match1'}]
 
 
 class TestGlobalInstance:
