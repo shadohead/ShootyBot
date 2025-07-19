@@ -156,6 +156,32 @@ class TestReactionHandler:
         handler.bot.get_context.assert_called_once_with(message)
         handler.bot.get_cog.assert_called_once_with('SessionCommands')
         mock_session_cog.session_status.assert_called_once_with(mock_ctx)
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_refresh_status_context_failure(self, mock_context_manager, handler):
+        """Exception propagates if context cannot be fetched"""
+        message = Mock()
+        message.channel = Mock(id=123)
+
+        mock_context_manager.get_context.side_effect = Exception("fail")
+        handler.bot.get_context = AsyncMock(return_value=AsyncMock())
+
+        with pytest.raises(Exception):
+            await handler._refresh_status(message)
+
+    @pytest.mark.asyncio
+    async def test_refresh_status_missing_cog(self, handler):
+        """Gracefully handle missing SessionCommands cog"""
+        message = Mock()
+        message.channel = Mock(id=456)
+
+        handler.bot.get_context = AsyncMock(return_value=AsyncMock())
+        handler.bot.get_cog = Mock(return_value=None)
+
+        await handler._refresh_status(message)
+        handler.bot.get_context.assert_called_once_with(message)
+        handler.bot.get_cog.assert_called_once_with('SessionCommands')
     
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.context_manager')
@@ -201,6 +227,29 @@ class TestReactionHandler:
         assert "<@111>" in call_args
         assert "<@222>" in call_args
         assert "<@999>" not in call_args  # Bot user should be excluded
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_mention_party_deduplicate_and_ignore_bots(self, mock_context_manager, handler):
+        """Duplicate users should be mentioned once and bots ignored"""
+        user1 = Mock(mention="<@111>", bot=False)
+        user2 = Mock(mention="<@222>", bot=False)
+        bot_user = Mock(mention="<@333>", bot=True)
+
+        mock_context = Mock()
+        mock_context.bot_soloq_user_set = {user1, user2, bot_user}
+        mock_context.bot_fullstack_user_set = {user2}
+        mock_context_manager.get_context.return_value = mock_context
+
+        message = Mock()
+        message.channel = AsyncMock()
+
+        await handler._mention_party(message)
+
+        call_args = message.channel.send.call_args[0][0].split()
+        assert call_args.count("<@111>") == 1
+        assert call_args.count("<@222>") == 1
+        assert "<@333>" not in call_args
 
 
 @pytest.mark.asyncio
