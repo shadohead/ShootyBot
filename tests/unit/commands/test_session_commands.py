@@ -22,17 +22,11 @@ class TestSessionCommandsUpdated:
             return SessionCommands(mock_bot)
     
     @pytest.fixture
-    def mock_ctx(self):
-        """Create mock Discord context"""
-        ctx = Mock()
-        ctx.channel.id = 123456789
-        ctx.author.id = 987654321
-        ctx.send = AsyncMock()
-        ctx.reply = AsyncMock()
-        ctx.guild = Mock()
-        ctx.guild.name = "Test Guild"
-        ctx.channel.name = "test-channel"
-        return ctx
+    def mock_ctx(self, mock_discord_context):
+        """Use shared mock Discord context fixture"""
+        mock_discord_context.guild.name = "Test Guild"
+        mock_discord_context.channel.name = "test-channel"
+        return mock_discord_context
     
     @patch('commands.session_commands.context_manager')
     @patch('commands.session_commands.data_manager')
@@ -202,14 +196,9 @@ class TestScheduledSessionUpdated:
             return SessionCommands(mock_bot)
     
     @pytest.fixture
-    def mock_ctx(self):
-        """Create mock Discord context"""
-        ctx = Mock()
-        ctx.channel.id = 123456789
-        ctx.author.id = 987654321
-        ctx.send = AsyncMock()
-        ctx.reply = AsyncMock()
-        return ctx
+    def mock_ctx(self, mock_discord_context):
+        """Use shared mock Discord context fixture"""
+        return mock_discord_context
     
     @patch('commands.session_commands.context_manager')
     @patch('commands.session_commands.parser')

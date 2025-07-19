@@ -21,15 +21,13 @@ class TestShootyContext:
         assert context.party_max_size == 5  # DEFAULT_PARTY_SIZE
         assert context._backup is None
     
-    def test_backup_and_restore_state(self, mock_discord_user):
+    def test_backup_and_restore_state(self, mock_discord_user, discord_member_factory):
         """Test backup and restore functionality"""
         context = ShootyContext(12345)
         
         # Add some users
-        user1 = Mock()
-        user1.name = "User1"
-        user2 = Mock()
-        user2.name = "User2"
+        user1 = discord_member_factory(name="User1")
+        user2 = discord_member_factory(name="User2")
         
         context.add_soloq_user(user1)
         context.add_fullstack_user(user2)
@@ -62,13 +60,13 @@ class TestShootyContext:
         assert restored is False
         assert context._backup is None
     
-    def test_reset_users(self):
+    def test_reset_users(self, discord_member_factory):
         """Test resetting all user sets"""
         context = ShootyContext(12345)
         
         # Add some users
-        user1 = Mock()
-        user2 = Mock()
+        user1 = discord_member_factory()
+        user2 = discord_member_factory()
         
         context.bot_soloq_user_set.add(user1)
         context.bot_fullstack_user_set.add(user2)
@@ -81,11 +79,11 @@ class TestShootyContext:
         assert len(context.bot_fullstack_user_set) == 0
         assert len(context.bot_ready_user_set) == 0
     
-    def test_soloq_user_functions(self):
+    def test_soloq_user_functions(self, discord_member_factory):
         """Test solo queue user management"""
         context = ShootyContext(12345)
-        user1 = Mock()
-        user2 = Mock()
+        user1 = discord_member_factory()
+        user2 = discord_member_factory()
         
         # Add users
         context.add_soloq_user(user1)
@@ -104,11 +102,11 @@ class TestShootyContext:
         assert context.get_soloq_user_count() == 1
         assert not context.is_soloq_user(user1)
     
-    def test_fullstack_user_functions(self):
+    def test_fullstack_user_functions(self, discord_member_factory):
         """Test fullstack user management"""
         context = ShootyContext(12345)
-        user1 = Mock()
-        user2 = Mock()
+        user1 = discord_member_factory()
+        user2 = discord_member_factory()
         
         # Add users
         context.add_fullstack_user(user1)
@@ -134,13 +132,13 @@ class TestShootyContext:
         context.set_party_max_size(10)
         assert context.get_party_max_size() == 10
     
-    def test_get_unique_user_count(self):
+    def test_get_unique_user_count(self, discord_member_factory):
         """Test unique user counting"""
         context = ShootyContext(12345)
         
-        user1 = Mock()
-        user2 = Mock()
-        user3 = Mock()
+        user1 = discord_member_factory()
+        user2 = discord_member_factory()
+        user3 = discord_member_factory()
         
         context.add_soloq_user(user1)
         context.add_soloq_user(user2)
@@ -148,17 +146,14 @@ class TestShootyContext:
         
         assert context.get_unique_user_count() == 3
     
-    def test_remove_user_from_everything(self):
+    def test_remove_user_from_everything(self, discord_member_factory):
         """Test removing users by name prefix"""
         context = ShootyContext(12345)
         
         # Create users with specific names
-        user1 = Mock()
-        user1.name = "TestUser1"
-        user2 = Mock()
-        user2.name = "TestUser2"
-        user3 = Mock()
-        user3.name = "OtherUser"
+        user1 = discord_member_factory(name="TestUser1")
+        user2 = discord_member_factory(name="TestUser2")
+        user3 = discord_member_factory(name="OtherUser")
         
         # Add users to different sets
         context.add_soloq_user(user1)
@@ -175,7 +170,7 @@ class TestShootyContext:
         assert user1 not in context.bot_soloq_user_set
         assert user2 not in context.bot_fullstack_user_set
     
-    def test_bold_readied_user(self):
+    def test_bold_readied_user(self, discord_member_factory):
         """Test user formatting with ready and Valorant status"""
         # Mock the valorant_client module import
         import sys
@@ -185,8 +180,7 @@ class TestShootyContext:
         mock_valorant_client.valorant_client.is_playing_valorant = Mock(return_value=False)
         
         context = ShootyContext(12345)
-        user = Mock()
-        user.name = "TestUser"
+        user = discord_member_factory(name="TestUser")
         user.__str__ = Mock(return_value="TestUser#1234")
         
         # Test normal user
@@ -206,7 +200,7 @@ class TestShootyContext:
         # Clean up
         del sys.modules['valorant_client']
     
-    def test_get_user_list_string(self):
+    def test_get_user_list_string(self, discord_member_factory):
         """Test formatted user list generation"""
         # Mock the valorant_client module import
         import sys
@@ -218,12 +212,9 @@ class TestShootyContext:
         context = ShootyContext(12345)
         
         # Create users
-        user1 = Mock()
-        user1.name = "User1"
-        user2 = Mock()
-        user2.name = "User2"
-        user3 = Mock()
-        user3.name = "User3"
+        user1 = discord_member_factory(name="User1")
+        user2 = discord_member_factory(name="User2")
+        user3 = discord_member_factory(name="User3")
         
         # Add users to different sets
         context.add_soloq_user(user1)
@@ -388,12 +379,10 @@ class TestHelperFunctions:
         assert context.channel_id == 12345
         assert isinstance(context, ShootyContext)
     
-    def test_to_names_list(self):
+    def test_to_names_list(self, discord_member_factory):
         """Test converting user set to names list"""
-        user1 = Mock()
-        user1.name = "User1"
-        user2 = Mock()
-        user2.name = "User2"
+        user1 = discord_member_factory(name="User1")
+        user2 = discord_member_factory(name="User2")
         
         user_set = {user1, user2}
         names = to_names_list(user_set)
@@ -466,12 +455,11 @@ class TestIntegration:
                 assert final_data["111"]["game_name"] == "Game1"
                 assert final_data["222"]["party_max_size"] == 10
     
-    def test_user_state_transitions(self):
+    def test_user_state_transitions(self, discord_member_factory):
         """Test complex user state transitions"""
         context = ShootyContext(12345)
         
-        user = Mock()
-        user.name = "TestUser"
+        user = discord_member_factory(name="TestUser")
         
         # User joins soloq
         context.add_soloq_user(user)

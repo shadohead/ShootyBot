@@ -52,10 +52,9 @@ class TestReactionHandler:
         assert result is None
     
     @pytest.mark.asyncio
-    async def test_ignore_non_bot_messages(self, handler):
+    async def test_ignore_non_bot_messages(self, handler, mock_discord_reaction):
         """Test that reactions on non-bot messages are ignored"""
-        reaction = Mock()
-        reaction.message = Mock()
+        reaction = mock_discord_reaction
         reaction.message.author = Mock(id=123456)  # Not the bot
         user = Mock(bot=False)
         
@@ -68,15 +67,14 @@ class TestReactionHandler:
     
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.context_manager')
-    async def test_ignore_outdated_messages(self, mock_context_manager, handler):
+    async def test_ignore_outdated_messages(self, mock_context_manager, handler, mock_discord_reaction):
         """Test that reactions on outdated messages are ignored"""
         # Setup
         mock_context = Mock()
         mock_context.current_st_message_id = 999
         mock_context_manager.get_context.return_value = mock_context
         
-        reaction = Mock()
-        reaction.message = Mock()
+        reaction = mock_discord_reaction
         reaction.message.id = 123  # Different from current message
         reaction.message.author = handler.bot.user
         reaction.message.channel = Mock(id=111222333)
@@ -137,11 +135,11 @@ class TestReactionHandler:
         mock_data_manager.sessions.get.assert_not_called()
     
     @pytest.mark.asyncio
-    async def test_refresh_status(self, handler):
+    async def test_refresh_status(self, handler, mock_discord_message):
         """Test refresh status functionality"""
         # Setup
-        message = Mock()
-        message.channel = Mock(id=111222333)
+        message = mock_discord_message
+        message.channel.id = 111222333
         
         mock_ctx = AsyncMock()
         handler.bot.get_context = AsyncMock(return_value=mock_ctx)
@@ -185,7 +183,7 @@ class TestReactionHandler:
     
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.context_manager')
-    async def test_mention_party_no_members(self, mock_context_manager, handler):
+    async def test_mention_party_no_members(self, mock_context_manager, handler, mock_discord_message):
         """Test mention party with no members"""
         # Setup
         mock_context = Mock()
@@ -193,7 +191,7 @@ class TestReactionHandler:
         mock_context.bot_fullstack_user_set = set()
         mock_context_manager.get_context.return_value = mock_context
         
-        message = Mock()
+        message = mock_discord_message
         message.channel = AsyncMock()
         
         # Call the method
@@ -204,19 +202,22 @@ class TestReactionHandler:
     
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.context_manager')
-    async def test_mention_party_with_members(self, mock_context_manager, handler):
+    async def test_mention_party_with_members(self, mock_context_manager, handler, discord_member_factory, mock_discord_message):
         """Test mention party with members"""
         # Setup
-        user1 = Mock(mention="<@111>", bot=False)
-        user2 = Mock(mention="<@222>", bot=False)
-        bot_user = Mock(mention="<@999>", bot=True)
+        user1 = discord_member_factory(user_id=111, name="User1")
+        user1.bot = False
+        user2 = discord_member_factory(user_id=222, name="User2")
+        user2.bot = False
+        bot_user = discord_member_factory(user_id=999, name="Bot")
+        bot_user.bot = True
         
         mock_context = Mock()
         mock_context.bot_soloq_user_set = {user1, bot_user}
         mock_context.bot_fullstack_user_set = {user2}
         mock_context_manager.get_context.return_value = mock_context
         
-        message = Mock()
+        message = mock_discord_message
         message.channel = AsyncMock()
         
         # Call the method

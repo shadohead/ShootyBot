@@ -40,6 +40,25 @@ def mock_discord_member():
 
 
 @pytest.fixture
+def discord_member_factory():
+    """Factory to create mock Discord members with custom ids and names"""
+    def _factory(user_id: int = 123456789, name: str = "TestUser"):
+        member = Mock()
+        member.id = user_id
+        member.name = name
+        member.display_name = name
+        member.discriminator = "0001"
+        member.mention = f"<@{user_id}>"
+        member.avatar_url = "https://example.com/avatar.png"
+        member.guild = Mock()
+        member.guild.id = 987654321
+        member.guild.name = "Test Guild"
+        return member
+
+    return _factory
+
+
+@pytest.fixture
 def mock_discord_channel():
     """Create a mock Discord channel object"""
     channel = AsyncMock()
