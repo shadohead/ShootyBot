@@ -22,7 +22,7 @@ def session_cog():
 @pytest.fixture
 def valorant_cog():
     mock_bot = Mock()
-    with patch('commands.valorant_commands.GameCommandCog.__init__', return_value=None):
+    with patch('commands.valorant_commands.BaseCommandCog.__init__', return_value=None):
         cog = ValorantCommands(mock_bot)
         cog.bot = mock_bot
         cog.logger = Mock()

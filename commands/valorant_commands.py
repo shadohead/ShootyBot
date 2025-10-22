@@ -2,17 +2,17 @@ import logging
 from typing import Optional
 import discord
 from discord.ext import commands
-from base_commands import GameCommandCog
+from base_commands import BaseCommandCog
 from valorant_client import valorant_client
 from data_manager import data_manager
 from datetime import datetime, timezone
 from match_tracker import get_match_tracker
 
-class ValorantCommands(GameCommandCog):
+class ValorantCommands(BaseCommandCog):
     """Commands for Valorant integration and account management"""
-    
+
     def __init__(self, bot: commands.Bot) -> None:
-        super().__init__(bot, game_name="Valorant")
+        super().__init__(bot)
         self.match_tracker = get_match_tracker(bot)
     
     @commands.hybrid_command(

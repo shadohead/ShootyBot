@@ -1,8 +1,7 @@
 """Base models and abstract classes for ShootyBot data management."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, TypeVar, Generic, Set, Callable, Union
-from datetime import datetime
+from typing import Dict, Any, Optional, List, TypeVar, Generic, Set, Union
 import logging
 
 from utils import get_utc_timestamp, log_error
@@ -182,64 +181,6 @@ class ValidatedModel(BaseModel):
         return self.validate()
 
 
-class CachedManager(BaseManager[T]):
-    """Manager with TTL-based caching."""
-    
-    def __init__(self, cache_ttl: int = 300):  # 5 minutes default
-        super().__init__()
-        self._cache_ttl = cache_ttl
-        self._cache_timestamps: Dict[Any, datetime] = {}
-    
-    def _is_cache_valid(self, key: Any) -> bool:
-        """Check if cached item is still valid."""
-        if key not in self._cache_timestamps:
-            return False
-        
-        age = (datetime.utcnow() - self._cache_timestamps[key]).total_seconds()
-        return age < self._cache_ttl
-    
-    def _update_cache(self, key: Any, item: T) -> None:
-        """Update cache with new item."""
-        self._cache[key] = item
-        self._cache_timestamps[key] = datetime.utcnow()
-    
-    def evict_stale_cache(self) -> int:
-        """Remove stale entries from cache."""
-        stale_keys = [
-            key for key in self._cache
-            if not self._is_cache_valid(key)
-        ]
-        
-        for key in stale_keys:
-            del self._cache[key]
-            del self._cache_timestamps[key]
-        
-        return len(stale_keys)
-
-
-class ObservableModel(BaseModel):
-    """Model with observer pattern support."""
-    
-    def __init__(self):
-        self._observers: List[Callable[[Any, str, Any], None]] = []
-    
-    def attach_observer(self, callback: Callable[[Any, str, Any], None]) -> None:
-        """Attach an observer callback."""
-        if callback not in self._observers:
-            self._observers.append(callback)
-    
-    def detach_observer(self, callback: Callable[[Any, str, Any], None]) -> None:
-        """Detach an observer callback."""
-        if callback in self._observers:
-            self._observers.remove(callback)
-    
-    def notify_observers(self, event: str, data: Any = None) -> None:
-        """Notify all observers of an event."""
-        for observer in self._observers:
-            try:
-                observer(self, event, data)
-            except Exception as e:
-                log_error(f"notifying observer of {event}", e)
 
 
 class DatabaseBackedManager(BaseManager[T]):

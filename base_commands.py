@@ -4,7 +4,6 @@ import logging
 from typing import Optional, List, Dict, Any, Union
 import discord
 from discord.ext import commands
-from discord import app_commands
 
 from utils import log_error, safe_embed_field
 from config import MESSAGES
@@ -123,61 +122,6 @@ class BaseCommandCog(commands.Cog):
             member.guild_permissions.manage_channels,
             member.guild_permissions.manage_guild
         ])
-
-
-class GameCommandCog(BaseCommandCog):
-    """Base class for game-specific command cogs."""
-    
-    def __init__(self, bot: commands.Bot, game_name: str) -> None:
-        super().__init__(bot)
-        self.game_name = game_name
-    
-    def format_player_list(self, players: List[discord.Member],
-                          show_game_info: bool = False) -> str:
-        """Format a list of players for display."""
-        if not players:
-            return "No players"
-        
-        formatted = []
-        for player in players:
-            if show_game_info:
-                # Check if player is in game
-                activity = self.get_game_activity(player)
-                if activity:
-                    formatted.append(f"🎮 **{player.display_name}** (In Game)")
-                else:
-                    formatted.append(f"**{player.display_name}**")
-            else:
-                formatted.append(f"**{player.display_name}**")
-        
-        return "\n".join(formatted)
-    
-    def get_game_activity(self, member: discord.Member) -> Optional[discord.Activity]:
-        """Get game activity for a member."""
-        if not member.activities:
-            return None
-        
-        for activity in member.activities:
-            if isinstance(activity, discord.Game) and self.game_name.lower() in activity.name.lower():
-                return activity
-            elif hasattr(activity, 'application_id'):
-                # Check for specific game application IDs
-                if self.is_target_game(activity):
-                    return activity
-        
-        return None
-    
-    def is_target_game(self, activity: discord.Activity) -> bool:
-        """Check if activity is for the target game (override in subclass)."""
-        return False
-    
-    def count_players_in_game(self, guild: discord.Guild) -> int:
-        """Count how many players are currently in the game."""
-        count = 0
-        for member in guild.members:
-            if not member.bot and self.get_game_activity(member):
-                count += 1
-        return count
 
 
 class PaginatedEmbed:
