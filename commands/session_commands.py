@@ -213,6 +213,7 @@ class SessionCommands(BaseCommandCog):
                     "`/st` - Start a Fresh Shooty Session (FSS™)\n"
                     "`/sts` - Check party status\n"
                     "`/stm` - Mention everyone in party\n"
+                    "`/stplus <number>` - Add plus ones (guests you're bringing)\n"
                     "`/stend` - End current session\n"
                     "`/shootytime <time>` - Schedule session (e.g. 8:30 PM)\n"
                     "`/shootyrestore` - Restore previous party state"
@@ -502,10 +503,10 @@ class SessionCommands(BaseCommandCog):
         """Helper method to end the current session"""
         if not hasattr(shooty_context, 'current_session_id') or not shooty_context.current_session_id:
             return
-        
+
         session_id = shooty_context.current_session_id
         session = data_manager.sessions.get(session_id)
-        
+
         if session:
             # Add all current participants to the session
             all_users = shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set)
@@ -515,20 +516,75 @@ class SessionCommands(BaseCommandCog):
                 user_data = data_manager.get_user(user.id)
                 user_data.add_session_to_history(session_id)
                 data_manager.save_user(user.id)
-            
+
             # Check if party was full
             if len(all_users) >= shooty_context.party_max_size:
                 session.was_full = True
-            
+
             # End the session
             session.end_session()
             data_manager.save_session(session_id)
-            
+
             self.logger.info(f"Ended session {session_id} with {len(all_users)} participants")
-        
+
         # Clear session reference and reset users
         shooty_context.current_session_id = None
         shooty_context.reset_users()
+
+    @commands.hybrid_command(
+        name="stplus",
+        description="Add plus ones to indicate you're bringing extra people"
+    )
+    async def set_plus_ones(self, ctx: commands.Context, count: int) -> None:
+        """Set the number of plus ones (guests) you're bringing"""
+        try:
+            channel_id = ctx.channel.id
+            shooty_context = context_manager.get_context(channel_id)
+
+            # Check if user is in the party
+            user_in_party = (
+                ctx.author in shooty_context.bot_soloq_user_set or
+                ctx.author in shooty_context.bot_fullstack_user_set
+            )
+
+            if not user_in_party:
+                await self.send_error_embed(
+                    ctx,
+                    "Not in Party",
+                    "You must join the party first (react with 👍 or 5️⃣) before adding plus ones."
+                )
+                return
+
+            # Validate count
+            if count < 0:
+                await self.send_error_embed(
+                    ctx,
+                    "Invalid Count",
+                    "Plus ones count must be 0 or greater."
+                )
+                return
+
+            # Set plus ones
+            shooty_context.set_plus_ones(ctx.author, count)
+
+            # Update the party message if it exists
+            if shooty_context.current_st_message_id:
+                try:
+                    message = await ctx.channel.fetch_message(shooty_context.current_st_message_id)
+                    new_message = party_status_message(True, shooty_context)
+                    await message.edit(content=new_message)
+                except discord.NotFound:
+                    self.logger.warning("Could not find party message to update")
+
+            # Send confirmation
+            if count == 0:
+                await ctx.send(f"{ctx.author.name} removed their plus ones")
+            else:
+                await ctx.send(f"{ctx.author.name} is bringing +{count}")
+
+        except Exception as e:
+            self.logger.error(f"Error setting plus ones: {e}")
+            await self.send_error_embed(ctx, "Plus Ones Failed", "Failed to set plus ones. Please try again.")
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(SessionCommands(bot))
