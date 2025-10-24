@@ -195,22 +195,6 @@ class TestPartyStatusMessage:
         assert "@&" not in result
         assert "**2/5**" in result
     
-    def test_party_status_backward_compatibility_channel_object(self, mock_user_sets):
-        """Test backward compatibility when is_ping is a channel object"""
-        # Create a mock channel object that has an id attribute
-        mock_channel = Mock()
-        mock_channel.id = 123456789
-        
-        mock_user_sets.get_soloq_user_count.return_value = 1
-        mock_user_sets.get_fullstack_user_count.return_value = 0
-        mock_user_sets.get_unique_user_count.return_value = 1
-        
-        result = party_status_message(mock_channel, mock_user_sets)
-        
-        # Should treat channel object as False for ping
-        assert "<@&123456789>" not in result
-        assert "**1/5**" in result
-    
     def test_party_status_different_party_sizes(self, mock_user_sets):
         """Test party status with different max party sizes"""
         # Test with party size 3

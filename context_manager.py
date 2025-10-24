@@ -4,7 +4,7 @@ import os
 from typing import Dict, Set, Optional, List, Any
 from filelock import FileLock
 import discord
-from config import *
+from config import DEFAULT_SHOOTY_ROLE_CODE, DEFAULT_PARTY_SIZE, CHANNEL_DATA_FILE, DATA_DIR
 from database import database_manager
 from utils import ensure_directory_exists, log_error
 

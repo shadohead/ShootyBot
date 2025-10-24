@@ -27,6 +27,14 @@ DATA_DIR = os.getenv("DATA_DIR", "data")
 # Henrik API Configuration
 HENRIK_API_KEY = os.getenv("HENRIK_API_KEY", "")
 
+# Database Configuration (optimized for Raspberry Pi)
+DB_TIMEOUT = 30.0  # Database timeout in seconds (for slower SD card I/O)
+DB_CACHE_SIZE = -32000  # SQLite cache size in KB (negative = KB, positive = pages)
+DB_MATCH_STORAGE_LIMIT_MB = 50  # Max storage for match data
+DB_MATCH_STORAGE_WARN_MB = 40  # Warning threshold for match data
+DB_PLAYER_STATS_LIMIT_MB = 20  # Max storage for player stats
+DB_PLAYER_STATS_WARN_MB = 16  # Warning threshold for player stats
+
 # Emojis (all in one place for easy modification)
 EMOJI = {
     "THUMBS_UP": "👍",

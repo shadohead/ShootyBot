@@ -5,7 +5,7 @@ from discord.ext import commands
 from context_manager import context_manager, to_names_list
 from handlers.message_formatter import party_status_message
 from data_manager import data_manager
-from config import *
+from config import EMOJI, MESSAGES
 
 async def add_react_options(message: discord.Message) -> None:
     """Add reaction options to a message"""
@@ -16,9 +16,14 @@ async def add_react_options(message: discord.Message) -> None:
 
 class ReactionHandler(commands.Cog):
     """Handles all reaction-based interactions"""
-    
+
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+
+    async def _update_party_message(self, message: discord.Message, shooty_context) -> None:
+        """Helper method to update party status message"""
+        new_message = party_status_message(True, shooty_context)
+        await message.edit(content=new_message)
     
     @commands.Cog.listener()
     async def on_reaction_add(self, reaction: discord.Reaction, user: Union[discord.Member, discord.User]) -> None:
@@ -45,10 +50,9 @@ class ReactionHandler(commands.Cog):
             
             # Track session participation
             await self._track_session_participation(shooty_context, user)
-            
-            new_message = party_status_message(True, shooty_context)
-            await reaction.message.edit(content=new_message)
-            
+
+            await self._update_party_message(reaction.message, shooty_context)
+
             # Update bot status
             await self.bot.update_status_with_queue_count()
         
@@ -60,10 +64,9 @@ class ReactionHandler(commands.Cog):
                 
                 # Track session participation
                 await self._track_session_participation(shooty_context, user)
-                
-                new_message = party_status_message(True, shooty_context)
-                await reaction.message.edit(content=new_message)
-                
+
+                await self._update_party_message(reaction.message, shooty_context)
+
                 # Update bot status
                 await self.bot.update_status_with_queue_count()
         
@@ -71,9 +74,8 @@ class ReactionHandler(commands.Cog):
         elif str(reaction.emoji) == EMOJI["READY"]:
             shooty_context.bot_ready_user_set.add(user)
             logging.info(f"Marked {user.name} as ready")
-            
-            new_message = party_status_message(True, shooty_context)
-            await reaction.message.edit(content=new_message)
+
+            await self._update_party_message(reaction.message, shooty_context)
         
         # Handle 🔄 (refresh)
         elif str(reaction.emoji) == EMOJI["REFRESH"]:
@@ -107,10 +109,9 @@ class ReactionHandler(commands.Cog):
         if str(reaction.emoji) == EMOJI["THUMBS_UP"] and shooty_context.is_soloq_user(user):
             shooty_context.remove_soloq_user(user)
             logging.info(f"Removed {user.name} from solo queue")
-            
-            new_message = party_status_message(True, shooty_context)
-            await reaction.message.edit(content=new_message)
-            
+
+            await self._update_party_message(reaction.message, shooty_context)
+
             # Update bot status
             await self.bot.update_status_with_queue_count()
         
@@ -118,10 +119,9 @@ class ReactionHandler(commands.Cog):
         elif str(reaction.emoji) == EMOJI["FULL_STACK"] and user in shooty_context.bot_fullstack_user_set:
             shooty_context.remove_fullstack_user(user)
             logging.info(f"Removed {user.name} from fullstack queue")
-            
-            new_message = party_status_message(True, shooty_context)
-            await reaction.message.edit(content=new_message)
-            
+
+            await self._update_party_message(reaction.message, shooty_context)
+
             # Update bot status
             await self.bot.update_status_with_queue_count()
         
@@ -129,9 +129,8 @@ class ReactionHandler(commands.Cog):
         elif str(reaction.emoji) == EMOJI["READY"] and user in shooty_context.bot_ready_user_set:
             shooty_context.bot_ready_user_set.remove(user)
             logging.info(f"Unmarked {user.name} as ready")
-            
-            new_message = party_status_message(True, shooty_context)
-            await reaction.message.edit(content=new_message)
+
+            await self._update_party_message(reaction.message, shooty_context)
     
     async def _refresh_status(self, message):
         """Refresh the party status message"""

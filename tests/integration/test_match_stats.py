@@ -7,7 +7,7 @@ import unittest
 import json
 import requests
 import os
-from calculate_match_stats import get_match_data, calculate_stats
+from scripts.calculate_match_stats import get_match_data, calculate_stats
 
 class TestMatchStatsAccuracy(unittest.TestCase):
     """Test that our calculated stats match tracker.gg exactly"""
