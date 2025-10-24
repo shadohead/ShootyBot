@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ShootyBot is a Discord bot for managing gaming sessions and party formation. It helps users organize groups for multiplayer games by tracking who wants to play, managing party sizes, and facilitating cross-server coordination.
 
+**For production deployment on Raspberry Pi with auto-updates, see [DEPLOYMENT.md](DEPLOYMENT.md)**
+
 ## Architecture
 
 The bot follows a clean, modular architecture:
@@ -42,6 +44,9 @@ py -3 .\bot.py  # Windows
 tail -f monitor.log                # Monitor health check logs
 tail -f update.log                 # Monitor auto-update logs
 tail -f cron.log                   # Monitor cron execution logs
+
+# Optional: Setup instant updates via GitHub webhooks
+./setup_webhook.sh                # Setup webhook listener for instant updates
 
 # Run tests
 pytest                           # Run all tests

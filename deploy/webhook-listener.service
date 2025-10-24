@@ -1,0 +1,26 @@
+# Systemd service for ShootyBot GitHub Webhook Listener
+# This service listens for GitHub webhooks and triggers instant bot updates
+# Copy to /etc/systemd/system/webhook-listener.service and replace placeholders
+
+[Unit]
+Description=ShootyBot GitHub Webhook Listener
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=<PATH_TO_SHOOTYBOT>
+ExecStart=/usr/bin/python3 <PATH_TO_SHOOTYBOT>/webhook_listener.py
+Restart=on-failure
+RestartSec=10
+User=<BOT_USER>
+Environment=PYTHONUNBUFFERED=1
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=<PATH_TO_SHOOTYBOT>
+
+[Install]
+WantedBy=multi-user.target
