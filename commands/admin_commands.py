@@ -5,7 +5,6 @@ from context_manager import context_manager
 from config import MESSAGES
 from base_commands import BaseCommandCog
 from utils import (
-    validate_discord_id,
     resolve_role,
     resolve_voice_channel,
 )

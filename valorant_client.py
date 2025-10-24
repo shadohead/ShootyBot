@@ -91,33 +91,6 @@ class ValorantClient(BaseAPIClient):
             log_error("fetching Valorant account info", e)
             return None
     
-    async def get_account_by_puuid(self, puuid: str) -> Optional[Dict[str, Any]]:
-        """Get account information by PUUID"""
-        try:
-            # Check database storage first
-            stored_account = database_manager.get_stored_account(puuid=puuid)
-            if stored_account:
-                logging.debug(f"Using stored account info for PUUID {puuid}")
-                return stored_account
-            
-            response = await self.get(f'by-puuid/account/{puuid}', cache_ttl=300)
-            
-            if response.success:
-                # Henrik API wraps data in 'data' field
-                account_data = response.data['data'] if 'data' in response.data else response.data
-                
-                # Store the account data permanently
-                database_manager.store_account(account_data, puuid=puuid)
-                
-                return account_data
-            else:
-                log_error("fetching account by PUUID", Exception(f"Status {response.status_code}"))
-                return None
-                
-        except Exception as e:
-            log_error("fetching account by PUUID", e)
-            return None
-    
     async def link_account(self, discord_id: int, username: str, tag: str) -> Dict[str, Any]:
         """Link a Discord user to a Valorant account"""
         # Remove # if user included it
@@ -1178,44 +1151,6 @@ class ValorantClient(BaseAPIClient):
             ratings['clutch'] = '🎲 Learning Clutches'
         
         return ratings
-    
-    # Storage management methods
-    async def clear_player_storage(self, username: str, tag: str) -> bool:
-        """Clear all stored data for a specific player"""
-        try:
-            account_info = await self.get_account_info(username, tag)
-            if not account_info:
-                return False
-            
-            puuid = account_info.get('puuid')
-            if not puuid:
-                return False
-            
-            # Clear stored player stats for this PUUID
-            with database_manager._lock:
-                conn = database_manager._get_connection()
-                try:
-                    deleted = conn.execute("DELETE FROM henrik_player_stats WHERE puuid = ?", (puuid,)).rowcount
-                    conn.commit()
-                    
-                    if deleted > 0:
-                        logging.info(f"Cleared {deleted} stored entries for {username}#{tag}")
-                    
-                    return True
-                except Exception as e:
-                    logging.error(f"Error clearing storage for {username}#{tag}: {e}")
-                    conn.rollback()
-                    return False
-                finally:
-                    conn.close()
-            
-        except Exception as e:
-            logging.error(f"Error clearing player storage: {e}")
-            return False
-    
-    def clear_all_storage(self) -> bool:
-        """Clear all stored Henrik API data"""
-        return database_manager.clear_all_henrik_storage()
     
     def get_storage_stats(self) -> Dict[str, Any]:
         """Get storage usage statistics"""

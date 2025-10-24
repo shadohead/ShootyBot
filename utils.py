@@ -6,10 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Union, Optional, Any, Dict, Callable, Awaitable, TypeVar
 import discord
-import sqlite3
-from filelock import FileLock
 import asyncio
-import time
 from functools import wraps
 
 
@@ -115,50 +112,10 @@ def safe_json_save(filepath: str, data: Any, indent: int = 2) -> bool:
         return False
 
 
-def atomic_json_operation(filepath: str, operation: Callable, default: Any = None) -> Any:
-    """Perform atomic JSON read-modify-write operation with file locking."""
-    lock_file = f"{filepath}.lock"
-    lock = FileLock(lock_file, timeout=10)
-    
-    try:
-        with lock:
-            # Load current data
-            data = safe_json_load(filepath, default)
-            
-            # Perform operation
-            result = operation(data)
-            
-            # Save if data was modified
-            if result is not None:
-                safe_json_save(filepath, result)
-                return result
-            return data
-    except Exception as e:
-        logging.error(f"Atomic operation failed on {filepath}: {e}")
-        return default
-
-
 # Discord Utilities
-def get_display_name(member_or_user: Union[discord.Member, discord.User]) -> str:
-    """Get appropriate display name for Discord member or user."""
-    if isinstance(member_or_user, discord.Member):
-        return member_or_user.display_name
-    return member_or_user.name
-
-
-def format_user_mention(user_id: int) -> str:
-    """Format user ID as Discord mention."""
-    return f"<@{user_id}>"
-
-
 def format_role_mention(role_id: int) -> str:
     """Format role ID as Discord mention."""
     return f"<@&{role_id}>"
-
-
-def format_channel_mention(channel_id: int) -> str:
-    """Format channel ID as Discord mention."""
-    return f"<#{channel_id}>"
 
 
 def resolve_role(guild: discord.Guild, role_input: str) -> Optional[discord.Role]:
@@ -234,62 +191,6 @@ def log_error(action: str, error: Exception, level: int = logging.ERROR) -> None
     logging.log(level, f"Error {action}: {type(error).__name__}: {str(error)}")
 
 
-def handle_api_error(error: Exception, default: Any = None) -> Any:
-    """Handle API errors with appropriate logging and default return."""
-    if hasattr(error, 'response') and hasattr(error.response, 'status_code'):
-        status_code = error.response.status_code
-        if status_code == 429:
-            logging.warning(f"Rate limited: {error}")
-        elif status_code == 404:
-            logging.debug(f"Not found: {error}")
-        elif status_code >= 500:
-            logging.error(f"Server error: {error}")
-        else:
-            logging.error(f"API error {status_code}: {error}")
-    else:
-        logging.error(f"API error: {error}")
-    
-    return default
-
-
-# Database Utilities
-def get_db_connection(db_path: str, timeout: float = 30.0) -> sqlite3.Connection:
-    """Get SQLite connection with standard settings."""
-    conn = sqlite3.connect(db_path, timeout=timeout, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    # Enable WAL mode for better concurrency
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
-def execute_with_retry(func: Callable, max_retries: int = 3, delay: float = 0.1) -> Any:
-    """Execute function with exponential backoff retry."""
-    last_error = None
-    
-    for attempt in range(max_retries):
-        try:
-            return func()
-        except sqlite3.OperationalError as e:
-            last_error = e
-            if "database is locked" in str(e) and attempt < max_retries - 1:
-                wait_time = delay * (2 ** attempt)
-                logging.warning(f"Database locked, retrying in {wait_time}s...")
-                # Blocking sleep since this helper is synchronous
-                time.sleep(wait_time)
-            else:
-                raise
-        except Exception as e:
-            last_error = e
-            if attempt < max_retries - 1:
-                logging.warning(f"Attempt {attempt + 1} failed: {e}, retrying...")
-                # Blocking sleep between generic failures
-                time.sleep(delay)
-            else:
-                raise
-    
-    raise last_error
-
-
 # Async Utilities
 F = TypeVar('F', bound=Callable[..., Awaitable[Any]])
 
@@ -318,47 +219,3 @@ def async_retry(max_retries: int = 3, delay: float = 1.0, backoff: float = 2.0) 
     return decorator
 
 
-# Validation Utilities
-def validate_discord_id(discord_id: Any) -> Optional[int]:
-    """Validate and convert Discord ID to int."""
-    try:
-        id_int = int(discord_id)
-        if id_int > 0:
-            return id_int
-    except (ValueError, TypeError):
-        pass
-    return None
-
-
-def sanitize_filename(filename: str, max_length: int = 255) -> str:
-    """Sanitize filename for safe file system usage."""
-    # Remove/replace invalid characters
-    invalid_chars = '<>:"|?*'
-    for char in invalid_chars:
-        filename = filename.replace(char, '_')
-    
-    # Remove leading/trailing spaces and dots
-    filename = filename.strip('. ')
-    
-    # Limit length
-    if len(filename) > max_length:
-        name, ext = os.path.splitext(filename)
-        name = name[:max_length - len(ext) - 3] + '...'
-        filename = name + ext
-    
-    return filename or 'unnamed'
-
-
-# String Utilities
-def truncate_string(text: str, max_length: int, suffix: str = "...") -> str:
-    """Truncate string to max length with suffix."""
-    if len(text) <= max_length:
-        return text
-    return text[:max_length - len(suffix)] + suffix
-
-
-def pluralize(count: int, singular: str, plural: Optional[str] = None) -> str:
-    """Return singular or plural form based on count."""
-    if count == 1:
-        return singular
-    return plural or f"{singular}s"
