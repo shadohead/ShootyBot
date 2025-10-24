@@ -70,7 +70,7 @@ class BaseAPIClient(ABC):
         await self._ensure_session()
         return self
     
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """Async context manager exit."""
         await self.close()
     
@@ -279,24 +279,7 @@ class BaseAPIClient(ABC):
         """Make GET request."""
         return await self._make_request('GET', endpoint, params=params,
                                        use_cache=use_cache, cache_ttl=cache_ttl)
-    
-    async def post(self, endpoint: str, data: Dict[str, Any] = None,
-                  params: Dict[str, Any] = None) -> APIResponse[Dict[str, Any]]:
-        """Make POST request."""
-        return await self._make_request('POST', endpoint, params=params,
-                                       data=data, use_cache=False)
-    
-    async def put(self, endpoint: str, data: Dict[str, Any] = None,
-                 params: Dict[str, Any] = None) -> APIResponse[Dict[str, Any]]:
-        """Make PUT request."""
-        return await self._make_request('PUT', endpoint, params=params,
-                                       data=data, use_cache=False)
-    
-    async def delete(self, endpoint: str, params: Dict[str, Any] = None) -> APIResponse[Dict[str, Any]]:
-        """Make DELETE request."""
-        return await self._make_request('DELETE', endpoint, params=params,
-                                       use_cache=False)
-    
+
     @abstractmethod
     async def health_check(self) -> bool:
         """Check if the API is healthy."""

@@ -2,7 +2,7 @@ import logging
 from typing import Union
 import discord
 from discord.ext import commands
-from context_manager import context_manager, to_names_list
+from context_manager import context_manager
 from handlers.message_formatter import party_status_message
 from data_manager import data_manager
 from config import EMOJI, MESSAGES

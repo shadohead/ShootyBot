@@ -740,20 +740,6 @@ class DatabaseManager:
             logging.error(f"Error during migration: {e}")
             return False
     
-    def vacuum_database(self) -> None:
-        """Optimize database for better performance on Raspberry Pi"""
-        with self._lock:
-            conn = self._get_connection()
-            try:
-                conn.execute("PRAGMA incremental_vacuum")
-                conn.execute("VACUUM")
-                logging.info("Database optimized")
-            
-            except Exception as e:
-                logging.error(f"Error optimizing database: {e}")
-            finally:
-                conn.close()
-    
     def get_database_stats(self) -> Dict[str, int]:
         """Get database statistics"""
         with self._lock:
