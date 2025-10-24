@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from threading import RLock
-from config import DATA_DIR
+from config import DATA_DIR, DB_TIMEOUT, DB_CACHE_SIZE
 
 class DatabaseManager:
     """
@@ -34,16 +34,16 @@ class DatabaseManager:
         """Get database connection with optimizations for Raspberry Pi"""
         conn = sqlite3.connect(
             self.db_path,
-            timeout=30.0,  # 30 second timeout for Pi's slower I/O
+            timeout=DB_TIMEOUT,  # Configurable timeout for Pi's slower I/O
             check_same_thread=False
         )
-        
+
         # Enable WAL mode for better concurrency
         conn.execute("PRAGMA journal_mode=WAL")
         # Enable foreign key constraints
         conn.execute("PRAGMA foreign_keys=ON")
         # Optimize for small memory footprint (good for Pi)
-        conn.execute("PRAGMA cache_size=-32000")  # 32MB cache
+        conn.execute(f"PRAGMA cache_size={DB_CACHE_SIZE}")  # Configurable cache size
         conn.execute("PRAGMA temp_store=MEMORY")
         # Auto-vacuum to keep database compact
         conn.execute("PRAGMA auto_vacuum=INCREMENTAL")

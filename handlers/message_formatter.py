@@ -1,6 +1,6 @@
 from typing import Optional, List
 from context_manager import ShootyContext
-from config import *
+from config import DEFAULT_MSG, MESSAGES
 
 def get_ping_shooty_message(role_code: Optional[str]) -> str:
     """Get the initial ping message for starting a session."""
@@ -28,14 +28,11 @@ def italics(text: str) -> str:
 def party_status_message(is_ping: bool, user_sets: ShootyContext) -> str:
     """
     Generate the party status message
-    
+
     Args:
-        is_ping: Boolean or Channel object - if True/Channel, include ping
+        is_ping: If True, include role mention in message
         user_sets: ShootyContext object with user data
     """
-    # Handle backward compatibility - is_ping might be a channel object
-    if hasattr(is_ping, 'id'):  # It's a channel object
-        is_ping = False
     
     num_soloq_users = user_sets.get_soloq_user_count()
     num_fullstack_users = user_sets.get_fullstack_user_count()

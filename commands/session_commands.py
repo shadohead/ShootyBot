@@ -11,82 +11,90 @@ from context_manager import context_manager
 from handlers.message_formatter import get_ping_shooty_message, party_status_message
 from handlers.reaction_handler import add_react_options
 from data_manager import data_manager
-from config import *
+from config import MESSAGES, MAX_SCHEDULED_HOURS
 from utils import format_time_for_display
 
 class SessionCommands(BaseCommandCog):
     """Commands for managing party sessions"""
     
     @commands.hybrid_command(
-        name="st", 
+        name="st",
         description="Starts a Fresh Shooty Session (FSS™)"
     )
     async def start_session(self, ctx: commands.Context) -> None:
-        await self.defer_if_slash(ctx)
-        self.logger.info("Starting new shooty session")
-        
-        channel_id = ctx.channel.id
-        shooty_context = context_manager.get_context(channel_id)
-        
-        # End previous session if one exists
-        if hasattr(shooty_context, 'current_session_id') and shooty_context.current_session_id:
-            await self._end_current_session(shooty_context)
-        
-        # Create new session in data manager
-        session = data_manager.create_session(
-            channel_id=channel_id,
-            started_by=ctx.author.id,
-            game_name=shooty_context.game_name
-        )
-        session.party_size = shooty_context.party_max_size
-        
-        # Store session reference in context
-        shooty_context.current_session_id = session.session_id
-        
-        # Backup current state for restore functionality
-        shooty_context.backup_state()
-        
-        # Reset users
-        shooty_context.reset_users()
-        
-        # Update bot status after resetting users
-        await self.bot.update_status_with_queue_count()
-        
-        # Send ping message
-        response_string = get_ping_shooty_message(shooty_context.role_code)
-        message = await ctx.send(response_string)
-        
-        # Track the message for reactions
-        shooty_context.current_st_message_id = message.id
-        
-        # Save context to persist the message ID
-        context_manager.save_context(ctx.channel.id)
-        
-        # Add reaction options
-        await add_react_options(message)
-        
-        # Save the context and session
-        context_manager.save_context(channel_id)
-        data_manager.save_session(session.session_id)
-        
-        # Update user stats for session starter
-        user_data = data_manager.get_user(ctx.author.id)
-        user_data.increment_session_count()
-        user_data.add_session_to_history(session.session_id)
-        data_manager.save_user(ctx.author.id)
+        try:
+            await self.defer_if_slash(ctx)
+            self.logger.info("Starting new shooty session")
+
+            channel_id = ctx.channel.id
+            shooty_context = context_manager.get_context(channel_id)
+
+            # End previous session if one exists
+            if hasattr(shooty_context, 'current_session_id') and shooty_context.current_session_id:
+                await self._end_current_session(shooty_context)
+
+            # Create new session in data manager
+            session = data_manager.create_session(
+                channel_id=channel_id,
+                started_by=ctx.author.id,
+                game_name=shooty_context.game_name
+            )
+            session.party_size = shooty_context.party_max_size
+
+            # Store session reference in context
+            shooty_context.current_session_id = session.session_id
+
+            # Backup current state for restore functionality
+            shooty_context.backup_state()
+
+            # Reset users
+            shooty_context.reset_users()
+
+            # Update bot status after resetting users
+            await self.bot.update_status_with_queue_count()
+
+            # Send ping message
+            response_string = get_ping_shooty_message(shooty_context.role_code)
+            message = await ctx.send(response_string)
+
+            # Track the message for reactions
+            shooty_context.current_st_message_id = message.id
+
+            # Save context to persist the message ID
+            context_manager.save_context(ctx.channel.id)
+
+            # Add reaction options
+            await add_react_options(message)
+
+            # Save the context and session
+            context_manager.save_context(channel_id)
+            data_manager.save_session(session.session_id)
+
+            # Update user stats for session starter
+            user_data = data_manager.get_user(ctx.author.id)
+            user_data.increment_session_count()
+            user_data.add_session_to_history(session.session_id)
+            data_manager.save_user(ctx.author.id)
+        except Exception as e:
+            self.logger.error(f"Error starting session: {e}")
+            await self.send_error_embed(ctx, "Session Start Failed", "Failed to start session. Please try again.")
     
     @commands.hybrid_command(
-        name="sts", 
+        name="sts",
         description="Prints party status"
     )
     async def session_status(self, ctx: commands.Context) -> None:
-        self.logger.info("Printing Status")
-        
-        channel_id = ctx.channel.id
-        shooty_context = context_manager.get_context(channel_id)
-        
-        status_message = party_status_message(ctx.channel, shooty_context)
-        await ctx.reply(status_message)
+        try:
+            self.logger.info("Printing Status")
+
+            channel_id = ctx.channel.id
+            shooty_context = context_manager.get_context(channel_id)
+
+            status_message = party_status_message(False, shooty_context)
+            await ctx.reply(status_message)
+        except Exception as e:
+            self.logger.error(f"Error getting session status: {e}")
+            await self.send_error_embed(ctx, "Status Error", "Failed to get party status.")
     
     @commands.hybrid_command(
         name="stm", 
@@ -115,22 +123,30 @@ class SessionCommands(BaseCommandCog):
         description="Restores party to the previous state before it got reset"
     )
     async def restore_session(self, ctx: commands.Context) -> None:
-        channel_id = ctx.channel.id
-        shooty_context = context_manager.get_context(channel_id)
-        
-        # Restore backup
-        shooty_context.restore_state()
-        
-        self.logger.info(
-            "Restoring shooty_context: " + 
-            str([user.name for user in shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set)])
-        )
-        
-        # Update bot status after restoring users
-        await self.bot.update_status_with_queue_count()
-        
-        await self.send_success_embed(ctx, "Session Restored", MESSAGES["RESTORED_SESSION"])
-        await ctx.send(party_status_message(ctx.channel, shooty_context))
+        try:
+            channel_id = ctx.channel.id
+            shooty_context = context_manager.get_context(channel_id)
+
+            # Restore backup
+            restored = shooty_context.restore_state()
+
+            if not restored:
+                await self.send_error_embed(ctx, "No Backup", "No previous session state available to restore.")
+                return
+
+            self.logger.info(
+                "Restoring shooty_context: " +
+                str([user.name for user in shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set)])
+            )
+
+            # Update bot status after restoring users
+            await self.bot.update_status_with_queue_count()
+
+            await self.send_success_embed(ctx, "Session Restored", MESSAGES["RESTORED_SESSION"])
+            await ctx.send(party_status_message(False, shooty_context))
+        except Exception as e:
+            self.logger.error(f"Error restoring session: {e}")
+            await self.send_error_embed(ctx, "Restore Failed", "Failed to restore session state.")
     
     @commands.hybrid_command(
         name="shootytime",
@@ -165,9 +181,9 @@ class SessionCommands(BaseCommandCog):
             message = await ctx.send(f"Shooty at {format_time_for_display(scheduled_time)}?")
             await self.start_session(ctx)
             await asyncio.sleep(seconds_to_wait)
-            
+
             await ctx.send(f"Shooty time now! - {format_time_for_display(scheduled_time)}")
-            await ctx.reply(party_status_message(ctx.channel, shooty_context))
+            await ctx.reply(party_status_message(False, shooty_context))
             
         except ValueError:
             await self.send_error_embed(ctx, "Invalid Time Format", MESSAGES["INVALID_TIME"])
@@ -467,16 +483,20 @@ class SessionCommands(BaseCommandCog):
     )
     async def end_session(self, ctx: commands.Context) -> None:
         """End the current session"""
-        channel_id = ctx.channel.id
-        shooty_context = context_manager.get_context(channel_id)
-        
-        if hasattr(shooty_context, 'current_session_id') and shooty_context.current_session_id:
-            await self._end_current_session(shooty_context)
-            # Update bot status after ending session
-            await self.bot.update_status_with_queue_count()
-            await self.send_success_embed(ctx, "Session Ended", "Session ended and stats recorded!")
-        else:
-            await self.send_error_embed(ctx, "No Active Session", "No active session to end.")
+        try:
+            channel_id = ctx.channel.id
+            shooty_context = context_manager.get_context(channel_id)
+
+            if hasattr(shooty_context, 'current_session_id') and shooty_context.current_session_id:
+                await self._end_current_session(shooty_context)
+                # Update bot status after ending session
+                await self.bot.update_status_with_queue_count()
+                await self.send_success_embed(ctx, "Session Ended", "Session ended and stats recorded!")
+            else:
+                await self.send_error_embed(ctx, "No Active Session", "No active session to end.")
+        except Exception as e:
+            self.logger.error(f"Error ending session: {e}")
+            await self.send_error_embed(ctx, "End Session Failed", "Failed to end session.")
     
     async def _end_current_session(self, shooty_context) -> None:
         """Helper method to end the current session"""

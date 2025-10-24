@@ -7,7 +7,7 @@ import discord
 from discord.ext import commands, tasks
 import asyncio
 
-from config import BOT_TOKEN, COMMAND_PREFIX, LOG_LEVEL, MESSAGES, APP_VERSION
+from config import BOT_TOKEN, COMMAND_PREFIX, LOG_LEVEL, MESSAGES, APP_VERSION, DB_MATCH_STORAGE_WARN_MB, DB_PLAYER_STATS_WARN_MB
 from context_manager import context_manager
 from handlers.message_formatter import DEFAULT_MSG
 from handlers.reaction_handler import add_react_options
@@ -65,13 +65,11 @@ class ShootyBot(commands.Bot):
             )
 
             # Log if approaching size limits
-            if stats.get("matches_size_mb", 0) > 40:  # Warn at 40MB (limit is 50MB)
+            if stats.get("matches_size_mb", 0) > DB_MATCH_STORAGE_WARN_MB:
                 logging.warning(
                     f"⚠️ Match storage approaching limit: {stats['matches_size_mb']:.1f}MB"
                 )
-            if (
-                stats.get("player_stats_size_mb", 0) > 16
-            ):  # Warn at 16MB (limit is 20MB)
+            if stats.get("player_stats_size_mb", 0) > DB_PLAYER_STATS_WARN_MB:
                 logging.warning(
                     f"⚠️ Player stats storage approaching limit: {stats['player_stats_size_mb']:.1f}MB"
                 )
