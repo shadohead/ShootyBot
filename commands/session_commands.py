@@ -578,18 +578,9 @@ class SessionCommands(BaseCommandCog):
 
             # Send confirmation
             if count == 0:
-                await self.send_success_embed(
-                    ctx,
-                    "Plus Ones Removed",
-                    "Your plus ones have been removed. You're now registered as a single player."
-                )
+                await ctx.send(f"{ctx.author.name} removed their plus ones")
             else:
-                await self.send_success_embed(
-                    ctx,
-                    "Plus Ones Added",
-                    f"You're now registered with +{count} guest{'s' if count > 1 else ''}. "
-                    f"This takes up {count + 1} total spot{'s' if count + 1 > 1 else ''} in the party."
-                )
+                await ctx.send(f"{ctx.author.name} is bringing +{count}")
 
         except Exception as e:
             self.logger.error(f"Error setting plus ones: {e}")
