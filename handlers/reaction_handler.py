@@ -108,17 +108,21 @@ class ReactionHandler(commands.Cog):
         # Handle thumbs up removal (solo queue)
         if str(reaction.emoji) == EMOJI["THUMBS_UP"] and shooty_context.is_soloq_user(user):
             shooty_context.remove_soloq_user(user)
-            logging.info(f"Removed {user.name} from solo queue")
+            # Also remove plus ones when user leaves party
+            shooty_context.remove_plus_ones(user)
+            logging.info(f"Removed {user.name} from solo queue and cleared their plus ones")
 
             await self._update_party_message(reaction.message, shooty_context)
 
             # Update bot status
             await self.bot.update_status_with_queue_count()
-        
+
         # Handle 5️⃣ removal (fullstack)
         elif str(reaction.emoji) == EMOJI["FULL_STACK"] and user in shooty_context.bot_fullstack_user_set:
             shooty_context.remove_fullstack_user(user)
-            logging.info(f"Removed {user.name} from fullstack queue")
+            # Also remove plus ones when user leaves party
+            shooty_context.remove_plus_ones(user)
+            logging.info(f"Removed {user.name} from fullstack queue and cleared their plus ones")
 
             await self._update_party_message(reaction.message, shooty_context)
 

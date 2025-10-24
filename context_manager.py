@@ -14,24 +14,27 @@ class ShootyContext:
     def __init__(self, channel_id: int) -> None:
         self.channel_id: int = channel_id
         self.channel: Optional[discord.TextChannel] = None  # Discord channel object, set later
-        
+
         # User sets
         self.bot_soloq_user_set: Set[str] = set()
         self.bot_fullstack_user_set: Set[str] = set()
         self.bot_ready_user_set: Set[str] = set()
-        
+
+        # Plus ones tracking (user_id -> number of guests)
+        self.plus_ones: Dict[int, int] = {}
+
         # Message tracking
         self.current_st_message_id: Optional[int] = None
-        
+
         # Channel settings
         self.role_code: str = DEFAULT_SHOOTY_ROLE_CODE
         self.game_name: Optional[str] = None
         self.party_max_size: int = DEFAULT_PARTY_SIZE
         self.voice_channel_id: Optional[int] = None
-        
+
         # Backup for restore functionality
         self._backup: Optional[Dict[str, Any]] = None
-        
+
         logging.info(f"Created ShootyContext for channel {channel_id}")
     
     def backup_state(self) -> None:
@@ -39,7 +42,8 @@ class ShootyContext:
         self._backup = {
             'soloq': set(self.bot_soloq_user_set),
             'fullstack': set(self.bot_fullstack_user_set),
-            'ready': set(self.bot_ready_user_set)
+            'ready': set(self.bot_ready_user_set),
+            'plus_ones': dict(self.plus_ones)
         }
         logging.info(f"Backed up state for channel {self.channel_id}")
     
@@ -53,6 +57,7 @@ class ShootyContext:
             self.bot_soloq_user_set = self._backup['soloq']
             self.bot_fullstack_user_set = self._backup['fullstack']
             self.bot_ready_user_set = self._backup['ready']
+            self.plus_ones = self._backup.get('plus_ones', {})
             logging.info(f"Restored state for channel {self.channel_id}")
             return True
         else:
@@ -64,11 +69,19 @@ class ShootyContext:
         self.bot_soloq_user_set.clear()
         self.bot_fullstack_user_set.clear()
         self.bot_ready_user_set.clear()
+        self.plus_ones.clear()
     
     # Solo Q User Functions
     def get_soloq_user_count(self) -> int:
-        return len(self.bot_soloq_user_set)
-    
+        """Get count of soloq users including their plus ones"""
+        user_count = len(self.bot_soloq_user_set)
+        # Add plus ones for soloq users only
+        plus_ones_count = sum(
+            self.get_plus_ones(user)
+            for user in self.bot_soloq_user_set
+        )
+        return user_count + plus_ones_count
+
     def add_soloq_user(self, user: str) -> None:
         # Remove from fullstack if they were there
         self.bot_fullstack_user_set.discard(user)
@@ -82,8 +95,15 @@ class ShootyContext:
     
     # Fullstack User Functions
     def get_fullstack_user_count(self) -> int:
-        return len(self.bot_fullstack_user_set)
-    
+        """Get count of fullstack users including their plus ones"""
+        user_count = len(self.bot_fullstack_user_set)
+        # Add plus ones for fullstack users only
+        plus_ones_count = sum(
+            self.get_plus_ones(user)
+            for user in self.bot_fullstack_user_set
+        )
+        return user_count + plus_ones_count
+
     def add_fullstack_user(self, user: str) -> None:
         # Only add if they're not already in soloq
         if user not in self.bot_soloq_user_set:
@@ -98,28 +118,55 @@ class ShootyContext:
     
     def get_party_max_size(self) -> int:
         return self.party_max_size
-    
+
+    # Plus Ones Functions
+    def get_plus_ones(self, user) -> int:
+        """Get number of plus ones for a user"""
+        return self.plus_ones.get(user.id, 0)
+
+    def set_plus_ones(self, user, count: int) -> None:
+        """Set number of plus ones for a user"""
+        if count <= 0:
+            self.plus_ones.pop(user.id, None)
+        else:
+            self.plus_ones[user.id] = count
+
+    def remove_plus_ones(self, user) -> None:
+        """Remove all plus ones for a user"""
+        self.plus_ones.pop(user.id, None)
+
+    def get_total_plus_ones(self) -> int:
+        """Get total number of plus ones across all users"""
+        return sum(self.plus_ones.values())
+
     # Utility Functions
     def get_unique_user_count(self) -> int:
-        return len(self.bot_soloq_user_set.union(self.bot_fullstack_user_set))
+        """Get total party size including users and their plus ones"""
+        user_count = len(self.bot_soloq_user_set.union(self.bot_fullstack_user_set))
+        plus_ones_count = self.get_total_plus_ones()
+        return user_count + plus_ones_count
     
     def remove_user_from_everything(self, user_names_list: List[str]) -> None:
         """Remove users by name prefix from all sets"""
         kicked_usernames_list = []
-        
+
         for username in user_names_list:
             # Check soloq users
             for user in self.bot_soloq_user_set.copy():
                 if user.name.startswith(username):
                     self.bot_soloq_user_set.remove(user)
+                    # Also remove plus ones when user is kicked
+                    self.remove_plus_ones(user)
                     kicked_usernames_list.append(user.name)
-            
+
             # Check fullstack users
             for user in self.bot_fullstack_user_set.copy():
                 if user.name.startswith(username):
                     self.bot_fullstack_user_set.remove(user)
+                    # Also remove plus ones when user is kicked
+                    self.remove_plus_ones(user)
                     kicked_usernames_list.append(user.name)
-        
+
         return kicked_usernames_list
     
     # Formatting Functions
@@ -127,10 +174,15 @@ class ShootyContext:
         """Format username with bold if ready or in voice channel"""
         is_ready = user in self.bot_ready_user_set
         is_in_voice_channel = self._is_user_in_voice_channel(user)
-        
+
         # Format name
         name = str(user) if display_hashtag else user.name
-        
+
+        # Add plus ones suffix if applicable
+        plus_ones_count = self.get_plus_ones(user)
+        if plus_ones_count > 0:
+            name = f"{name}+{plus_ones_count}"
+
         # Apply formatting: bold if ready or in voice channel
         if is_in_voice_channel:
             return f"**{name}**"
