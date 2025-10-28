@@ -136,21 +136,24 @@ Added **7 new stat categories** that utilize previously unused data from the Hen
 
 ### 7. 😱 149 Damage Curse
 
-**Data Source**: Same as one-tap (damage_events analysis)
+**Data Source**: `damage_events` cross-referenced with `kill_events`
 
 **Algorithm**:
-1. For each kill, calculate damage dealt in that round
-2. Count kills where damage was 140-155 (close to kill threshold)
-3. High count indicates "almost kills" or team finishing damage
+1. For each damage event with 140-155 damage
+2. Check if the receiver was killed by THIS player (in kill_events)
+3. If NOT killed by this player → it's a "curse" instance (someone else finished)
+4. Count total curse instances
 
-**Threshold**: 3+ kills with 140-155 damage
+**Threshold**: 3+ instances of dealing 140-155 damage without getting the kill
 
-**Why This Is "Cursed"**: In Valorant, 150 HP is the max health. Dealing 140-155 damage means you almost killed them but they survived with <10 HP, requiring another shot.
+**Why This Is "Cursed"**: In Valorant, 150 HP is the max health. Dealing 140-155 damage means you almost killed them (they had <10 HP) but someone else got the kill credit. You did all the work but got no frag!
 
 **Example Output**:
 ```
-😱 **149 CURSE**: PlayerName (4 kills with 140-155 damage) - So close!
+😱 **149 CURSE**: PlayerName (5x dealt 140-155 damage without kill) - So close!
 ```
+
+**Technical Note**: Uses negative values in damage_per_kill array to mark curse instances (-149) vs actual kills (+149).
 
 ---
 

@@ -500,17 +500,28 @@ class MatchTracker:
                     if winning_team == player_team:
                         eco_rounds_won[puuid] += 1
 
-                # Damage per kill analysis
+                # Damage analysis for one-tap and 149 curse detection
                 kill_events = ps.get('kill_events', [])
                 damage_events = ps.get('damage_events', [])
 
-                # Calculate damage dealt per kill for this round
-                if kills_in_round > 0:
-                    # Sum damage from damage_events
-                    round_damage = sum(de.get('damage', 0) for de in damage_events)
-                    if round_damage > 0:
-                        avg_damage_per_kill = round_damage / kills_in_round
-                        damage_per_kill[puuid].extend([avg_damage_per_kill] * kills_in_round)
+                # Get list of victims this player killed (for 149 curse detection)
+                killed_puuids = set(ke.get('victim_puuid') for ke in kill_events)
+
+                # Track damage instances
+                for damage_event in damage_events:
+                    damage_dealt = damage_event.get('damage', 0)
+                    receiver_puuid = damage_event.get('receiver_puuid')
+
+                    # One-tap detection: Track damage per kill
+                    if receiver_puuid in killed_puuids and damage_dealt > 0:
+                        damage_per_kill[puuid].append(damage_dealt)
+
+                    # 149 curse: High damage but NO kill (someone else finished them)
+                    if 140 <= damage_dealt <= 155 and receiver_puuid not in killed_puuids:
+                        if puuid not in damage_per_kill:
+                            damage_per_kill[puuid] = []
+                        # Use negative value to mark as "curse" instance
+                        damage_per_kill[puuid].append(-damage_dealt)
 
             # Plant/defuse tracking
             plant_events = round_data.get('plant_events', [])
@@ -997,20 +1008,24 @@ class MatchTracker:
                 damages = damage_per_kill.get(puuid, [])
 
                 if damages:
-                    avg_dpk = sum(damages) / len(damages)
+                    # Separate positive (kills) from negative (curse instances)
+                    kill_damages = [d for d in damages if d > 0]
+                    curse_instances = [abs(d) for d in damages if d < 0]
 
                     # One-tap detection (very low damage per kill)
-                    if avg_dpk <= 155 and p['kills'] >= 10:
-                        stats['highlights'].append(
-                            f"🎯 **ONE-TAP GOD**: {p['member'].display_name} ({avg_dpk:.0f} avg damage/kill) - Efficient eliminations!"
-                        )
-                        break
+                    if kill_damages:
+                        avg_dpk = sum(kill_damages) / len(kill_damages)
+                        if avg_dpk <= 155 and p['kills'] >= 10:
+                            stats['highlights'].append(
+                                f"🎯 **ONE-TAP GOD**: {p['member'].display_name} ({avg_dpk:.0f} avg damage/kill) - Efficient eliminations!"
+                            )
+                            break
 
-                    # 149 curse (high damage but not securing kills)
-                    high_damage_kills = sum(1 for d in damages if 140 <= d <= 155)
-                    if high_damage_kills >= 3:
+                    # 149 curse (high damage but NOT getting the kill)
+                    if len(curse_instances) >= 3:
+                        avg_curse_damage = sum(curse_instances) / len(curse_instances)
                         stats['highlights'].append(
-                            f"😱 **149 CURSE**: {p['member'].display_name} ({high_damage_kills} kills with 140-155 damage) - So close!"
+                            f"😱 **149 CURSE**: {p['member'].display_name} ({len(curse_instances)}x dealt 140-155 damage without kill) - So close!"
                         )
                         break
 
