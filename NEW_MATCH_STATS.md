@@ -4,14 +4,13 @@ This document describes the new statistics added to the Epic Match Highlights se
 
 ## Summary
 
-Added **7 new stat categories** that utilize previously unused data from the Henrik API v2 match response:
+Added **6 new stat categories** that utilize previously unused data from the Henrik API v2 match response:
 - Ability usage tracking
 - Plant/defuse hero recognition
 - Clutch situation detection
 - Eco round performance
 - Entry duel win rates
 - Damage efficiency (one-tap detection)
-- 149 damage curse detection
 
 ---
 
@@ -134,29 +133,6 @@ Added **7 new stat categories** that utilize previously unused data from the Hen
 
 ---
 
-### 7. 😱 149 Damage Curse
-
-**Data Source**: `damage_events` cross-referenced with `kill_events`
-
-**Algorithm**:
-1. For each damage event with 140-155 damage
-2. Check if the receiver was killed by THIS player (in kill_events)
-3. If NOT killed by this player → it's a "curse" instance (someone else finished)
-4. Count total curse instances
-
-**Threshold**: 3+ instances of dealing 140-155 damage without getting the kill
-
-**Why This Is "Cursed"**: In Valorant, 150 HP is the max health. Dealing 140-155 damage means you almost killed them (they had <10 HP) but someone else got the kill credit. You did all the work but got no frag!
-
-**Example Output**:
-```
-😱 **149 CURSE**: PlayerName (5x dealt 140-155 damage without kill) - So close!
-```
-
-**Technical Note**: Uses negative values in damage_per_kill array to mark curse instances (-149) vs actual kills (+149).
-
----
-
 ## Code Location
 
 **File**: `match_tracker.py`
@@ -205,11 +181,10 @@ Discord Embed Field: "🎆 Epic Match Highlights"
 - Match with eco rounds (pistol rounds, force buys)
 - Match with high entry fragging
 - Match with Sheriff/Marshal kills (one-taps)
-- Match with high damage but low kills (149 curse)
 
 ### Known Limitations:
 1. **Clutch detection** is heuristic-based (survivors = alive players)
-2. **Damage per kill** is averaged per round, not per kill event
+2. **Damage per kill** tracks individual damage events to killed targets
 3. **Plant/defuse events** may not be present in older API versions
 4. **Ability casts** may not be available in all match data
 
