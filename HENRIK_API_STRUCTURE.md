@@ -109,8 +109,13 @@
 ]
 ```
 
+### Additional Fields (Confirmed)
+- `damage_weapon_name`: Weapon name (e.g., "Vandal", "Phantom", "Melee") - ✅ USED for knife kill tracking
+- `damage_weapon_id`: Weapon UUID/GUID
+- `damage_weapon_assets`: Object containing weapon icon URLs
+
 ### Additional Fields (Unconfirmed)
-- `weapon_guid`: Weapon used (reported as buggy for Chamber abilities)
+- `weapon_guid`: Weapon used (reported as buggy for Chamber abilities, use damage_weapon_name instead)
 - `damage`: Damage dealt
 - `secondary_fire`: Boolean
 - `wallbang`: Boolean (unclear if available)
@@ -227,6 +232,7 @@ Likely structure:
 - players: puuid, name, tag, team, character, stats (K/D/A, headshots/body/legs), damage_made, damage_received
 - teams: has_won, rounds_won
 - rounds.player_stats: player_puuid, team, kills, kill_events, damage_events, economy
+- kill_events: damage_weapon_name (for knife kill tracking)
 
 ### 🆕 Available But NOT Used:
 - **kill_events**: kill_time_in_match, killer_display_name, killer_team, victim_display_name, victim_team
@@ -293,11 +299,14 @@ Likely structure:
 
 ### ❌ Cannot Detect:
 - **Spam through smoke** - No smoke position/visibility data
-- **Weapon mastery** - weapon_guid is buggy/unreliable
 - **Wallbang detection** - Unconfirmed if wallbang flag exists
 - **Distance of kills** - Would need player positions at kill time (may be available via player_locations)
 - **Flash assists** - No blind/flash effect tracking
 - **Angle/positioning quality** - Would need complex position analysis
+
+### ✅ Previously Thought Unavailable (Now Implemented):
+- **Knife kills** - ✅ NOW AVAILABLE via `damage_weapon_name` field in kill_events
+- **Weapon tracking** - ✅ Available via `damage_weapon_name`, `damage_weapon_id`, and `damage_weapon_assets` (use damage_weapon_name as weapon_guid is buggy)
 
 ---
 
