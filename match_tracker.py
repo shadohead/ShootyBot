@@ -460,6 +460,7 @@ class MatchTracker:
         eco_rounds_won = {puuid: 0 for puuid in puuid_to_member}
         first_kill_rounds = {puuid: {'won': 0, 'lost': 0} for puuid in puuid_to_member}
         damage_per_kill = {puuid: [] for puuid in puuid_to_member}  # Track damage for each kill
+        knife_kills = {puuid: 0 for puuid in puuid_to_member}  # Track knife kills
 
         for round_data in match_data.get('rounds', []):
             winning_team = round_data.get('winning_team', '').lower()
@@ -506,6 +507,26 @@ class MatchTracker:
 
                 # Get list of victims this player killed
                 killed_puuids = set(ke.get('victim_puuid') for ke in kill_events)
+
+                # Track knife kills
+                for kill_event in kill_events:
+                    # Check if weapon is knife/melee
+                    # Henrik API may have different field names: damage_weapon_name, damage_weapon_id, etc.
+                    weapon_name = kill_event.get('damage_weapon_name', '').lower()
+                    weapon_id = kill_event.get('damage_weapon_id', '').lower()
+                    weapon_assets = kill_event.get('damage_weapon_assets', {})
+
+                    # Check various possible knife identifiers
+                    is_knife = (
+                        'knife' in weapon_name or
+                        'melee' in weapon_name or
+                        'knife' in weapon_id or
+                        'melee' in weapon_id or
+                        weapon_id == 'melee'
+                    )
+
+                    if is_knife:
+                        knife_kills[puuid] += 1
 
                 # Track damage per kill for one-tap detection
                 for damage_event in damage_events:
@@ -994,6 +1015,22 @@ class MatchTracker:
                             f"⚡ **ENTRY FRAGGER**: {p['member'].display_name} ({fk_won}/{fk_total} duels, {win_rate:.0f}%)"
                         )
                         break
+
+            # Knife kill highlight
+            for p in player_stats:
+                puuid = p['puuid']
+                knives = knife_kills.get(puuid, 0)
+
+                if knives >= 2:
+                    stats['highlights'].append(
+                        f"🔪 **KNIFE MASTER**: {p['member'].display_name} ({knives} knife kills) - The disrespect!"
+                    )
+                    break
+                elif knives == 1:
+                    stats['highlights'].append(
+                        f"🔪 **KNIFE KILL**: {p['member'].display_name} - Got the melee elimination!"
+                    )
+                    break
 
             # One-tap detection
             for p in player_stats:

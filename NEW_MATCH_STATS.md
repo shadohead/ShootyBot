@@ -4,13 +4,14 @@ This document describes the new statistics added to the Epic Match Highlights se
 
 ## Summary
 
-Added **6 new stat categories** that utilize previously unused data from the Henrik API v2 match response:
+Added **7 new stat categories** that utilize previously unused data from the Henrik API v2 match response:
 - Ability usage tracking
 - Plant/defuse hero recognition
 - Clutch situation detection
 - Eco round performance
 - Entry duel win rates
 - Damage efficiency (one-tap detection)
+- Knife kill recognition
 
 ---
 
@@ -133,14 +134,39 @@ Added **6 new stat categories** that utilize previously unused data from the Hen
 
 ---
 
+### 7. 🔪 Knife Kill Recognition
+
+**Data Source**: `kill_events[].damage_weapon_name` or `damage_weapon_id`
+
+**Algorithm**:
+1. For each kill event, check the weapon used
+2. Identify if weapon is knife/melee
+3. Count total knife kills per player
+
+**Thresholds**:
+- **Knife Master**: 2+ knife kills
+- **Knife Kill**: 1 knife kill
+
+**Why It's Cool**: Knife kills are rare and require getting very close to enemies. They're often seen as disrespectful or require exceptional positioning/timing.
+
+**Example Output**:
+```
+🔪 **KNIFE MASTER**: PlayerName (3 knife kills) - The disrespect!
+🔪 **KNIFE KILL**: PlayerName - Got the melee elimination!
+```
+
+**Technical Note**: Checks multiple field variations (`damage_weapon_name`, `damage_weapon_id`) as Henrik API weapon data format may vary.
+
+---
+
 ## Code Location
 
 **File**: `match_tracker.py`
 
 **Functions Modified**:
-- `_calculate_fun_match_stats()` (lines 413-1016)
-  - Data collection: Lines 453-596
-  - Highlight generation: Lines 900-1015
+- `_calculate_fun_match_stats()` (lines 413-1050+)
+  - Data collection: Lines 453-640
+  - Highlight generation: Lines 900-1050
 
 ---
 
@@ -159,6 +185,7 @@ Stats Dictionaries:
   - eco_round_kills/eco_rounds_won
   - first_kill_rounds
   - damage_per_kill
+  - knife_kills
     ↓
 Highlight Generation (lines 900-1015)
     ↓
@@ -181,12 +208,14 @@ Discord Embed Field: "🎆 Epic Match Highlights"
 - Match with eco rounds (pistol rounds, force buys)
 - Match with high entry fragging
 - Match with Sheriff/Marshal kills (one-taps)
+- Match with knife kills
 
 ### Known Limitations:
 1. **Clutch detection** is heuristic-based (survivors = alive players)
 2. **Damage per kill** tracks individual damage events to killed targets
 3. **Plant/defuse events** may not be present in older API versions
 4. **Ability casts** may not be available in all match data
+5. **Knife kill detection** depends on weapon field naming in API (may vary)
 
 ---
 
