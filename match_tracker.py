@@ -340,8 +340,9 @@ class MatchTracker:
                     team_won = teams[team_color].get('has_won', False)
                 stack_result = "🏆 WON" if team_won else "❌ LOST"
 
+            agent = player_data.get('character', 'Unknown')
             kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
-            member_list.append(f"• **{member.display_name}**: {kda}")
+            member_list.append(f"• **{member.display_name}** ({agent}): {kda}")
         
         embed.add_field(
             name=f"👥 Squad ({len(discord_members)}) - {stack_result}",

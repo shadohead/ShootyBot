@@ -28,7 +28,7 @@ async def test_embed_duration_seconds_to_minutes(discord_member_factory):
     discord_members = [
         {
             'member': member,
-            'player_data': {'stats': {'kills': 1, 'deaths': 2, 'assists': 3}, 'team': 'red'}
+            'player_data': {'stats': {'kills': 1, 'deaths': 2, 'assists': 3}, 'team': 'red', 'character': 'Jett'}
         }
     ]
 
@@ -62,7 +62,7 @@ async def test_embed_duration_hours_format(discord_member_factory):
     discord_members = [
         {
             'member': member,
-            'player_data': {'stats': {'kills': 1, 'deaths': 2, 'assists': 3}, 'team': 'red'}
+            'player_data': {'stats': {'kills': 1, 'deaths': 2, 'assists': 3}, 'team': 'red', 'character': 'Jett'}
         }
     ]
 
