@@ -450,19 +450,154 @@ class MatchTracker:
         # Gather multikill counts from round data
         mk_counts = {puuid: {'2k': 0, '3k': 0, '4k': 0, '5k': 0} for puuid in puuid_to_member}
 
+        # Track new stats from round data
+        ability_usage = {puuid: {'total': 0, 'ult': 0} for puuid in puuid_to_member}
+        plant_counts = {puuid: 0 for puuid in puuid_to_member}
+        defuse_counts = {puuid: 0 for puuid in puuid_to_member}
+        clutch_attempts = {puuid: {'1v2': 0, '1v3': 0, '1v4': 0, '1v5': 0} for puuid in puuid_to_member}
+        clutch_wins = {puuid: {'1v2': 0, '1v3': 0, '1v4': 0, '1v5': 0} for puuid in puuid_to_member}
+        eco_round_kills = {puuid: 0 for puuid in puuid_to_member}
+        eco_rounds_won = {puuid: 0 for puuid in puuid_to_member}
+        first_kill_rounds = {puuid: {'won': 0, 'lost': 0} for puuid in puuid_to_member}
+        damage_per_kill = {puuid: [] for puuid in puuid_to_member}  # Track damage for each kill
+
         for round_data in match_data.get('rounds', []):
+            winning_team = round_data.get('winning_team', '').lower()
+
             for ps in round_data.get('player_stats', []):
                 puuid = ps.get('player_puuid')
-                if puuid in mk_counts:
-                    kills_in_round = len(ps.get('kill_events', []))
-                    if kills_in_round >= 5:
-                        mk_counts[puuid]['5k'] += 1
-                    elif kills_in_round >= 4:
-                        mk_counts[puuid]['4k'] += 1
-                    elif kills_in_round >= 3:
-                        mk_counts[puuid]['3k'] += 1
-                    elif kills_in_round >= 2:
-                        mk_counts[puuid]['2k'] += 1
+                if puuid not in puuid_to_member:
+                    continue
+
+                # Multikill counts
+                kills_in_round = len(ps.get('kill_events', []))
+                if kills_in_round >= 5:
+                    mk_counts[puuid]['5k'] += 1
+                elif kills_in_round >= 4:
+                    mk_counts[puuid]['4k'] += 1
+                elif kills_in_round >= 3:
+                    mk_counts[puuid]['3k'] += 1
+                elif kills_in_round >= 2:
+                    mk_counts[puuid]['2k'] += 1
+
+                # Ability usage tracking
+                ability_casts = ps.get('ability_casts', {})
+                if ability_casts:
+                    total_abilities = (
+                        ability_casts.get('c_casts', 0) +
+                        ability_casts.get('q_casts', 0) +
+                        ability_casts.get('e_casts', 0)
+                    )
+                    ult_casts = ability_casts.get('x_casts', 0)
+                    ability_usage[puuid]['total'] += total_abilities
+                    ability_usage[puuid]['ult'] += ult_casts
+
+                # Eco round tracking (loadout < 4000 credits)
+                loadout_value = ps.get('economy', {}).get('loadout_value', 0)
+                player_team = ps.get('team', '').lower()
+                if loadout_value < 4000:
+                    eco_round_kills[puuid] += kills_in_round
+                    if winning_team == player_team:
+                        eco_rounds_won[puuid] += 1
+
+                # Damage analysis for one-tap detection
+                kill_events = ps.get('kill_events', [])
+                damage_events = ps.get('damage_events', [])
+
+                # Get list of victims this player killed
+                killed_puuids = set(ke.get('victim_puuid') for ke in kill_events)
+
+                # Track damage per kill for one-tap detection
+                for damage_event in damage_events:
+                    damage_dealt = damage_event.get('damage', 0)
+                    receiver_puuid = damage_event.get('receiver_puuid')
+
+                    # One-tap detection: Track damage per kill
+                    if receiver_puuid in killed_puuids and damage_dealt > 0:
+                        damage_per_kill[puuid].append(damage_dealt)
+
+            # Plant/defuse tracking
+            plant_events = round_data.get('plant_events', [])
+            for plant_event in plant_events:
+                planter_puuid = plant_event.get('player_puuid')
+                if planter_puuid in plant_counts:
+                    plant_counts[planter_puuid] += 1
+
+            defuse_events = round_data.get('defuse_events', [])
+            for defuse_event in defuse_events:
+                defuser_puuid = defuse_event.get('defuser_puuid')
+                if defuser_puuid in defuse_counts:
+                    defuse_counts[defuser_puuid] += 1
+
+            # Clutch detection - find 1vX situations
+            # Group players by team and check who's alive at end of round
+            team_alive = {'red': [], 'blue': []}
+            for ps in round_data.get('player_stats', []):
+                puuid = ps.get('player_puuid')
+                player_team = ps.get('team', '').lower()
+                deaths = ps.get('was_afk', False) or ps.get('was_penalized', False)
+
+                # Check if player survived (heuristic: if they got kills or had no kill event against them)
+                kill_events = ps.get('kill_events', [])
+
+                # Get all kills in this round to see who died
+                all_round_kills = []
+                for ps2 in round_data.get('player_stats', []):
+                    all_round_kills.extend(ps2.get('kill_events', []))
+
+                # Check if this player was killed
+                was_killed = any(ke.get('victim_puuid') == puuid for ke in all_round_kills)
+
+                if not was_killed and player_team in team_alive:
+                    team_alive[player_team].append(puuid)
+
+            # Check for clutch situations (1vX where X >= 2)
+            for team in ['red', 'blue']:
+                if len(team_alive[team]) == 1:
+                    clutcher_puuid = team_alive[team][0]
+                    other_team = 'blue' if team == 'red' else 'red'
+                    enemies_alive = len(team_alive[other_team])
+
+                    if clutcher_puuid in clutch_attempts and enemies_alive >= 2:
+                        clutch_key = f'1v{min(enemies_alive, 5)}'
+                        if clutch_key in clutch_attempts[clutcher_puuid]:
+                            clutch_attempts[clutcher_puuid][clutch_key] += 1
+
+                            # Check if clutcher's team won
+                            if winning_team == team:
+                                clutch_wins[clutcher_puuid][clutch_key] += 1
+
+            # First kill/death round win rate tracking
+            all_kill_events = []
+            for ps in round_data.get('player_stats', []):
+                all_kill_events.extend(ps.get('kill_events', []))
+
+            if all_kill_events:
+                # Sort by kill time to find first kill
+                all_kill_events.sort(key=lambda x: x.get('kill_time_in_round', 0))
+                first_kill_event = all_kill_events[0]
+                first_killer_puuid = None
+                first_victim_puuid = first_kill_event.get('victim_puuid')
+
+                # Find killer from player_stats
+                for ps in round_data.get('player_stats', []):
+                    if any(ke.get('victim_puuid') == first_victim_puuid and ke.get('kill_time_in_round', 0) == first_kill_event.get('kill_time_in_round', 0) for ke in ps.get('kill_events', [])):
+                        first_killer_puuid = ps.get('player_puuid')
+                        break
+
+                # Track first kill round outcomes
+                if first_killer_puuid in first_kill_rounds:
+                    killer_team = None
+                    for ps in round_data.get('player_stats', []):
+                        if ps.get('player_puuid') == first_killer_puuid:
+                            killer_team = ps.get('team', '').lower()
+                            break
+
+                    if killer_team:
+                        if winning_team == killer_team:
+                            first_kill_rounds[first_killer_puuid]['won'] += 1
+                        else:
+                            first_kill_rounds[first_killer_puuid]['lost'] += 1
 
         # Calculate enhanced highlights
         if len(player_stats) >= 2:
@@ -765,6 +900,116 @@ class MatchTracker:
                 fun_facts.append("💰 **ECONOMY KINGS**: Minimal losses!")
             elif total_team_deaths >= 100:
                 fun_facts.append("💸 **HIGH RISK, HIGH REWARD**: Going for broke!")
+
+            # NEW STATS HIGHLIGHTS
+
+            # Ability usage highlights
+            for p in player_stats:
+                puuid = p['puuid']
+                abilities_used = ability_usage.get(puuid, {}).get('total', 0)
+                ults_used = ability_usage.get(puuid, {}).get('ult', 0)
+
+                if abilities_used >= 40:
+                    stats['highlights'].append(
+                        f"⚡ **UTILITY KING**: {p['member'].display_name} ({abilities_used} abilities used) - Maximum impact!"
+                    )
+                    break
+                elif ults_used >= 6:
+                    stats['highlights'].append(
+                        f"🎭 **ULT MASTER**: {p['member'].display_name} ({ults_used} ultimates) - High-impact plays!"
+                    )
+                    break
+
+            # Plant/defuse hero highlights
+            for p in player_stats:
+                puuid = p['puuid']
+                plants = plant_counts.get(puuid, 0)
+                defuses = defuse_counts.get(puuid, 0)
+
+                if plants >= 5:
+                    stats['highlights'].append(
+                        f"🌱 **SPIKE SPECIALIST**: {p['member'].display_name} ({plants} plants) - Objective focused!"
+                    )
+                    break
+                elif defuses >= 2:
+                    stats['highlights'].append(
+                        f"🛠️ **DEFUSE KING**: {p['member'].display_name} ({defuses} defuses) - Clutch saves!"
+                    )
+                    break
+
+            # Clutch performance highlights
+            for p in player_stats:
+                puuid = p['puuid']
+                total_clutch_wins = sum(clutch_wins.get(puuid, {}).values())
+                total_clutch_attempts = sum(clutch_attempts.get(puuid, {}).values())
+
+                if total_clutch_wins >= 2:
+                    # Find most impressive clutch
+                    clutch_str = ""
+                    for clutch_type in ['1v5', '1v4', '1v3', '1v2']:
+                        if clutch_wins.get(puuid, {}).get(clutch_type, 0) > 0:
+                            wins = clutch_wins[puuid][clutch_type]
+                            clutch_str = f"{wins} {clutch_type}" if wins == 1 else f"{wins}x {clutch_type}"
+                            break
+
+                    if clutch_str:
+                        stats['highlights'].append(
+                            f"🎭 **CLUTCH MASTER**: {p['member'].display_name} ({clutch_str} wins) - Ice in their veins!"
+                        )
+                        break
+                elif total_clutch_attempts >= 3 and total_clutch_wins == 0:
+                    stats['highlights'].append(
+                        f"😰 **CLUTCH WARRIOR**: {p['member'].display_name} ({total_clutch_attempts} attempts) - Never give up!"
+                    )
+                    break
+
+            # Eco round performance
+            for p in player_stats:
+                puuid = p['puuid']
+                eco_kills = eco_round_kills.get(puuid, 0)
+                eco_wins = eco_rounds_won.get(puuid, 0)
+
+                if eco_kills >= 5 or eco_wins >= 2:
+                    stats['highlights'].append(
+                        f"💰 **ECO WARRIOR**: {p['member'].display_name} ({eco_kills} eco kills, {eco_wins} eco wins) - Budget beast!"
+                    )
+                    break
+
+            # Entry duel win rate
+            for p in player_stats:
+                puuid = p['puuid']
+                fk_won = first_kill_rounds.get(puuid, {}).get('won', 0)
+                fk_lost = first_kill_rounds.get(puuid, {}).get('lost', 0)
+                fk_total = fk_won + fk_lost
+
+                if fk_total >= 5:
+                    win_rate = (fk_won / fk_total) * 100
+                    if win_rate >= 65:
+                        stats['highlights'].append(
+                            f"⚔️ **ENTRY GOD**: {p['member'].display_name} ({fk_won}/{fk_total} opening duels won, {win_rate:.0f}%) - First blood king!"
+                        )
+                        break
+                    elif win_rate >= 55:
+                        stats['highlights'].append(
+                            f"⚡ **ENTRY FRAGGER**: {p['member'].display_name} ({fk_won}/{fk_total} duels, {win_rate:.0f}%)"
+                        )
+                        break
+
+            # One-tap detection
+            for p in player_stats:
+                puuid = p['puuid']
+                damages = damage_per_kill.get(puuid, [])
+
+                if damages:
+                    # Calculate average damage per kill
+                    avg_dpk = sum(damages) / len(damages)
+
+                    # One-tap detection (very low damage per kill)
+                    if avg_dpk <= 155 and p['kills'] >= 10:
+                        stats['highlights'].append(
+                            f"🎯 **ONE-TAP GOD**: {p['member'].display_name} ({avg_dpk:.0f} avg damage/kill) - Efficient eliminations!"
+                        )
+                        break
 
             # Swing round analysis
             swing_rounds = self._identify_swing_rounds(match_data)
