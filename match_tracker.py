@@ -461,6 +461,7 @@ class MatchTracker:
         eco_rounds_won = {puuid: 0 for puuid in puuid_to_member}
         first_kill_rounds = {puuid: {'won': 0, 'lost': 0} for puuid in puuid_to_member}
         damage_per_kill = {puuid: [] for puuid in puuid_to_member}  # Track damage for each kill
+        knife_kills = {puuid: 0 for puuid in puuid_to_member}  # Track knife/melee kills
 
         for round_data in match_data.get('rounds', []):
             winning_team = round_data.get('winning_team', '').lower()
@@ -516,6 +517,13 @@ class MatchTracker:
                     # One-tap detection: Track damage per kill
                     if receiver_puuid in killed_puuids and damage_dealt > 0:
                         damage_per_kill[puuid].append(damage_dealt)
+
+                # Track knife/melee kills
+                for kill_event in kill_events:
+                    weapon_name = kill_event.get('damage_weapon_name', '')
+                    # Check if weapon is melee (knife)
+                    if weapon_name and weapon_name.lower() == 'melee':
+                        knife_kills[puuid] += 1
 
             # Plant/defuse tracking
             plant_events = round_data.get('plant_events', [])
@@ -678,7 +686,22 @@ class MatchTracker:
                         plural = 's' if threek > 1 else ''
                         stats['highlights'].append(
                             f"💥 {p['member'].display_name} racked up {threek} 3K{plural}!")
-            
+
+                # Knife kill highlights
+                for p in player_stats:
+                    knife_count = knife_kills.get(p['puuid'], 0)
+                    if knife_count > 0:
+                        plural = 's' if knife_count > 1 else ''
+                        if knife_count >= 3:
+                            stats['highlights'].append(
+                                f"🔪 **KNIFE MASTER**: {p['member'].display_name} got {knife_count} knife kill{plural}! RUTHLESS!")
+                        elif knife_count >= 2:
+                            stats['highlights'].append(
+                                f"🗡️ **BLADE WARRIOR**: {p['member'].display_name} secured {knife_count} knife kills!")
+                        else:
+                            stats['highlights'].append(
+                                f"🔪 {p['member'].display_name} got a knife kill! Disrespectful!")
+
             # Enhanced damage analysis
             tank_player = max(player_stats, key=lambda x: x['damage_received'])
             glass_cannon = None
