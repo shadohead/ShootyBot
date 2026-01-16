@@ -407,7 +407,7 @@ class MatchTracker:
                 inline=False,
             )
         
-        embed.set_footer(text="🔍 Auto-detected from shooty stack • ShootyBot tracking your epic moments!")
+        embed.set_footer(text="Want to be tracked? Use /shootylink <username> <tag> to link your Valorant account!")
         return embed
     
     def _calculate_fun_match_stats(self, match_data: dict, discord_members: List[Dict]) -> Dict:
