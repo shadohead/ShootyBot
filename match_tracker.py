@@ -21,13 +21,20 @@ class MatchTracker:
     HIGH_DAMAGE_THRESHOLD = 3000
     STACK_INACTIVITY_HOURS = 1.5  # Auto-end stacks after 1.5 hours of no games
     
+    # Match polling configuration
+    MATCHES_TO_FETCH = 5  # Fetch 5 recent matches to catch any we might have missed
+    SEEN_MATCHES_MAX_SIZE = 50  # Max matches to track per user to prevent memory bloat
+
     def __init__(self, bot: discord.Client) -> None:
         self.bot = bot
         # State is now persisted to database - these are kept as memory caches for performance
-        self.tracked_members: Dict[int, Dict[str, Any]] = {}  # {member_id: {'last_checked': datetime, 'last_match_id': str}}
+        # Enhanced: Now tracks a set of seen match IDs instead of just last_match_id
+        self.tracked_members: Dict[int, Dict[str, Any]] = {}  # {member_id: {'last_checked': datetime, 'seen_match_ids': set}}
         self.recent_matches: Dict[int, Dict[str, Dict[str, Any]]] = {}   # {server_id: {match_id: {'timestamp': datetime, 'members': []}}}
         self.stack_last_activity: Dict[int, datetime] = {}  # {channel_id: last_match_timestamp}
         self.stack_has_played: Dict[int, bool] = {}  # {channel_id: has_had_games}
+        # Global deduplication: Track all match IDs we've already reported to avoid duplicates
+        self.globally_reported_matches: Dict[int, set] = {}  # {server_id: set of match_ids}
         self.check_interval: int = self.CHECK_INTERVAL_SECONDS
         self.running: bool = False
         self._state_loaded: bool = False
@@ -97,14 +104,18 @@ class MatchTracker:
                 if not accounts:
                     continue
                 
-                # Update last checked time
+                # Update last checked time and ensure tracking structure exists
                 if user.id not in self.tracked_members:
                     self.tracked_members[user.id] = {
                         'last_checked': current_time,
-                        'last_match_id': None
+                        'seen_match_ids': set()  # Track all seen matches, not just last one
                     }
                 else:
                     self.tracked_members[user.id]['last_checked'] = current_time
+                    # Migrate old format if needed
+                    if 'seen_match_ids' not in self.tracked_members[user.id]:
+                        old_match_id = self.tracked_members[user.id].get('last_match_id')
+                        self.tracked_members[user.id]['seen_match_ids'] = {old_match_id} if old_match_id else set()
                 
                 # Add to check list if not already added
                 if user not in members_to_check:
@@ -117,82 +128,139 @@ class MatchTracker:
             logging.debug(f"No active stack members with linked Valorant accounts in {guild.name}")
     
     async def _check_recent_matches(self, guild: discord.Guild, members: List[discord.Member]) -> None:
-        """Check recent matches for specific members"""
+        """Check recent matches for specific members with robust detection
+
+        Key improvements over the original:
+        1. Fetches multiple matches (not just 1) to catch games that might have been missed
+        2. Bypasses HTTP cache to always get fresh data from the API
+        3. Polls ALL linked accounts, not just the primary one
+        4. Tracks a SET of seen match IDs to detect all new matches
+        5. Global deduplication prevents reporting the same match twice
+        """
         server_matches = self.recent_matches.setdefault(guild.id, {})
+        globally_reported = self.globally_reported_matches.setdefault(guild.id, set())
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.MATCH_CUTOFF_HOURS)
-        
+
+        # Collect all new matches from all members before processing
+        # This helps with deduplication when multiple members are in the same match
+        matches_to_process: Dict[str, Dict[str, Any]] = {}  # {match_id: match_data}
+
         for member in members:
             try:
-                primary_account = valorant_client.get_linked_account(member.id)
-                if not primary_account:
+                # CRITICAL FIX #1: Check ALL linked accounts, not just primary
+                all_accounts = valorant_client.get_all_linked_accounts(member.id)
+                if not all_accounts:
                     continue
-                
-                # Get recent matches (competitive only)
-                matches = await valorant_client.get_match_history(
-                    primary_account['username'],
-                    primary_account['tag'],
-                    size=1,  # Only check most recent match for polling efficiency
-                    mode='competitive'  # Only track competitive matches
-                )
-                
-                if not matches:
-                    continue
-                
-                # Check if this member has a new most recent match
-                latest_match = matches[0]  # Most recent match
-                latest_match_id = latest_match.get('metadata', {}).get('matchid')
-                
-                if not latest_match_id:
-                    continue
-                
-                # Check if this is a new match for this member
-                last_known_match = self.tracked_members.get(member.id, {}).get('last_match_id')
-                
-                if last_known_match != latest_match_id:
-                    # Update the last known match for this member
-                    self.tracked_members[member.id]['last_match_id'] = latest_match_id
-                    
-                    # Skip if we've already processed this match globally
-                    if latest_match_id in server_matches:
+
+                # Get seen matches for this member
+                member_tracking = self.tracked_members.get(member.id, {})
+                seen_match_ids = member_tracking.get('seen_match_ids', set())
+
+                for account in all_accounts:
+                    # CRITICAL FIX #2: Fetch multiple matches with force_refresh=True
+                    # This bypasses the 3-minute HTTP cache that was causing missed matches
+                    matches = await valorant_client.get_match_history(
+                        account['username'],
+                        account['tag'],
+                        size=self.MATCHES_TO_FETCH,  # Fetch 5 instead of 1
+                        mode='competitive',
+                        force_refresh=True  # CRITICAL: Bypass cache for fresh data
+                    )
+
+                    if not matches:
                         continue
-                    
-                    # Skip old matches
-                    started_at = latest_match.get('metadata', {}).get('game_start', '')
-                    match_time = parse_henrik_timestamp(started_at)
-                    if match_time:
-                        if match_time < cutoff_time:
+
+                    # CRITICAL FIX #3: Process ALL new matches, not just the most recent
+                    for match in matches:
+                        match_id = match.get('metadata', {}).get('matchid')
+                        if not match_id:
                             continue
-                    else:
-                        continue
-                    
-                    # Skip if match is not completed
-                    if not latest_match.get('metadata', {}).get('game_length', 0):
-                        continue
-                    
-                    # Find all Discord members in this match
-                    discord_members_in_match = await self._find_discord_members_in_match(guild, latest_match)
-                    
-                    # Only process if minimum Discord members were in the match
-                    if len(discord_members_in_match) >= self.MIN_DISCORD_MEMBERS:
-                        server_matches[latest_match_id] = {
-                            'timestamp': datetime.now(timezone.utc),
-                            'members': discord_members_in_match,
-                            'match_data': latest_match
-                        }
-                        
-                        # Send match results to appropriate channel
-                        await self._send_match_results(guild, latest_match, discord_members_in_match)
-                        
-                        # Update stack activity tracking
-                        await self._update_stack_activity(guild, discord_members_in_match, latest_match)
-                        
+
+                        # Skip if this member has already seen this match
+                        if match_id in seen_match_ids:
+                            continue
+
+                        # Skip if already globally reported for this server
+                        if match_id in globally_reported:
+                            # Still mark as seen for this member
+                            seen_match_ids.add(match_id)
+                            continue
+
+                        # Skip if already in our processing queue
+                        if match_id in matches_to_process:
+                            # Still mark as seen for this member
+                            seen_match_ids.add(match_id)
+                            continue
+
+                        # Skip old matches
+                        started_at = match.get('metadata', {}).get('game_start', '')
+                        match_time = parse_henrik_timestamp(started_at)
+                        if not match_time or match_time < cutoff_time:
+                            # Mark as seen even if too old, so we don't check it again
+                            seen_match_ids.add(match_id)
+                            continue
+
+                        # Skip if match is not completed
+                        if not match.get('metadata', {}).get('game_length', 0):
+                            continue
+
+                        # Add to processing queue
+                        matches_to_process[match_id] = match
+                        seen_match_ids.add(match_id)
+
+                # Update the member's seen matches
+                if member.id in self.tracked_members:
+                    self.tracked_members[member.id]['seen_match_ids'] = seen_match_ids
+                    # Prune to prevent memory bloat
+                    if len(seen_match_ids) > self.SEEN_MATCHES_MAX_SIZE:
+                        # Keep only the most recent matches (by removing oldest)
+                        excess = len(seen_match_ids) - self.SEEN_MATCHES_MAX_SIZE
+                        self.tracked_members[member.id]['seen_match_ids'] = set(list(seen_match_ids)[excess:])
+
             except Exception as e:
                 log_error(f"checking matches for {member.display_name}", e)
-        
-        # Clean up old matches
+
+        # Now process all collected matches
+        for match_id, match_data in matches_to_process.items():
+            try:
+                # Skip if already in server matches (processed in a previous run)
+                if match_id in server_matches:
+                    globally_reported.add(match_id)
+                    continue
+
+                # Find all Discord members in this match
+                discord_members_in_match = await self._find_discord_members_in_match(guild, match_data)
+
+                # Only process if minimum Discord members were in the match
+                if len(discord_members_in_match) >= self.MIN_DISCORD_MEMBERS:
+                    server_matches[match_id] = {
+                        'timestamp': datetime.now(timezone.utc),
+                        'members': discord_members_in_match,
+                        'match_data': match_data
+                    }
+                    globally_reported.add(match_id)
+
+                    # Send match results to appropriate channel
+                    await self._send_match_results(guild, match_data, discord_members_in_match)
+
+                    # Update stack activity tracking
+                    await self._update_stack_activity(guild, discord_members_in_match, match_data)
+
+                    logging.info(f"Detected and reported match {match_id} with {len(discord_members_in_match)} Discord members")
+
+            except Exception as e:
+                log_error(f"processing match {match_id}", e)
+
+        # Clean up old matches from server_matches cache
         for match_id in list(server_matches.keys()):
             if server_matches[match_id]['timestamp'] < cutoff_time:
                 del server_matches[match_id]
+
+        # Clean up old globally reported matches (keep last 200)
+        if len(globally_reported) > 200:
+            # Convert to list, keep last 200, convert back to set
+            globally_reported_list = list(globally_reported)
+            self.globally_reported_matches[guild.id] = set(globally_reported_list[-200:])
     
     async def _find_discord_members_in_match(self, guild: discord.Guild, match: dict) -> List[Dict]:
         """Find which Discord members were in a specific match"""
@@ -1008,18 +1076,30 @@ class MatchTracker:
                             tracking_data['last_checked'] = datetime.fromisoformat(tracking_data['last_checked'])
                         except (ValueError, TypeError):
                             tracking_data['last_checked'] = datetime.now(timezone.utc)
-                    
+
+                    # Migrate from old format (last_match_id) to new format (seen_match_ids)
+                    if 'seen_match_ids' in tracking_data:
+                        # Convert from list (JSON storage) to set
+                        if isinstance(tracking_data['seen_match_ids'], list):
+                            tracking_data['seen_match_ids'] = set(tracking_data['seen_match_ids'])
+                    elif 'last_match_id' in tracking_data:
+                        # Old format: single last_match_id
+                        old_id = tracking_data.pop('last_match_id', None)
+                        tracking_data['seen_match_ids'] = {old_id} if old_id else set()
+                    else:
+                        tracking_data['seen_match_ids'] = set()
+
                     self.tracked_members[user_id] = tracking_data
-            
+
             # Load stack states
             stack_states = database_manager.get_all_stack_states()
             for channel_id, state_data in stack_states.items():
                 self.stack_has_played[channel_id] = state_data['has_played']
                 if state_data['last_activity']:
                     self.stack_last_activity[channel_id] = state_data['last_activity']
-            
+
             logging.info(f"Loaded match tracker state: {len(self.tracked_members)} tracked users, {len(self.stack_has_played)} stack states")
-            
+
         except Exception as e:
             log_error("loading match tracker state from database", e)
     
@@ -1033,17 +1113,20 @@ class MatchTracker:
                 if server_id in servers_processed:
                     continue
                 servers_processed.add(server_id)
-                
+
                 # Collect tracking data for users in this server
                 for user_id, tracking_data in self.tracked_members.items():
                     # Check if user is in this guild
                     member = guild.get_member(user_id)
                     if member:
-                        # Convert datetime objects to strings for JSON storage
+                        # Convert datetime objects to strings and sets to lists for JSON storage
                         tracking_data_copy = tracking_data.copy()
                         if 'last_checked' in tracking_data_copy and isinstance(tracking_data_copy['last_checked'], datetime):
                             tracking_data_copy['last_checked'] = tracking_data_copy['last_checked'].isoformat()
-                        
+                        if 'seen_match_ids' in tracking_data_copy and isinstance(tracking_data_copy['seen_match_ids'], set):
+                            # Convert set to list for JSON serialization
+                            tracking_data_copy['seen_match_ids'] = list(tracking_data_copy['seen_match_ids'])
+
                         database_manager.save_match_tracker_state(user_id, server_id, tracking_data_copy)
             
             # Save stack states

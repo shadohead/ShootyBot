@@ -219,9 +219,11 @@ class TestMatchHistoryAPI:
 
             result = await client.get_match_history("User", "TAG")
 
+            # When force_refresh=False (default), use_cache=True and cache_ttl=180
             mock_get.assert_called_once_with(
                 'matches/na/User/TAG',
                 params={'size': 5},
+                use_cache=True,
                 cache_ttl=180
             )
 

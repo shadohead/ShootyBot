@@ -222,16 +222,19 @@ class ValorantClient(BaseAPIClient):
             # Temporarily change the base URL for this request
             original_base_url = self.base_url
             self.base_url = "https://api.henrikdev.xyz/valorant/v3"
-            
+
             try:
                 params = {'size': size}
                 if mode:
                     params['filter'] = mode
-                    
+
+                # CRITICAL: When force_refresh is True, bypass HTTP cache entirely
+                # This is essential for match polling to detect new matches reliably
                 response = await self.get(
                     f'matches/na/{username}/{tag}',
                     params=params,
-                    cache_ttl=180  # Cache for 3 minutes
+                    use_cache=not force_refresh,  # Disable cache when forcing refresh
+                    cache_ttl=0 if force_refresh else 180  # No TTL when forcing refresh
                 )
                 
                 if response.success:
