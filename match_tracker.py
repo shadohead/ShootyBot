@@ -327,6 +327,7 @@ class MatchTracker:
         stack_result = ""
         team_color = None
         team_won = False
+        tracked_puuids = set()
 
         for dm in discord_members:
             member = dm['member']
@@ -340,12 +341,37 @@ class MatchTracker:
                     team_won = teams[team_color].get('has_won', False)
                 stack_result = "🏆 WON" if team_won else "❌ LOST"
 
+            puuid = dm.get('account', {}).get('puuid') or player_data.get('puuid')
+            if puuid:
+                tracked_puuids.add(puuid)
+
             kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
             member_list.append(f"• **{member.display_name}**: {kda}")
-        
+
+        # Add untracked teammates (players on the same team who aren't linked via shootylink)
+        all_players = match.get('players', {}).get('all_players', [])
+        untracked_count = 0
+        if team_color:
+            for player in all_players:
+                if player.get('team', '').lower() != team_color:
+                    continue
+                if player.get('puuid') in tracked_puuids:
+                    continue
+                stats = player.get('stats', {})
+                name = player.get('name', 'Unknown')
+                tag = player.get('tag', '')
+                display_name = f"{name}#{tag}" if tag else name
+                kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
+                member_list.append(f"• **{display_name}**: {kda}")
+                untracked_count += 1
+
+        squad_size = len(discord_members) + untracked_count
+        if not stack_result:
+            stack_result = "🏆 WON" if team_won else "❌ LOST"
+
         embed.add_field(
-            name=f"👥 Squad ({len(discord_members)}) - {stack_result}",
-            value="\n".join(member_list),
+            name=f"👥 Squad ({squad_size}) - {stack_result}",
+            value="\n".join(member_list) if member_list else "No squad members found",
             inline=False
         )
         
