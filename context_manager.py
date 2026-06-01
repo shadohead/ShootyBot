@@ -192,18 +192,22 @@ class ShootyContext:
             return name
     
     def _is_user_in_voice_channel(self, user) -> bool:
-        """Check if user is in the configured voice channel"""
-        if not self.voice_channel_id or not self.channel:
+        """Check if user is connected to any voice channel in the server"""
+        guild = getattr(self.channel, "guild", None) if self.channel else None
+        if guild is None:
             return False
-        
+
         try:
-            # Get the voice channel
-            voice_channel = self.channel.guild.get_channel(self.voice_channel_id)
-            if not voice_channel:
-                return False
-            
-            # Check if user is in the voice channel
-            return user in voice_channel.members
+            # Prefer the member's live voice state when available
+            member = guild.get_member(user.id)
+            if member is not None:
+                return member.voice is not None and member.voice.channel is not None
+
+            # Fallback: scan every voice channel's member list
+            for voice_channel in guild.voice_channels:
+                if user in voice_channel.members:
+                    return True
+            return False
         except Exception:
             return False
     

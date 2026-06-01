@@ -28,6 +28,8 @@ class SessionCommands(BaseCommandCog):
 
             channel_id = ctx.channel.id
             shooty_context = context_manager.get_context(channel_id)
+            # Keep a live channel reference so voice-channel presence can be resolved
+            shooty_context.channel = ctx.channel
 
             # End previous session if one exists
             if hasattr(shooty_context, 'current_session_id') and shooty_context.current_session_id:
@@ -89,6 +91,8 @@ class SessionCommands(BaseCommandCog):
 
             channel_id = ctx.channel.id
             shooty_context = context_manager.get_context(channel_id)
+            # Keep a live channel reference so voice-channel presence can be resolved
+            shooty_context.channel = ctx.channel
 
             status_message = party_status_message(False, shooty_context)
             await ctx.reply(status_message)

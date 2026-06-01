@@ -33,7 +33,9 @@ class ReactionHandler(commands.Cog):
         
         channel_id = reaction.message.channel.id
         shooty_context = context_manager.get_context(channel_id)
-        
+        # Keep a live channel reference so voice-channel presence can be resolved
+        shooty_context.channel = reaction.message.channel
+
         logging.info(
             f"Reaction added: {reaction.emoji} by {user.name} in channel {channel_id}"
         )
@@ -95,7 +97,9 @@ class ReactionHandler(commands.Cog):
         
         channel_id = reaction.message.channel.id
         shooty_context = context_manager.get_context(channel_id)
-        
+        # Keep a live channel reference so voice-channel presence can be resolved
+        shooty_context.channel = reaction.message.channel
+
         logging.info(
             f"Reaction removed: {reaction.emoji} by {user.name} in channel {channel_id}"
         )
@@ -136,6 +140,47 @@ class ReactionHandler(commands.Cog):
 
             await self._update_party_message(reaction.message, shooty_context)
     
+    @commands.Cog.listener()
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ) -> None:
+        """Re-render queue messages when a queued user joins/leaves voice."""
+        # Only react to actual channel changes (join, leave, or move)
+        if before.channel == after.channel:
+            return
+
+        refreshed_any = False
+        for shooty_context in context_manager.contexts.values():
+            # Skip channels that have no active message to update
+            if not shooty_context.current_st_message_id:
+                continue
+
+            # Only act if this member is currently queued in this context
+            queued_users = shooty_context.bot_soloq_user_set | shooty_context.bot_fullstack_user_set
+            if member not in queued_users:
+                continue
+
+            channel = self.bot.get_channel(shooty_context.channel_id)
+            if channel is None or getattr(channel, "guild", None) != member.guild:
+                continue
+
+            # Keep the channel reference fresh for voice-presence resolution
+            shooty_context.channel = channel
+            try:
+                message = await channel.fetch_message(shooty_context.current_st_message_id)
+                await self._update_party_message(message, shooty_context)
+                refreshed_any = True
+            except discord.NotFound:
+                logging.info("Skipping voice update - shooty message no longer exists")
+            except discord.HTTPException as e:
+                logging.warning(f"Failed to refresh shooty message on voice update: {e}")
+
+        if refreshed_any:
+            await self.bot.update_status_with_queue_count()
+
     async def _refresh_status(self, message):
         """Refresh the party status message"""
         channel_id = message.channel.id

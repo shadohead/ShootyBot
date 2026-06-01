@@ -253,6 +253,98 @@ class TestReactionHandler:
         assert "<@333>" not in call_args
 
 
+class TestVoiceStateUpdate:
+    """Test cases for the on_voice_state_update listener"""
+
+    @pytest.fixture
+    def handler(self):
+        bot = Mock()
+        bot.user = Mock(id=999999999)
+        bot.get_channel = Mock()
+        bot.update_status_with_queue_count = AsyncMock()
+        return ReactionHandler(bot)
+
+    def _voice_state(self, channel):
+        state = Mock(spec=discord.VoiceState)
+        state.channel = channel
+        return state
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_ignores_non_channel_changes(self, mock_context_manager, handler):
+        """Mute/deafen updates (same channel) should not trigger a refresh"""
+        same_channel = Mock()
+        member = Mock(spec=discord.Member)
+
+        await handler.on_voice_state_update(
+            member,
+            self._voice_state(same_channel),
+            self._voice_state(same_channel),
+        )
+
+        handler.bot.get_channel.assert_not_called()
+        handler.bot.update_status_with_queue_count.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.party_status_message', return_value="updated")
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_refreshes_message_for_queued_member(
+        self, mock_context_manager, mock_status, handler
+    ):
+        """A queued member joining voice should re-render that channel's message"""
+        guild = Mock()
+        member = Mock(spec=discord.Member)
+        member.guild = guild
+
+        context = Mock()
+        context.channel_id = 555
+        context.current_st_message_id = 777
+        context.bot_soloq_user_set = {member}
+        context.bot_fullstack_user_set = set()
+        mock_context_manager.contexts = {555: context}
+
+        message = AsyncMock()
+        channel = AsyncMock()
+        channel.guild = guild
+        channel.fetch_message.return_value = message
+        handler.bot.get_channel.return_value = channel
+
+        await handler.on_voice_state_update(
+            member,
+            self._voice_state(None),
+            self._voice_state(Mock()),
+        )
+
+        channel.fetch_message.assert_awaited_once_with(777)
+        message.edit.assert_awaited_once_with(content="updated")
+        assert context.channel == channel
+        handler.bot.update_status_with_queue_count.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_ignores_member_not_queued(self, mock_context_manager, handler):
+        """A member who is not queued should not trigger any refresh"""
+        guild = Mock()
+        member = Mock(spec=discord.Member)
+        member.guild = guild
+
+        context = Mock()
+        context.channel_id = 555
+        context.current_st_message_id = 777
+        context.bot_soloq_user_set = set()
+        context.bot_fullstack_user_set = set()
+        mock_context_manager.contexts = {555: context}
+
+        await handler.on_voice_state_update(
+            member,
+            self._voice_state(None),
+            self._voice_state(Mock()),
+        )
+
+        handler.bot.get_channel.assert_not_called()
+        handler.bot.update_status_with_queue_count.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_setup():
     """Test the setup function"""
