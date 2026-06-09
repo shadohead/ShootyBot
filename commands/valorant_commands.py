@@ -546,7 +546,208 @@ class ValorantCommands(BaseCommandCog):
         except Exception as e:
             self.logger.error(f"Error in shootystatsdetailed command: {e}")
             await self.send_error_embed(ctx, "Error Fetching Detailed Stats", str(e))
-    
+
+    @commands.hybrid_command(
+        name="shootyrank",
+        description="Show current Valorant rank, RR, and last game's RR change"
+    )
+    async def valorant_rank(self, ctx: commands.Context, member: Optional[discord.Member] = None,
+                            account_name: Optional[str] = None) -> None:
+        """Show a player's current competitive rank and RR."""
+        target_user = member or ctx.author
+
+        try:
+            await self.defer_if_slash(ctx)
+
+            accounts = valorant_client.get_all_linked_accounts(target_user.id)
+            if not accounts:
+                await self.send_error_embed(
+                    ctx, "No Linked Accounts",
+                    f"{target_user.display_name} has no linked Valorant accounts"
+                )
+                return
+
+            # Select which account to check
+            selected_account = None
+            if account_name:
+                for account in accounts:
+                    if account['username'].lower() == account_name.lower():
+                        selected_account = account
+                        break
+                if not selected_account:
+                    await self.send_error_embed(
+                        ctx, "Account Not Found",
+                        f"Could not find account '{account_name}' for {target_user.display_name}"
+                    )
+                    return
+            else:
+                selected_account = valorant_client.get_linked_account(target_user.id) or accounts[0]
+
+            mmr = await valorant_client.get_mmr(selected_account['username'], selected_account['tag'])
+            if not mmr or not mmr.get('tier'):
+                await self.send_error_embed(
+                    ctx, "No Rank Data",
+                    "Could not fetch rank. The account may be private, unranked, or the API is unavailable."
+                )
+                return
+
+            rr = mmr.get('rr')
+            change = mmr.get('rr_change')
+            peak = mmr.get('peak')
+            elo = mmr.get('elo')
+
+            lines = [f"{mmr.get('emoji', '')} **{mmr['tier']}**" + (f" — **{rr} RR**" if rr is not None else "")]
+            if change is not None:
+                if change > 0:
+                    lines.append(f"🟢 **+{change} RR** last game")
+                elif change < 0:
+                    lines.append(f"🔴 **{change} RR** last game")
+                else:
+                    lines.append("⚪ **±0 RR** last game")
+            if peak:
+                lines.append(f"🏔️ Peak: **{peak}**")
+            if elo is not None:
+                lines.append(f"📊 Elo: **{elo}**")
+
+            tracker_url = f"https://tracker.gg/valorant/profile/riot/{selected_account['username']}%23{selected_account['tag']}/overview"
+
+            await self.send_embed(
+                ctx,
+                f"{mmr.get('emoji', '')} Rank: {selected_account['username']}#{selected_account['tag']}",
+                "\n".join(lines) + f"\n\n🔗 [View on Tracker.gg]({tracker_url})",
+                color=0xff4655
+            )
+
+        except Exception as e:
+            self.logger.error(f"Error in shootyrank command: {e}")
+            await self.send_error_embed(ctx, "Error Fetching Rank", str(e))
+
+    @commands.hybrid_command(
+        name="shootycompare",
+        description="Compare two players' Valorant stats head-to-head"
+    )
+    async def compare_players(self, ctx: commands.Context, player1: discord.Member,
+                              player2: Optional[discord.Member] = None) -> None:
+        """Head-to-head comparison of two players' competitive stats."""
+        try:
+            await self.defer_if_slash(ctx)
+
+            # Default the second player to the command author
+            if player2 is None:
+                player2 = ctx.author
+
+            if player1.id == player2.id:
+                await self.send_error_embed(
+                    ctx, "Pick Two Players",
+                    "Please choose two different players to compare."
+                )
+                return
+
+            # Gather stats for both players
+            results = []
+            for member in (player1, player2):
+                account = (valorant_client.get_linked_account(member.id)
+                           or next(iter(valorant_client.get_all_linked_accounts(member.id)), None))
+                if not account:
+                    await self.send_error_embed(
+                        ctx, "No Linked Accounts",
+                        f"{member.display_name} has no linked Valorant accounts"
+                    )
+                    return
+
+                matches = await valorant_client.get_match_history(
+                    account['username'], account['tag'], size=20, mode='competitive'
+                )
+                if not matches:
+                    await self.send_error_embed(
+                        ctx, "No Match Data",
+                        f"Could not fetch competitive match history for {member.display_name}."
+                    )
+                    return
+
+                stats = valorant_client.calculate_player_stats(matches, account['puuid'])
+                if not stats or stats.get('total_matches', 0) == 0:
+                    await self.send_error_embed(
+                        ctx, "No Stats Available",
+                        f"No competitive match data found for {member.display_name}."
+                    )
+                    return
+
+                results.append({'member': member, 'account': account, 'stats': stats})
+
+            a, b = results[0], results[1]
+
+            # Comparison rows: (label, value getter, formatter)  — higher is better for all
+            rows = [
+                ("ACS", lambda s: s.get('acs', 0), lambda v: f"{v:.0f}"),
+                ("K/D", lambda s: s.get('kd_ratio', 0), lambda v: f"{v:.2f}"),
+                ("KDA", lambda s: s.get('kda_ratio', 0), lambda v: f"{v:.2f}"),
+                ("KAST", lambda s: s.get('kast_percentage', 0), lambda v: f"{v:.0f}%"),
+                ("ADR", lambda s: s.get('adr', 0), lambda v: f"{v:.0f}"),
+                ("HS%", lambda s: s.get('headshot_percentage', 0), lambda v: f"{v:.1f}%"),
+                ("Win%", lambda s: s.get('win_rate', 0), lambda v: f"{v:.0f}%"),
+                ("FB%", lambda s: s.get('first_blood_rate', 0), lambda v: f"{v:.1f}%"),
+                ("Clutch%", lambda s: s.get('clutch_success_rate', 0), lambda v: f"{v:.0f}%"),
+            ]
+
+            name_a = a['member'].display_name[:9]
+            name_b = b['member'].display_name[:9]
+            header = f"{'Stat':<9}{name_a:<11}{name_b:<11}"
+            table_lines = [header, "─" * len(header)]
+
+            a_wins = b_wins = 0
+            for label, getter, fmt in rows:
+                va = getter(a['stats'])
+                vb = getter(b['stats'])
+                sa, sb = fmt(va), fmt(vb)
+                if va > vb:
+                    sa += " ★"
+                    a_wins += 1
+                elif vb > va:
+                    sb += " ★"
+                    b_wins += 1
+                table_lines.append(f"{label:<9}{sa:<11}{sb:<11}")
+
+            table = "```\n" + "\n".join(table_lines) + "\n```"
+
+            if a_wins > b_wins:
+                verdict = f"🏆 **{a['member'].display_name}** leads {a_wins}–{b_wins} categories"
+                color = 0x00ff66
+            elif b_wins > a_wins:
+                verdict = f"🏆 **{b['member'].display_name}** leads {b_wins}–{a_wins} categories"
+                color = 0x00ff66
+            else:
+                verdict = f"🤝 Dead even — {a_wins}–{b_wins}"
+                color = 0xffaa00
+
+            embed = discord.Embed(
+                title="⚔️ Head-to-Head",
+                description=f"**{a['member'].display_name}** vs **{b['member'].display_name}**\n{table}",
+                color=color
+            )
+            embed.add_field(name="Verdict", value=verdict, inline=False)
+
+            # Current ranks (best-effort)
+            rank_a = await valorant_client.get_mmr(a['account']['username'], a['account']['tag'])
+            rank_b = await valorant_client.get_mmr(b['account']['username'], b['account']['tag'])
+            if (rank_a and rank_a.get('tier')) or (rank_b and rank_b.get('tier')):
+                ra = f"{rank_a.get('emoji', '')} {rank_a['tier']}" if rank_a and rank_a.get('tier') else "Unranked"
+                rb = f"{rank_b.get('emoji', '')} {rank_b['tier']}" if rank_b and rank_b.get('tier') else "Unranked"
+                embed.add_field(
+                    name="Current Rank",
+                    value=f"**{a['member'].display_name}:** {ra}\n**{b['member'].display_name}:** {rb}",
+                    inline=False
+                )
+
+            embed.set_footer(
+                text=f"Last {a['stats']['total_matches']} vs {b['stats']['total_matches']} comp games • ★ = category leader"
+            )
+            await ctx.send(embed=embed)
+
+        except Exception as e:
+            self.logger.error(f"Error in shootycompare command: {e}")
+            await self.send_error_embed(ctx, "Error Comparing Players", str(e))
+
     @commands.hybrid_command(
         name="shootyleaderboard",
         description="Show server leaderboard for Valorant stats (kda, kd, winrate, headshot, acs)"

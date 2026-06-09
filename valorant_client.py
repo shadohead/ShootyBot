@@ -7,6 +7,61 @@ from utils import log_error
 from api_clients import BaseAPIClient, RateLimitInfo, APIResponse
 from database import database_manager
 
+# Henrik/Valorant competitive tier numbers -> human readable names.
+# Tiers 1 and 2 are unused by Riot. 0 == Unrated.
+RANK_TIERS = {
+    0: "Unrated",
+    3: "Iron 1", 4: "Iron 2", 5: "Iron 3",
+    6: "Bronze 1", 7: "Bronze 2", 8: "Bronze 3",
+    9: "Silver 1", 10: "Silver 2", 11: "Silver 3",
+    12: "Gold 1", 13: "Gold 2", 14: "Gold 3",
+    15: "Platinum 1", 16: "Platinum 2", 17: "Platinum 3",
+    18: "Diamond 1", 19: "Diamond 2", 20: "Diamond 3",
+    21: "Ascendant 1", 22: "Ascendant 2", 23: "Ascendant 3",
+    24: "Immortal 1", 25: "Immortal 2", 26: "Immortal 3",
+    27: "Radiant",
+}
+
+# Emoji flair per rank family (matched on the patched tier name).
+RANK_EMOJIS = {
+    "Unrated": "❔", "Iron": "🟤", "Bronze": "🥉", "Silver": "⚪",
+    "Gold": "🥇", "Platinum": "💧", "Diamond": "💎", "Ascendant": "🟢",
+    "Immortal": "🔴", "Radiant": "✨",
+}
+
+
+def tier_name(currenttier: Any) -> str:
+    """Resolve a numeric competitive tier to its patched name."""
+    try:
+        return RANK_TIERS.get(int(currenttier), "Unrated")
+    except (TypeError, ValueError):
+        return "Unrated"
+
+
+def rank_emoji(patched_tier: Optional[str]) -> str:
+    """Get an emoji for a patched tier name (e.g. 'Diamond 1' -> 💎)."""
+    if not patched_tier:
+        return "❔"
+    family = patched_tier.split(" ")[0]
+    return RANK_EMOJIS.get(family, "🎖️")
+
+
+def get_player_rank(player_data: Dict[str, Any]) -> Optional[str]:
+    """Extract a patched rank name from a match player object.
+
+    Henrik match data exposes ``currenttier`` (int) and sometimes
+    ``currenttier_patched`` (str). Prefer the patched string, fall back to the
+    numeric mapping.
+    """
+    patched = player_data.get('currenttier_patched')
+    if patched:
+        return patched
+    currenttier = player_data.get('currenttier')
+    if currenttier is not None:
+        return tier_name(currenttier)
+    return None
+
+
 class ValorantClient(BaseAPIClient):
     """Client for interacting with Henrik's Valorant API"""
     
@@ -253,7 +308,64 @@ class ValorantClient(BaseAPIClient):
         except Exception as e:
             log_error("fetching match history", e)
             return None
-    
+
+    async def get_mmr(self, username: str, tag: str, region: str = 'na',
+                      force_refresh: bool = False) -> Optional[Dict[str, Any]]:
+        """Fetch a player's current rank / RR info from Henrik's MMR endpoint.
+
+        Returns a normalized dict::
+
+            {
+                'tier': 'Diamond 1',          # patched current tier
+                'rr': 45,                     # ranking_in_tier (0-100)
+                'rr_change': 18,              # mmr_change_to_last_game (+/-)
+                'elo': 1845,
+                'peak': 'Diamond 2',          # highest rank achieved (best-effort)
+                'emoji': '💎',
+            }
+
+        Returns ``None`` if the account is private, not found, or the API is
+        unavailable. This is intentionally best-effort so callers can degrade
+        gracefully.
+        """
+        try:
+            # MMR lives on the v2 API; swap the base URL like get_match_history.
+            original_base_url = self.base_url
+            self.base_url = "https://api.henrikdev.xyz/valorant/v2"
+            try:
+                response = await self.get(
+                    f'mmr/{region}/{username}/{tag}',
+                    use_cache=not force_refresh,
+                    cache_ttl=120  # Cache rank for 2 minutes
+                )
+
+                if not response.success:
+                    logging.warning(f"MMR fetch failed for {username}#{tag}: {response.status_code}")
+                    return None
+
+                data = response.data['data'] if 'data' in response.data else response.data
+                if not data:
+                    return None
+
+                current = data.get('current_data', {}) or {}
+                highest = data.get('highest_rank', {}) or {}
+
+                patched = current.get('currenttierpatched') or tier_name(current.get('currenttier'))
+                return {
+                    'tier': patched,
+                    'rr': current.get('ranking_in_tier'),
+                    'rr_change': current.get('mmr_change_to_last_game'),
+                    'elo': current.get('elo'),
+                    'peak': highest.get('patched_tier'),
+                    'emoji': rank_emoji(patched),
+                }
+            finally:
+                self.base_url = original_base_url
+
+        except Exception as e:
+            log_error(f"fetching MMR for {username}#{tag}", e)
+            return None
+
     def calculate_player_stats(self, matches: List[Dict[str, Any]], player_puuid: str, competitive_only: bool = True) -> Dict[str, Any]:
         """Calculate comprehensive player statistics from match history using tournament-grade accuracy
         

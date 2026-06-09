@@ -212,5 +212,74 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
         mock_remove_account.assert_any_call(1111, 'Player2', 'EU1')
         mock_data_manager.save_user.assert_called_once_with(1111)
 
+    @patch('commands.valorant_commands.valorant_client')
+    async def test_shootyrank_success(self, mock_valorant_client):
+        """shootyrank should display the player's current rank and RR."""
+        mock_valorant_client.get_all_linked_accounts.return_value = [
+            {'username': 'TestPlayer', 'tag': 'NA1', 'puuid': 'puuid-1'}
+        ]
+        mock_valorant_client.get_linked_account.return_value = {
+            'username': 'TestPlayer', 'tag': 'NA1', 'puuid': 'puuid-1'
+        }
+        mock_valorant_client.get_mmr = AsyncMock(return_value={
+            'tier': 'Diamond 1', 'rr': 45, 'rr_change': 18, 'elo': 1845,
+            'peak': 'Diamond 2', 'emoji': '💎',
+        })
+
+        await self.cog.valorant_rank.callback(self.cog, self.ctx)
+
+        self.cog.send_embed.assert_awaited()
+        # Description should mention rank, RR and the positive RR change
+        args, kwargs = self.cog.send_embed.call_args
+        body = " ".join(str(a) for a in args) + " ".join(f"{v}" for v in kwargs.values())
+        self.assertIn('Diamond 1', body)
+        self.assertIn('+18', body)
+
+    @patch('commands.valorant_commands.valorant_client')
+    async def test_shootyrank_no_accounts(self, mock_valorant_client):
+        """shootyrank should error gracefully when no accounts are linked."""
+        mock_valorant_client.get_all_linked_accounts.return_value = []
+
+        await self.cog.valorant_rank.callback(self.cog, self.ctx)
+
+        self.cog.send_error_embed.assert_awaited()
+
+    @patch('commands.valorant_commands.valorant_client')
+    async def test_shootycompare_picks_winner(self, mock_valorant_client):
+        """shootycompare should fetch both players and crown the stronger one."""
+        player1 = MagicMock(spec=discord.Member)
+        player1.id = 1
+        player1.display_name = "Alice"
+        # player2 defaults to ctx.author (id 123456789)
+
+        accounts = {
+            1: {'username': 'Alice', 'tag': 'NA1', 'puuid': 'pa'},
+            123456789: {'username': 'TestUser', 'tag': 'NA1', 'puuid': 'pb'},
+        }
+        stats = {
+            'pa': {'total_matches': 20, 'acs': 280, 'kd_ratio': 1.4, 'kda_ratio': 1.8,
+                   'kast_percentage': 75, 'adr': 160, 'headshot_percentage': 28,
+                   'win_rate': 60, 'first_blood_rate': 12, 'clutch_success_rate': 55},
+            'pb': {'total_matches': 18, 'acs': 200, 'kd_ratio': 0.9, 'kda_ratio': 1.2,
+                   'kast_percentage': 65, 'adr': 130, 'headshot_percentage': 20,
+                   'win_rate': 45, 'first_blood_rate': 8, 'clutch_success_rate': 40},
+        }
+        mock_valorant_client.get_linked_account.side_effect = lambda uid: accounts.get(uid)
+        mock_valorant_client.get_all_linked_accounts.side_effect = lambda uid: [accounts[uid]] if uid in accounts else []
+        mock_valorant_client.get_match_history = AsyncMock(
+            side_effect=lambda u, t, **kw: [{'puuid': 'pa' if u == 'Alice' else 'pb'}]
+        )
+        mock_valorant_client.calculate_player_stats.side_effect = (
+            lambda matches, puuid, **kw: stats[matches[0]['puuid']]
+        )
+        mock_valorant_client.get_mmr = AsyncMock(return_value=None)
+
+        await self.cog.compare_players.callback(self.cog, self.ctx, player1)
+
+        self.ctx.send.assert_awaited()
+        embed = self.ctx.send.call_args.kwargs['embed']
+        verdict = next(f for f in embed.fields if f.name == 'Verdict')
+        self.assertIn('Alice', verdict.value)
+
 if __name__ == '__main__':
     unittest.main()
