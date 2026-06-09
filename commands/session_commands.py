@@ -11,6 +11,7 @@ from context_manager import context_manager
 from handlers.message_formatter import get_ping_shooty_message, party_status_message
 from handlers.reaction_handler import add_react_options
 from data_manager import data_manager
+from match_tracker import get_match_tracker
 from config import MESSAGES, MAX_SCHEDULED_HOURS
 from utils import format_time_for_display
 
@@ -242,6 +243,8 @@ class SessionCommands(BaseCommandCog):
                     "`/shootylink <username> <tag>` - Link Valorant account\n"
                     "`/shootystats [member]` - Show session & game stats\n"
                     "`/shootystatsdetailed [member]` - Detailed match statistics\n"
+                    "`/shootyrank [member]` - Current rank, RR & last game change\n"
+                    "`/shootycompare <p1> [p2]` - Head-to-head stat comparison\n"
                     "`/shootyleaderboard [stat]` - Server leaderboards\n"
                     "`/shootywho` - Who's currently playing Valorant\n"
                     "`/shootyhelp valorant` - See all Valorant commands"
@@ -314,6 +317,8 @@ class SessionCommands(BaseCommandCog):
                 value=(
                     "`/shootystats [member]` - Basic session stats\n"
                     "`/shootystatsdetailed [member] [account]` - Full match analysis\n"
+                    "`/shootyrank [member] [account]` - Current rank, RR & last game change\n"
+                    "`/shootycompare <player1> [player2]` - Head-to-head stat comparison\n"
                     "`/shootyfun [member]` - Fun stats & achievements\n"
                     "`/shootyleaderboard <stat>` - Server rankings\n"
                     "**Available stats:** kda, kd, winrate, headshot, acs, clutch, multikill"
@@ -493,15 +498,46 @@ class SessionCommands(BaseCommandCog):
             shooty_context = context_manager.get_context(channel_id)
 
             if hasattr(shooty_context, 'current_session_id') and shooty_context.current_session_id:
+                # Recap building hits the Valorant API, so defer the slash response
+                await self.defer_if_slash(ctx)
+
+                session_id = shooty_context.current_session_id
+                # Capture participants before _end_current_session resets the stack
+                participants = [
+                    user for user in
+                    shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set)
+                    if not getattr(user, 'bot', False)
+                ]
+
                 await self._end_current_session(shooty_context)
                 # Update bot status after ending session
                 await self.bot.update_status_with_queue_count()
-                await self.send_success_embed(ctx, "Session Ended", "Session ended and stats recorded!")
+
+                # Post an end-of-session recap (best-effort; falls back on failure)
+                if not await self._send_session_recap(ctx, session_id, participants):
+                    await self.send_success_embed(ctx, "Session Ended", "Session ended and stats recorded!")
             else:
                 await self.send_error_embed(ctx, "No Active Session", "No active session to end.")
         except Exception as e:
             self.logger.error(f"Error ending session: {e}")
             await self.send_error_embed(ctx, "End Session Failed", "Failed to end session.")
+
+    async def _send_session_recap(self, ctx: commands.Context, session_id: str, participants: list) -> bool:
+        """Build and send the session recap embed. Returns True if one was sent."""
+        try:
+            session = data_manager.sessions.get(session_id)
+            if session is None:
+                from data_manager import SessionData
+                session = SessionData(session_id)
+
+            tracker = get_match_tracker(self.bot)
+            embed = await tracker.build_session_recap(ctx.guild, participants, session)
+            if embed:
+                await ctx.send(embed=embed)
+                return True
+        except Exception as e:
+            self.logger.error(f"Error building session recap: {e}")
+        return False
     
     async def _end_current_session(self, shooty_context) -> None:
         """Helper method to end the current session"""

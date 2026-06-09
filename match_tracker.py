@@ -3,7 +3,7 @@ import logging
 import discord
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
-from valorant_client import valorant_client
+from valorant_client import valorant_client, get_player_rank, rank_emoji
 import random
 from utils import log_error, format_time_ago, parse_henrik_timestamp
 from context_manager import context_manager
@@ -346,7 +346,9 @@ class MatchTracker:
                 tracked_puuids.add(puuid)
 
             kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
-            member_list.append(f"• **{member.display_name}**: {kda}")
+            rank = get_player_rank(player_data)
+            rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
+            member_list.append(f"• **{member.display_name}**: {kda}{rank_str}")
 
         # Add untracked teammates (players on the same team who aren't linked via shootylink)
         all_players = match.get('players', {}).get('all_players', [])
@@ -362,7 +364,9 @@ class MatchTracker:
                 tag = player.get('tag', '')
                 display_name = f"{name}#{tag}" if tag else name
                 kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
-                member_list.append(f"• **{display_name}**: {kda}")
+                rank = get_player_rank(player)
+                rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
+                member_list.append(f"• **{display_name}**: {kda}{rank_str}")
                 untracked_count += 1
 
         squad_size = len(discord_members) + untracked_count
@@ -374,7 +378,16 @@ class MatchTracker:
             value="\n".join(member_list) if member_list else "No squad members found",
             inline=False
         )
-        
+
+        # Add rank / RR updates for the tracked squad (best-effort)
+        rank_updates = await self._get_squad_rank_updates(discord_members)
+        if rank_updates:
+            embed.add_field(
+                name="📈 Rank Updates",
+                value=rank_updates,
+                inline=False
+            )
+
         # Add enhanced fun highlights
         if fun_stats['highlights']:
             # Limit to top 6 highlights to avoid embed limits
@@ -435,7 +448,224 @@ class MatchTracker:
         
         embed.set_footer(text="Use /shootylink to show up in post-match recaps!")
         return embed
-    
+
+    async def _get_squad_rank_updates(self, discord_members: List[Dict]) -> Optional[str]:
+        """Build a rank/RR update line for each tracked squad member.
+
+        Best-effort: skips members whose MMR can't be fetched (private profile,
+        API down, no key) so the recap still renders without them.
+        """
+        lines = []
+        for dm in discord_members:
+            account = dm.get('account', {}) or {}
+            username = account.get('username')
+            tag = account.get('tag')
+            if not username or not tag:
+                continue
+
+            try:
+                mmr = await valorant_client.get_mmr(username, tag)
+            except Exception as e:
+                log_error(f"fetching rank for {username}#{tag}", e)
+                mmr = None
+
+            if not mmr or not mmr.get('tier'):
+                continue
+
+            member = dm['member']
+            rr = mmr.get('rr')
+            change = mmr.get('rr_change')
+            rr_str = f"{rr} RR" if rr is not None else ""
+
+            if change is None:
+                change_str = ""
+            elif change > 0:
+                change_str = f" (🟢 +{change})"
+            elif change < 0:
+                change_str = f" (🔴 {change})"
+            else:
+                change_str = " (⚪ ±0)"
+
+            sep = " · " if rr_str else ""
+            lines.append(
+                f"• **{member.display_name}**: {mmr.get('emoji', '')} {mmr['tier']}{sep}{rr_str}{change_str}"
+            )
+
+        return "\n".join(lines) if lines else None
+
+    async def build_session_recap(self, guild: discord.Guild, participants: List[discord.Member], session) -> discord.Embed:
+        """Build an end-of-session recap embed.
+
+        Ties the session (``/st`` -> ``/stend``) to the competitive matches the
+        participants actually played during the session window. Always returns a
+        usable embed, degrading gracefully when no Valorant data is available.
+
+        Args:
+            guild: The guild the session ran in.
+            participants: Discord members who were in the stack at end time.
+            session: The ended ``SessionData`` (provides the time window).
+        """
+        # Resolve the session time window
+        start_dt = parse_henrik_timestamp(getattr(session, 'start_time', None))
+        end_dt = parse_henrik_timestamp(getattr(session, 'end_time', None)) or datetime.now(timezone.utc)
+        # Grace before start to catch a match already in progress when /st ran
+        window_start = (start_dt - timedelta(minutes=10)) if start_dt else None
+        window_end = end_dt + timedelta(minutes=5)
+
+        # Collect matches played in-window across all participant accounts
+        matches_by_id: Dict[str, Dict[str, Any]] = {}
+        member_puuids: Dict[str, discord.Member] = {}
+
+        for member in participants:
+            if getattr(member, 'bot', False):
+                continue
+            accounts = valorant_client.get_all_linked_accounts(member.id)
+            for account in accounts:
+                puuid = account.get('puuid')
+                if puuid:
+                    member_puuids[puuid] = member
+                try:
+                    matches = await valorant_client.get_match_history(
+                        account['username'], account['tag'],
+                        size=5, mode='competitive'
+                    )
+                except Exception as e:
+                    log_error(f"fetching session matches for {account.get('username')}", e)
+                    matches = None
+
+                for match in matches or []:
+                    mid = match.get('metadata', {}).get('matchid')
+                    if not mid or mid in matches_by_id:
+                        continue
+                    started = parse_henrik_timestamp(match.get('metadata', {}).get('game_start', ''))
+                    if started is None:
+                        continue
+                    if window_start and started < window_start:
+                        continue
+                    if started > window_end:
+                        continue
+                    matches_by_id[mid] = match
+
+        # Aggregate per-player stats and W/L across in-window matches
+        player_totals: Dict[int, Dict[str, Any]] = {}
+        wins = losses = 0
+        for match in matches_by_id.values():
+            all_players = match.get('players', {}).get('all_players', [])
+            teams = match.get('teams', {})
+            stack_team = None
+            for player in all_players:
+                if player.get('puuid') not in member_puuids:
+                    continue
+                member = member_puuids[player['puuid']]
+                pstats = player.get('stats', {})
+                totals = player_totals.setdefault(member.id, {
+                    'member': member, 'kills': 0, 'deaths': 0, 'assists': 0, 'games': 0
+                })
+                totals['kills'] += pstats.get('kills', 0)
+                totals['deaths'] += pstats.get('deaths', 0)
+                totals['assists'] += pstats.get('assists', 0)
+                totals['games'] += 1
+                if stack_team is None:
+                    stack_team = player.get('team', '').lower()
+            if stack_team and stack_team in teams:
+                if teams[stack_team].get('has_won', False):
+                    wins += 1
+                else:
+                    losses += 1
+
+        # Header
+        games = len(matches_by_id)
+        duration_min = getattr(session, 'duration_minutes', 0) or 0
+        if duration_min >= 60:
+            duration_str = f"{duration_min // 60}h {duration_min % 60}m"
+        else:
+            duration_str = f"{duration_min}m"
+
+        if games == 0:
+            color = 0x808080
+        elif wins > losses:
+            color = 0x00ff66
+        elif losses > wins:
+            color = 0xff4655
+        else:
+            color = 0xffaa00
+
+        desc_parts = [f"🗓️ {len(participants)} player{'s' if len(participants) != 1 else ''}", f"⏱️ {duration_str}"]
+        if games:
+            desc_parts.append(f"🎮 {games} game{'s' if games != 1 else ''} · {wins}W-{losses}L")
+        embed = discord.Embed(
+            title="📊 Session Recap",
+            description=" • ".join(desc_parts),
+            color=color,
+            timestamp=end_dt
+        )
+
+        if games == 0:
+            embed.add_field(
+                name="No tracked games this session",
+                value=(
+                    "No competitive matches were detected for the squad.\n"
+                    "Use `/shootylink <username> <tag>` so your games show up in recaps!"
+                ),
+                inline=False
+            )
+            embed.set_footer(text="GG — see you next session!")
+            return embed
+
+        # Per-player session scoreboard, sorted by KDA, MVP crowned
+        ranked = sorted(
+            player_totals.values(),
+            key=lambda t: (t['kills'] + t['assists']) / max(t['deaths'], 1),
+            reverse=True
+        )
+        scoreboard = []
+        for i, t in enumerate(ranked):
+            kda = (t['kills'] + t['assists']) / max(t['deaths'], 1)
+            crown = "👑 " if i == 0 and len(ranked) > 1 else ""
+            scoreboard.append(
+                f"{crown}**{t['member'].display_name}** — {t['kills']}/{t['deaths']}/{t['assists']} "
+                f"({kda:.2f} KDA, {t['games']}G)"
+            )
+        embed.add_field(
+            name="🏅 Squad Scoreboard",
+            value="\n".join(scoreboard) or "No player data",
+            inline=False
+        )
+
+        if len(ranked) > 1:
+            embed.add_field(
+                name="🌟 MVP of the Night",
+                value=f"**{ranked[0]['member'].display_name}** carried the squad! 🔥",
+                inline=False
+            )
+
+        # End-of-night ranks (best-effort)
+        rank_lines = []
+        for member in participants:
+            account = valorant_client.get_linked_account(member.id)
+            if not account:
+                continue
+            try:
+                mmr = await valorant_client.get_mmr(account['username'], account['tag'])
+            except Exception:
+                mmr = None
+            if mmr and mmr.get('tier'):
+                rr = mmr.get('rr')
+                rr_str = f" · {rr} RR" if rr is not None else ""
+                rank_lines.append(f"• **{member.display_name}**: {mmr.get('emoji', '')} {mmr['tier']}{rr_str}")
+        if rank_lines:
+            embed.add_field(name="📈 Where You Landed", value="\n".join(rank_lines), inline=False)
+
+        # Closing flavor
+        if wins > losses:
+            flavor = "🔥 Winning night — GG WP!"
+        elif losses > wins:
+            flavor = "😅 Rough night. Run it back next time! 💪"
+        else:
+            flavor = "⚖️ Even night — the grind continues."
+        embed.set_footer(text=flavor)
+        return embed
+
     def _calculate_fun_match_stats(self, match_data: dict, discord_members: List[Dict]) -> Dict:
         """Calculate fun and interesting match statistics"""
         stats = {
