@@ -424,7 +424,8 @@ class ValorantClient(BaseAPIClient):
             'agent_performance': {},
             'map_performance': {},
             'total_shots_fired': 0,
-            'total_shots_hit': 0
+            'total_shots_hit': 0,
+            'weapon_kills': {}  # weapon display name -> kill count across all matches
         }
         
         for match in matches:
@@ -509,6 +510,9 @@ class ValorantClient(BaseAPIClient):
             
             # Calculate accurate advanced stats for this match using the well-tested algorithm
             self._calculate_accurate_match_stats(match, player_puuid, stats, match_won)
+
+            # Track per-weapon kills from this match's round data
+            self._track_weapon_kills(match, player_puuid, stats)
             
             # Agent performance tracking
             if agent_name not in stats['agent_performance']:
@@ -659,6 +663,45 @@ class ValorantClient(BaseAPIClient):
         all_players = match.get('players', {}).get('all_players', [])
         return any(player.get('puuid') == player_puuid for player in all_players)
     
+    @staticmethod
+    def _extract_weapon_name(kill_event: Dict[str, Any]) -> Optional[str]:
+        """Extract a human-readable weapon name from a kill event.
+
+        Henrik API kill events expose the weapon via ``damage_weapon_name`` and/or
+        ``damage_weapon_assets.display_name``. We try the most reliable fields first
+        and fall back to the raw id so unknown weapons are still grouped consistently.
+        """
+        assets = kill_event.get("damage_weapon_assets") or {}
+        name = (
+            kill_event.get("damage_weapon_name")
+            or assets.get("display_name")
+            or kill_event.get("damage_weapon_id")
+        )
+        if not name:
+            return None
+        name = str(name).strip()
+        return name or None
+
+    def _track_weapon_kills(self, match: Dict[str, Any], player_puuid: str, stats: Dict[str, Any]):
+        """Tally the player's kills per weapon across all rounds of a match.
+
+        Note: the Henrik API only tags weapons on kill events, not on damage
+        events, so only per-weapon kill counts can be derived (not per-weapon
+        headshot/bodyshot/legshot accuracy).
+        """
+        weapon_kills = stats.setdefault('weapon_kills', {})
+
+        for round_data in match.get('rounds', []):
+            for player_round in round_data.get('player_stats', []):
+                if player_round.get('player_puuid') != player_puuid:
+                    continue
+
+                for kill_event in player_round.get('kill_events', []):
+                    weapon_name = self._extract_weapon_name(kill_event)
+                    if not weapon_name:
+                        continue
+                    weapon_kills[weapon_name] = weapon_kills.get(weapon_name, 0) + 1
+
     def _calculate_accurate_match_stats(self, match: Dict[str, Any], player_puuid: str, stats: Dict[str, Any], match_won: bool):
         """Calculate tournament-grade accurate match statistics using the proven algorithm from calculate_match_stats.py
         

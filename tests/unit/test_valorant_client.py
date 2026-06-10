@@ -231,6 +231,102 @@ class TestMatchHistoryAPI:
                 assert result == [{'id': 'match1'}]
 
 
+class TestWeaponKillTracking:
+    """Test per-weapon kill tracking in calculate_player_stats"""
+
+    @pytest.fixture
+    def client(self):
+        with patch('valorant_client.HENRIK_API_KEY', ''):
+            return ValorantClient()
+
+    def _build_match(self, player_puuid):
+        """Build a minimal competitive match with weapon-tagged kill events."""
+        return {
+            "metadata": {
+                "map": "Ascent",
+                "mode": "Competitive",
+                "mode_id": "competitive",
+                "queue": "competitive",
+                "rounds_played": 2,
+            },
+            "is_available": True,
+            "players": {
+                "all_players": [
+                    {
+                        "puuid": player_puuid,
+                        "team": "Red",
+                        "character": "Jett",
+                        "stats": {"kills": 3, "deaths": 1, "assists": 0,
+                                  "headshots": 2, "bodyshots": 1, "legshots": 0, "score": 600},
+                        "damage_made": 400,
+                        "damage_received": 200,
+                    }
+                ]
+            },
+            "teams": {"red": {"has_won": True}},
+            "rounds": [
+                {
+                    "winning_team": "Red",
+                    "player_stats": [
+                        {
+                            "player_puuid": player_puuid,
+                            "kills": 2,
+                            "kill_events": [
+                                {"victim_puuid": "v1", "kill_time_in_round": 1000,
+                                 "damage_weapon_name": "Vandal", "assistants": []},
+                                {"victim_puuid": "v2", "kill_time_in_round": 2000,
+                                 "damage_weapon_assets": {"display_name": "Phantom"}, "assistants": []},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "winning_team": "Red",
+                    "player_stats": [
+                        {
+                            "player_puuid": player_puuid,
+                            "kills": 1,
+                            "kill_events": [
+                                {"victim_puuid": "v3", "kill_time_in_round": 1500,
+                                 "damage_weapon_name": "Vandal", "assistants": []},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+    def test_weapon_kills_aggregated(self, client):
+        puuid = "player-1"
+        match = self._build_match(puuid)
+
+        with patch('valorant_client.database_manager.get_stored_player_stats', return_value=None), \
+             patch('valorant_client.database_manager.store_player_stats'):
+            stats = client.calculate_player_stats([match], puuid)
+
+        weapon_kills = stats.get('weapon_kills', {})
+        assert weapon_kills.get('Vandal') == 2
+        assert weapon_kills.get('Phantom') == 1
+
+    def test_weapon_kills_accumulate_across_matches(self, client):
+        puuid = "player-1"
+        matches = [self._build_match(puuid), self._build_match(puuid)]
+
+        with patch('valorant_client.database_manager.get_stored_player_stats', return_value=None), \
+             patch('valorant_client.database_manager.store_player_stats'):
+            stats = client.calculate_player_stats(matches, puuid)
+
+        assert stats['weapon_kills']['Vandal'] == 4
+        assert stats['weapon_kills']['Phantom'] == 2
+
+    def test_extract_weapon_name_fallbacks(self, client):
+        assert client._extract_weapon_name({"damage_weapon_name": "Sheriff"}) == "Sheriff"
+        assert client._extract_weapon_name(
+            {"damage_weapon_assets": {"display_name": "Operator"}}) == "Operator"
+        assert client._extract_weapon_name({"damage_weapon_id": "ability_id"}) == "ability_id"
+        assert client._extract_weapon_name({}) is None
+
+
 class TestGlobalInstance:
     """Test global instance"""
     
