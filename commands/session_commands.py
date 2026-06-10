@@ -53,6 +53,9 @@ class SessionCommands(BaseCommandCog):
             # Reset users
             shooty_context.reset_users()
 
+            # Auto-add the session initiator to the solo queue
+            shooty_context.add_soloq_user(ctx.author)
+
             # Update bot status after resetting users
             await self.bot.update_status_with_queue_count()
 
