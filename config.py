@@ -50,6 +50,21 @@ CUSTOM_EMOJI = {
     "PARTY_EMPTY": "<:viper:725612569716326422>"
 }
 
+# Valorant Weapons (grouped by category)
+# Display names match the Henrik API kill_event weapon names (valorant-api.com display names)
+VALORANT_WEAPONS = {
+    "Sidearms": ["Classic", "Shorty", "Frenzy", "Ghost", "Sheriff"],
+    "SMGs": ["Stinger", "Spectre"],
+    "Shotguns": ["Bucky", "Judge"],
+    "Rifles": ["Bulldog", "Guardian", "Phantom", "Vandal"],
+    "Snipers": ["Marshal", "Outlaw", "Operator"],
+    "Machine Guns": ["Ares", "Odin"],
+    "Melee": ["Melee"],
+}
+
+# Flat, ordered list of all weapon names for quick lookups / autocomplete
+VALORANT_WEAPON_LIST = [weapon for weapons in VALORANT_WEAPONS.values() for weapon in weapons]
+
 # Message Templates
 MESSAGES = {
     "NO_ROLE": "First set the role for the bot to ping with ```$stsr <Role>```",

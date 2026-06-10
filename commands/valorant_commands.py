@@ -1,12 +1,24 @@
+import asyncio
 import logging
-from typing import Optional
+from typing import List, Optional
 import discord
+from discord import app_commands
 from discord.ext import commands
 from base_commands import BaseCommandCog
 from valorant_client import valorant_client
 from data_manager import data_manager
 from datetime import datetime, timezone
 from match_tracker import get_match_tracker
+from config import VALORANT_WEAPON_LIST
+
+
+async def weapon_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> List[app_commands.Choice[str]]:
+    """Autocomplete handler for weapon names in the weapon leaderboard command."""
+    current = (current or "").lower()
+    matches = [w for w in VALORANT_WEAPON_LIST if current in w.lower()]
+    return [app_commands.Choice(name=weapon, value=weapon) for weapon in matches[:25]]
 
 class ValorantCommands(BaseCommandCog):
     """Commands for Valorant integration and account management"""
@@ -748,6 +760,45 @@ class ValorantCommands(BaseCommandCog):
             self.logger.error(f"Error in shootycompare command: {e}")
             await self.send_error_embed(ctx, "Error Comparing Players", str(e))
 
+    # Cap concurrent Henrik API requests so leaderboards don't trip rate limits
+    _LEADERBOARD_CONCURRENCY = 5
+
+    async def _gather_member_stats(self, guild: discord.Guild, size: int = 10) -> List[dict]:
+        """Fetch Valorant stats for every member with a linked account, concurrently.
+
+        Results are cached at the client/DB layer, so warm runs make no API calls;
+        cold runs are bounded by a semaphore to respect Henrik API rate limits.
+
+        Returns a list of dicts: {'member', 'account', 'stats'}.
+        """
+        semaphore = asyncio.Semaphore(self._LEADERBOARD_CONCURRENCY)
+
+        async def fetch(member: discord.Member, account: dict) -> Optional[dict]:
+            async with semaphore:
+                try:
+                    matches = await valorant_client.get_match_history(
+                        account['username'], account['tag'], size=size
+                    )
+                    if not matches:
+                        return None
+                    stats = valorant_client.calculate_player_stats(matches, account['puuid'])
+                    return {'member': member, 'account': account, 'stats': stats}
+                except Exception as e:
+                    self.logger.warning(f"Error getting stats for {member.display_name}: {e}")
+                    return None
+
+        tasks = []
+        for member in guild.members:
+            if member.bot:
+                continue
+            account = valorant_client.get_linked_account(member.id)
+            if not account:
+                continue
+            tasks.append(fetch(member, account))
+
+        results = await asyncio.gather(*tasks)
+        return [r for r in results if r is not None]
+
     @commands.hybrid_command(
         name="shootyleaderboard",
         description="Show server leaderboard for Valorant stats (kda, kd, winrate, headshot, acs)"
@@ -766,41 +817,13 @@ class ValorantCommands(BaseCommandCog):
             return
         
         try:
-            # Collect stats for all members with linked accounts
-            member_stats = []
-            
-            for member in ctx.guild.members:
-                if member.bot:
-                    continue
-                    
-                accounts = valorant_client.get_all_linked_accounts(member.id)
-                if not accounts:
-                    continue
-                
-                primary_account = valorant_client.get_linked_account(member.id)
-                if not primary_account:
-                    continue
-                
-                try:
-                    # Get recent matches for stats calculation
-                    matches = await valorant_client.get_match_history(
-                        primary_account['username'],
-                        primary_account['tag'],
-                        size=10  # Use fewer matches for leaderboard to be faster
-                    )
-                    
-                    if matches:
-                        stats = valorant_client.calculate_player_stats(matches, primary_account['puuid'])
-                        if stats.get('total_matches', 0) >= 3:  # Minimum 3 matches for leaderboard
-                            member_stats.append({
-                                'member': member,
-                                'account': primary_account,
-                                'stats': stats
-                            })
-                except Exception as e:
-                    self.logger.warning(f"Error getting stats for {member.display_name}: {e}")
-                    continue
-            
+            # Collect stats for all members with linked accounts (concurrently)
+            all_member_stats = await self._gather_member_stats(ctx.guild, size=10)
+            # Minimum 3 matches for leaderboard
+            member_stats = [
+                m for m in all_member_stats if m['stats'].get('total_matches', 0) >= 3
+            ]
+
             if not member_stats:
                 await self.send_embed(
                     ctx,
@@ -959,6 +982,110 @@ class ValorantCommands(BaseCommandCog):
                 "Sorry, there was an error generating the leaderboard. Please try again later."
             )
     
+    @commands.hybrid_command(
+        name="shootyweaponstats",
+        description="Server leaderboard of kills with a specific weapon (e.g., /shootyweaponstats Vandal)"
+    )
+    @app_commands.describe(weapon="The Valorant weapon to rank players by (start typing for suggestions)")
+    @app_commands.autocomplete(weapon=weapon_autocomplete)
+    async def weapon_leaderboard(self, ctx: commands.Context, *, weapon: str) -> None:
+        """Show a server leaderboard ranking players by kills with a given weapon."""
+        await self.defer_if_slash(ctx)
+
+        # Resolve the requested weapon to a canonical name (case-insensitive)
+        requested = weapon.strip()
+        canonical_weapon = next(
+            (w for w in VALORANT_WEAPON_LIST if w.lower() == requested.lower()),
+            None
+        )
+        if not canonical_weapon:
+            await self.send_error_embed(
+                ctx,
+                "Unknown Weapon",
+                f"'{requested}' isn't a recognized weapon.\n"
+                f"Valid weapons: {', '.join(VALORANT_WEAPON_LIST)}"
+            )
+            return
+
+        try:
+            # Collect stats for all members with linked accounts (concurrently),
+            # then tally kills with the requested weapon
+            all_member_stats = await self._gather_member_stats(ctx.guild, size=10)
+
+            member_stats = []
+            for entry in all_member_stats:
+                stats = entry['stats']
+                # Match weapon names case-insensitively against the player's tally
+                weapon_kills = {
+                    name.lower(): count
+                    for name, count in stats.get('weapon_kills', {}).items()
+                }
+                kills = weapon_kills.get(canonical_weapon.lower(), 0)
+
+                if kills > 0:
+                    member_stats.append({
+                        'member': entry['member'],
+                        'kills': kills,
+                        'matches': stats.get('total_matches', 0)
+                    })
+
+            if not member_stats:
+                await self.send_embed(
+                    ctx,
+                    f"🔫 Server {canonical_weapon} Leaderboard",
+                    f"No recent kills with the **{canonical_weapon}** found among linked players.",
+                    color=0x808080
+                )
+                return
+
+            # Sort by weapon kills (descending)
+            member_stats.sort(key=lambda x: x['kills'], reverse=True)
+
+            embed = discord.Embed(
+                title=f"🔫 Server Leaderboard: {canonical_weapon} Kills",
+                description=f"Top {min(10, len(member_stats))} players by **{canonical_weapon}** kills "
+                            f"(based on each player's recent competitive matches)",
+                color=0xff4655
+            )
+
+            leaderboard_text = []
+            for i, player_data in enumerate(member_stats[:10]):
+                member = player_data['member']
+                kills = player_data['kills']
+                matches = player_data['matches']
+                rank_emoji = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"{i+1}."
+                leaderboard_text.append(
+                    f"{rank_emoji} **{member.display_name}** - {kills} kills ({matches}G)"
+                )
+
+            embed.add_field(
+                name="🎯 Top Fraggers",
+                value="\n".join(leaderboard_text),
+                inline=False
+            )
+
+            total_weapon_kills = sum(p['kills'] for p in member_stats)
+            embed.add_field(
+                name="📊 Server Stats",
+                value=f"**Players:** {len(member_stats)}\n**Total {canonical_weapon} Kills:** {total_weapon_kills}",
+                inline=True
+            )
+
+            embed.set_footer(
+                text="🔄 Try other weapons with /shootyweaponstats <weapon> • "
+                     "Stats reflect each player's recent matches"
+            )
+
+            await ctx.send(embed=embed)
+
+        except Exception as e:
+            self.logger.error(f"Error in weapon leaderboard command: {e}")
+            await self.send_error_embed(
+                ctx,
+                "Weapon Leaderboard Error",
+                "Sorry, there was an error generating the weapon leaderboard. Please try again later."
+            )
+
     @commands.hybrid_command(
         name="shootyhistory",
         description="Show session history for this channel"

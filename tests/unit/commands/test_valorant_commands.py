@@ -281,5 +281,102 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
         verdict = next(f for f in embed.fields if f.name == 'Verdict')
         self.assertIn('Alice', verdict.value)
 
+    def _make_member(self, member_id, name, is_bot=False):
+        member = MagicMock(spec=discord.Member)
+        member.id = member_id
+        member.display_name = name
+        member.bot = is_bot
+        return member
+
+    @patch('commands.valorant_commands.valorant_client')
+    async def test_gather_member_stats_skips_bots_and_unlinked(self, mock_valorant_client):
+        """The shared helper fetches only linked, non-bot members."""
+        alice = self._make_member(1, 'Alice')
+        bob = self._make_member(2, 'Bob')
+        a_bot = self._make_member(3, 'BotUser', is_bot=True)
+        unlinked = self._make_member(4, 'NoAccount')
+        guild = MagicMock(spec=discord.Guild)
+        guild.members = [alice, bob, a_bot, unlinked]
+
+        accounts = {
+            1: {'username': 'Alice', 'tag': 'NA1', 'puuid': 'pa'},
+            2: {'username': 'Bob', 'tag': 'NA1', 'puuid': 'pb'},
+        }
+        mock_valorant_client.get_linked_account.side_effect = lambda uid: accounts.get(uid)
+        mock_valorant_client.get_match_history = AsyncMock(
+            side_effect=lambda u, t, **kw: [{'puuid': accounts[1]['puuid'] if u == 'Alice' else accounts[2]['puuid']}]
+        )
+        mock_valorant_client.calculate_player_stats.side_effect = (
+            lambda matches, puuid, **kw: {'total_matches': 5, 'puuid': matches[0]['puuid']}
+        )
+
+        results = await self.cog._gather_member_stats(guild)
+
+        # Only Alice and Bob qualify (bot and unlinked excluded)
+        self.assertEqual({r['member'].display_name for r in results}, {'Alice', 'Bob'})
+        self.assertEqual(mock_valorant_client.get_match_history.await_count, 2)
+
+    @patch('commands.valorant_commands.valorant_client')
+    async def test_weapon_leaderboard_success(self, mock_valorant_client):
+        """Weapon leaderboard ranks members by kills with the chosen weapon."""
+        alice = self._make_member(1, 'Alice')
+        bob = self._make_member(2, 'Bob')
+        a_bot = self._make_member(3, 'BotUser', is_bot=True)
+        self.ctx.guild.members = [alice, bob, a_bot]
+
+        accounts = {
+            1: {'username': 'Alice', 'tag': 'NA1', 'puuid': 'pa'},
+            2: {'username': 'Bob', 'tag': 'NA1', 'puuid': 'pb'},
+        }
+        weapon_stats = {
+            'pa': {'total_matches': 5, 'weapon_kills': {'Vandal': 40, 'Phantom': 5}},
+            'pb': {'total_matches': 5, 'weapon_kills': {'Vandal': 60, 'Sheriff': 3}},
+        }
+        mock_valorant_client.get_linked_account.side_effect = lambda uid: accounts.get(uid)
+        mock_valorant_client.get_match_history = AsyncMock(
+            side_effect=lambda u, t, **kw: [{'puuid': accounts[1]['puuid'] if u == 'Alice' else accounts[2]['puuid']}]
+        )
+        mock_valorant_client.calculate_player_stats.side_effect = (
+            lambda matches, puuid, **kw: weapon_stats[matches[0]['puuid']]
+        )
+
+        await self.cog.weapon_leaderboard.callback(self.cog, self.ctx, weapon='vandal')
+
+        self.ctx.send.assert_awaited()
+        embed = self.ctx.send.call_args.kwargs['embed']
+        self.assertIn('Vandal', embed.title)
+        top = next(f for f in embed.fields if f.name == '🎯 Top Fraggers')
+        # Bob (60) should rank above Alice (40)
+        self.assertLess(top.value.index('Bob'), top.value.index('Alice'))
+        self.assertIn('60 kills', top.value)
+
+    @patch('commands.valorant_commands.valorant_client')
+    async def test_weapon_leaderboard_unknown_weapon(self, mock_valorant_client):
+        """An unrecognized weapon returns an error without querying stats."""
+        self.ctx.guild.members = []
+        await self.cog.weapon_leaderboard.callback(self.cog, self.ctx, weapon='banana')
+
+        self.cog.send_error_embed.assert_awaited_once()
+        mock_valorant_client.get_match_history.assert_not_called()
+
+    @patch('commands.valorant_commands.valorant_client')
+    async def test_weapon_leaderboard_no_kills(self, mock_valorant_client):
+        """When no one has kills with the weapon, a friendly message is shown."""
+        alice = self._make_member(1, 'Alice')
+        self.ctx.guild.members = [alice]
+        mock_valorant_client.get_linked_account.side_effect = (
+            lambda uid: {'username': 'Alice', 'tag': 'NA1', 'puuid': 'pa'} if uid == 1 else None
+        )
+        mock_valorant_client.get_match_history = AsyncMock(return_value=[{'puuid': 'pa'}])
+        mock_valorant_client.calculate_player_stats.return_value = {
+            'total_matches': 5, 'weapon_kills': {'Phantom': 10}
+        }
+
+        await self.cog.weapon_leaderboard.callback(self.cog, self.ctx, weapon='Operator')
+
+        self.cog.send_embed.assert_awaited()
+        self.ctx.send.assert_not_awaited()
+
+
 if __name__ == '__main__':
     unittest.main()
