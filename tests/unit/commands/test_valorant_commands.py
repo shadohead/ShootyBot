@@ -289,6 +289,34 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
         return member
 
     @patch('commands.valorant_commands.valorant_client')
+    async def test_gather_member_stats_skips_bots_and_unlinked(self, mock_valorant_client):
+        """The shared helper fetches only linked, non-bot members."""
+        alice = self._make_member(1, 'Alice')
+        bob = self._make_member(2, 'Bob')
+        a_bot = self._make_member(3, 'BotUser', is_bot=True)
+        unlinked = self._make_member(4, 'NoAccount')
+        guild = MagicMock(spec=discord.Guild)
+        guild.members = [alice, bob, a_bot, unlinked]
+
+        accounts = {
+            1: {'username': 'Alice', 'tag': 'NA1', 'puuid': 'pa'},
+            2: {'username': 'Bob', 'tag': 'NA1', 'puuid': 'pb'},
+        }
+        mock_valorant_client.get_linked_account.side_effect = lambda uid: accounts.get(uid)
+        mock_valorant_client.get_match_history = AsyncMock(
+            side_effect=lambda u, t, **kw: [{'puuid': accounts[1]['puuid'] if u == 'Alice' else accounts[2]['puuid']}]
+        )
+        mock_valorant_client.calculate_player_stats.side_effect = (
+            lambda matches, puuid, **kw: {'total_matches': 5, 'puuid': matches[0]['puuid']}
+        )
+
+        results = await self.cog._gather_member_stats(guild)
+
+        # Only Alice and Bob qualify (bot and unlinked excluded)
+        self.assertEqual({r['member'].display_name for r in results}, {'Alice', 'Bob'})
+        self.assertEqual(mock_valorant_client.get_match_history.await_count, 2)
+
+    @patch('commands.valorant_commands.valorant_client')
     async def test_weapon_leaderboard_success(self, mock_valorant_client):
         """Weapon leaderboard ranks members by kills with the chosen weapon."""
         alice = self._make_member(1, 'Alice')

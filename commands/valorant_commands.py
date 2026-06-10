@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import List, Optional
 import discord
@@ -759,6 +760,45 @@ class ValorantCommands(BaseCommandCog):
             self.logger.error(f"Error in shootycompare command: {e}")
             await self.send_error_embed(ctx, "Error Comparing Players", str(e))
 
+    # Cap concurrent Henrik API requests so leaderboards don't trip rate limits
+    _LEADERBOARD_CONCURRENCY = 5
+
+    async def _gather_member_stats(self, guild: discord.Guild, size: int = 10) -> List[dict]:
+        """Fetch Valorant stats for every member with a linked account, concurrently.
+
+        Results are cached at the client/DB layer, so warm runs make no API calls;
+        cold runs are bounded by a semaphore to respect Henrik API rate limits.
+
+        Returns a list of dicts: {'member', 'account', 'stats'}.
+        """
+        semaphore = asyncio.Semaphore(self._LEADERBOARD_CONCURRENCY)
+
+        async def fetch(member: discord.Member, account: dict) -> Optional[dict]:
+            async with semaphore:
+                try:
+                    matches = await valorant_client.get_match_history(
+                        account['username'], account['tag'], size=size
+                    )
+                    if not matches:
+                        return None
+                    stats = valorant_client.calculate_player_stats(matches, account['puuid'])
+                    return {'member': member, 'account': account, 'stats': stats}
+                except Exception as e:
+                    self.logger.warning(f"Error getting stats for {member.display_name}: {e}")
+                    return None
+
+        tasks = []
+        for member in guild.members:
+            if member.bot:
+                continue
+            account = valorant_client.get_linked_account(member.id)
+            if not account:
+                continue
+            tasks.append(fetch(member, account))
+
+        results = await asyncio.gather(*tasks)
+        return [r for r in results if r is not None]
+
     @commands.hybrid_command(
         name="shootyleaderboard",
         description="Show server leaderboard for Valorant stats (kda, kd, winrate, headshot, acs)"
@@ -777,41 +817,13 @@ class ValorantCommands(BaseCommandCog):
             return
         
         try:
-            # Collect stats for all members with linked accounts
-            member_stats = []
-            
-            for member in ctx.guild.members:
-                if member.bot:
-                    continue
-                    
-                accounts = valorant_client.get_all_linked_accounts(member.id)
-                if not accounts:
-                    continue
-                
-                primary_account = valorant_client.get_linked_account(member.id)
-                if not primary_account:
-                    continue
-                
-                try:
-                    # Get recent matches for stats calculation
-                    matches = await valorant_client.get_match_history(
-                        primary_account['username'],
-                        primary_account['tag'],
-                        size=10  # Use fewer matches for leaderboard to be faster
-                    )
-                    
-                    if matches:
-                        stats = valorant_client.calculate_player_stats(matches, primary_account['puuid'])
-                        if stats.get('total_matches', 0) >= 3:  # Minimum 3 matches for leaderboard
-                            member_stats.append({
-                                'member': member,
-                                'account': primary_account,
-                                'stats': stats
-                            })
-                except Exception as e:
-                    self.logger.warning(f"Error getting stats for {member.display_name}: {e}")
-                    continue
-            
+            # Collect stats for all members with linked accounts (concurrently)
+            all_member_stats = await self._gather_member_stats(ctx.guild, size=10)
+            # Minimum 3 matches for leaderboard
+            member_stats = [
+                m for m in all_member_stats if m['stats'].get('total_matches', 0) >= 3
+            ]
+
             if not member_stats:
                 await self.send_embed(
                     ctx,
@@ -996,44 +1008,26 @@ class ValorantCommands(BaseCommandCog):
             return
 
         try:
-            # Collect per-weapon kills for all members with linked accounts
+            # Collect stats for all members with linked accounts (concurrently),
+            # then tally kills with the requested weapon
+            all_member_stats = await self._gather_member_stats(ctx.guild, size=10)
+
             member_stats = []
+            for entry in all_member_stats:
+                stats = entry['stats']
+                # Match weapon names case-insensitively against the player's tally
+                weapon_kills = {
+                    name.lower(): count
+                    for name, count in stats.get('weapon_kills', {}).items()
+                }
+                kills = weapon_kills.get(canonical_weapon.lower(), 0)
 
-            for member in ctx.guild.members:
-                if member.bot:
-                    continue
-
-                primary_account = valorant_client.get_linked_account(member.id)
-                if not primary_account:
-                    continue
-
-                try:
-                    matches = await valorant_client.get_match_history(
-                        primary_account['username'],
-                        primary_account['tag'],
-                        size=10  # Use fewer matches for leaderboard to be faster
-                    )
-
-                    if not matches:
-                        continue
-
-                    stats = valorant_client.calculate_player_stats(matches, primary_account['puuid'])
-                    # Match weapon names case-insensitively against the player's tally
-                    weapon_kills = {
-                        name.lower(): count
-                        for name, count in stats.get('weapon_kills', {}).items()
-                    }
-                    kills = weapon_kills.get(canonical_weapon.lower(), 0)
-
-                    if kills > 0:
-                        member_stats.append({
-                            'member': member,
-                            'kills': kills,
-                            'matches': stats.get('total_matches', 0)
-                        })
-                except Exception as e:
-                    self.logger.warning(f"Error getting weapon stats for {member.display_name}: {e}")
-                    continue
+                if kills > 0:
+                    member_stats.append({
+                        'member': entry['member'],
+                        'kills': kills,
+                        'matches': stats.get('total_matches', 0)
+                    })
 
             if not member_stats:
                 await self.send_embed(
