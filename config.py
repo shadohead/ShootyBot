@@ -26,6 +26,11 @@ DATA_DIR = os.getenv("DATA_DIR", "data")
 
 # Henrik API Configuration
 HENRIK_API_KEY = os.getenv("HENRIK_API_KEY", "")
+# Default Valorant region for all Henrik API calls (ap, br, eu, kr, latam, na)
+VALORANT_REGION = os.getenv("VALORANT_REGION", "na")
+# Requests per minute allowed by your Henrik key tier:
+# Basic keys = 30/min, Advanced keys = 90/min (see docs.henrikdev.xyz)
+HENRIK_REQUESTS_PER_MINUTE = int(os.getenv("HENRIK_REQUESTS_PER_MINUTE", "30"))
 
 # Database Configuration (optimized for Raspberry Pi)
 DB_TIMEOUT = 30.0  # Database timeout in seconds (for slower SD card I/O)

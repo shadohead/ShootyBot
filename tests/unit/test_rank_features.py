@@ -70,8 +70,8 @@ async def test_get_mmr_parses_response():
     assert result['elo'] == 1845
     assert result['peak'] == 'Diamond 2'
     assert result['emoji'] == '💎'
-    # base_url must be restored after the v2 swap
-    assert client.base_url == "https://api.henrikdev.xyz/valorant/v1"
+    # versioned endpoints share one immutable base URL
+    assert client.base_url == "https://api.henrikdev.xyz/valorant"
 
 
 @pytest.mark.asyncio
@@ -86,8 +86,8 @@ async def test_get_mmr_returns_none_on_exception():
     client = ValorantClient()
     client.get = AsyncMock(side_effect=Exception("boom"))
     assert await client.get_mmr('user', 'tag') is None
-    # base_url still restored even when the call blows up
-    assert client.base_url == "https://api.henrikdev.xyz/valorant/v1"
+    # base URL is never mutated, even when the call blows up
+    assert client.base_url == "https://api.henrikdev.xyz/valorant"
 
 
 # ---------------------------------------------------------------------------

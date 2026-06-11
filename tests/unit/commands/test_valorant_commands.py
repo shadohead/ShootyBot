@@ -49,30 +49,8 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
             'puuid': 'test-puuid-123'
         }
         
-        # Mock match history
-        mock_valorant_client.get_match_history = AsyncMock(return_value=[{
-            'metadata': {'matchid': '123', 'map': 'Ascent'},
-            'players': {'all_players': [{
-                'puuid': 'test-puuid-123',
-                'stats': {
-                    'kills': 20,
-                    'deaths': 10,
-                    'assists': 5,
-                    'score': 5000,
-                    'bodyshots': 30,
-                    'headshots': 10,
-                    'damage_made': 3000,
-                    'damage_received': 2000
-                },
-                'character': 'Jett',
-                'team': 'Red'
-            }]},
-            'rounds': [{'winning_team': 'Red'}] * 13 + [{'winning_team': 'Blue'}] * 5,
-            'teams': {'red': {'has_won': True}}
-        }])
-        
-        # Mock stats calculation
-        mock_valorant_client.calculate_player_stats.return_value = {
+        # Mock aggregated stats from the incremental stats pipeline
+        mock_valorant_client.get_player_stats = AsyncMock(return_value={
             'total_matches': 1,
             'acs': 250,
             'kd_ratio': 2.0,
@@ -111,8 +89,8 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
                 'rounds_played': 18,
                 'agent': 'Jett'
             }]
-        }
-        
+        })
+
         # Execute command - call the callback directly
         await self.cog.detailed_valorant_stats.callback(self.cog, self.ctx)
         
@@ -150,11 +128,8 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
             'puuid': 'test-puuid-123'
         }
         
-        # Mock match history
-        mock_valorant_client.get_match_history = AsyncMock(return_value=[{'fake': 'match'}])
-        
-        # Mock stats calculation without performance_ratings
-        mock_valorant_client.calculate_player_stats.return_value = {
+        # Mock aggregated stats without performance_ratings
+        mock_valorant_client.get_player_stats = AsyncMock(return_value={
             'total_matches': 1,
             'acs': 200,
             'kd_ratio': 1.5,
@@ -180,8 +155,8 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
             'max_win_streak': 1,
             'first_blood_rate': 25.0,
             'clutch_success_rate': 50.0
-        }
-        
+        })
+
         # Execute command - should not error even without performance_ratings
         await self.cog.detailed_valorant_stats.callback(self.cog, self.ctx)
         
@@ -266,11 +241,8 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
         }
         mock_valorant_client.get_linked_account.side_effect = lambda uid: accounts.get(uid)
         mock_valorant_client.get_all_linked_accounts.side_effect = lambda uid: [accounts[uid]] if uid in accounts else []
-        mock_valorant_client.get_match_history = AsyncMock(
-            side_effect=lambda u, t, **kw: [{'puuid': 'pa' if u == 'Alice' else 'pb'}]
-        )
-        mock_valorant_client.calculate_player_stats.side_effect = (
-            lambda matches, puuid, **kw: stats[matches[0]['puuid']]
+        mock_valorant_client.get_player_stats = AsyncMock(
+            side_effect=lambda u, t, **kw: stats['pa' if u == 'Alice' else 'pb']
         )
         mock_valorant_client.get_mmr = AsyncMock(return_value=None)
 
@@ -303,18 +275,15 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
             2: {'username': 'Bob', 'tag': 'NA1', 'puuid': 'pb'},
         }
         mock_valorant_client.get_linked_account.side_effect = lambda uid: accounts.get(uid)
-        mock_valorant_client.get_match_history = AsyncMock(
-            side_effect=lambda u, t, **kw: [{'puuid': accounts[1]['puuid'] if u == 'Alice' else accounts[2]['puuid']}]
-        )
-        mock_valorant_client.calculate_player_stats.side_effect = (
-            lambda matches, puuid, **kw: {'total_matches': 5, 'puuid': matches[0]['puuid']}
+        mock_valorant_client.get_player_stats = AsyncMock(
+            side_effect=lambda u, t, **kw: {'total_matches': 5, 'puuid': accounts[1]['puuid'] if u == 'Alice' else accounts[2]['puuid']}
         )
 
         results = await self.cog._gather_member_stats(guild)
 
         # Only Alice and Bob qualify (bot and unlinked excluded)
         self.assertEqual({r['member'].display_name for r in results}, {'Alice', 'Bob'})
-        self.assertEqual(mock_valorant_client.get_match_history.await_count, 2)
+        self.assertEqual(mock_valorant_client.get_player_stats.await_count, 2)
 
     @patch('commands.valorant_commands.valorant_client')
     async def test_weapon_leaderboard_success(self, mock_valorant_client):
@@ -333,11 +302,8 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
             'pb': {'total_matches': 5, 'weapon_kills': {'Vandal': 60, 'Sheriff': 3}},
         }
         mock_valorant_client.get_linked_account.side_effect = lambda uid: accounts.get(uid)
-        mock_valorant_client.get_match_history = AsyncMock(
-            side_effect=lambda u, t, **kw: [{'puuid': accounts[1]['puuid'] if u == 'Alice' else accounts[2]['puuid']}]
-        )
-        mock_valorant_client.calculate_player_stats.side_effect = (
-            lambda matches, puuid, **kw: weapon_stats[matches[0]['puuid']]
+        mock_valorant_client.get_player_stats = AsyncMock(
+            side_effect=lambda u, t, **kw: weapon_stats[accounts[1]['puuid'] if u == 'Alice' else accounts[2]['puuid']]
         )
 
         await self.cog.weapon_leaderboard.callback(self.cog, self.ctx, weapon='vandal')
@@ -357,7 +323,7 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
         await self.cog.weapon_leaderboard.callback(self.cog, self.ctx, weapon='banana')
 
         self.cog.send_error_embed.assert_awaited_once()
-        mock_valorant_client.get_match_history.assert_not_called()
+        mock_valorant_client.get_player_stats.assert_not_called()
 
     @patch('commands.valorant_commands.valorant_client')
     async def test_weapon_leaderboard_no_kills(self, mock_valorant_client):
@@ -367,10 +333,9 @@ class TestValorantCommands(unittest.IsolatedAsyncioTestCase):
         mock_valorant_client.get_linked_account.side_effect = (
             lambda uid: {'username': 'Alice', 'tag': 'NA1', 'puuid': 'pa'} if uid == 1 else None
         )
-        mock_valorant_client.get_match_history = AsyncMock(return_value=[{'puuid': 'pa'}])
-        mock_valorant_client.calculate_player_stats.return_value = {
+        mock_valorant_client.get_player_stats = AsyncMock(return_value={
             'total_matches': 5, 'weapon_kills': {'Phantom': 10}
-        }
+        })
 
         await self.cog.weapon_leaderboard.callback(self.cog, self.ctx, weapon='Operator')
 

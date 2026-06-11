@@ -64,6 +64,11 @@ class BaseAPIClient(ABC):
         self._cache: Dict[str, Any] = {}
         self._cache_ttl: Dict[str, datetime] = {}
         self._request_times: List[datetime] = []
+        self._requests_since_cache_sweep = 0
+
+        # Server-reported rate limit state (from response headers)
+        self._server_requests_remaining: Optional[int] = None
+        self._server_limit_resets_at: Optional[datetime] = None
         
     async def __aenter__(self):
         """Async context manager entry."""
@@ -157,20 +162,33 @@ class BaseAPIClient(ABC):
     async def _check_rate_limit(self) -> None:
         """Check and enforce rate limits."""
         now = datetime.utcnow()
-        
+
+        # Honor the server-reported window first: if the API told us we have no
+        # requests left, wait until its reset time instead of guessing locally.
+        if (self._server_requests_remaining is not None
+                and self._server_requests_remaining <= 0
+                and self._server_limit_resets_at is not None):
+            wait_time = (self._server_limit_resets_at - now).total_seconds()
+            if 0 < wait_time <= 120:
+                self.logger.warning(f"Server rate limit exhausted, waiting {wait_time:.1f}s for reset")
+                await asyncio.sleep(wait_time)
+                now = datetime.utcnow()
+            self._server_requests_remaining = None
+            self._server_limit_resets_at = None
+
         # Clean old request times
         cutoff = now - timedelta(seconds=60)
         self._request_times = [t for t in self._request_times if t > cutoff]
-        
+
         # Check rate limit
         if len(self._request_times) >= self.rate_limit.requests_per_minute:
             oldest_request = min(self._request_times)
             wait_time = 60 - (now - oldest_request).total_seconds()
-            
+
             if wait_time > 0:
                 self.logger.warning(f"Rate limit reached, waiting {wait_time:.1f}s")
                 await asyncio.sleep(wait_time)
-        
+
         # Record this request
         self._request_times.append(now)
     
@@ -196,7 +214,13 @@ class BaseAPIClient(ABC):
         
         # Check rate limit
         await self._check_rate_limit()
-        
+
+        # Periodically evict stale cache entries so memory stays bounded
+        self._requests_since_cache_sweep += 1
+        if self._requests_since_cache_sweep >= 50:
+            self._requests_since_cache_sweep = 0
+            self._clear_expired_cache()
+
         # Make request
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         
@@ -210,19 +234,19 @@ class BaseAPIClient(ABC):
                 
                 headers = dict(response.headers)
                 status_code = response.status
-                
+
                 # Parse rate limit info from headers
                 rate_limit_info = self._parse_rate_limit_headers(headers)
-                
+
                 # Handle different content types
                 if 'application/json' in response.headers.get('content-type', ''):
                     response_data = await response.json()
                 else:
                     response_data = {'text': await response.text()}
-                
+
                 # Handle rate limiting
                 if status_code == 429:
-                    retry_after = int(headers.get('retry-after', 60))
+                    retry_after = self._get_retry_after_seconds(headers)
                     self.logger.warning(f"Rate limited, retry after {retry_after}s")
                     await asyncio.sleep(retry_after)
                     raise aiohttp.ClientResponseError(
@@ -231,17 +255,18 @@ class BaseAPIClient(ABC):
                         status=status_code,
                         message="Rate limited"
                     )
-                
-                # Handle client errors
+
+                # Other client errors (404 not found, 401 unauthorized, ...) are
+                # not transient: return them so callers can branch on status_code
+                # instead of burning retries with backoff on a guaranteed failure.
                 if 400 <= status_code < 500:
-                    error_msg = response_data.get('message', f"Client error: {status_code}")
-                    raise aiohttp.ClientResponseError(
-                        request_info=response.request_info,
-                        history=response.history,
-                        status=status_code,
-                        message=error_msg
+                    return APIResponse(
+                        data=response_data,
+                        status_code=status_code,
+                        headers=headers,
+                        rate_limit_info=rate_limit_info
                     )
-                
+
                 # Handle server errors
                 if status_code >= 500:
                     error_msg = f"Server error: {status_code}"
@@ -270,9 +295,41 @@ class BaseAPIClient(ABC):
             log_error(f"unexpected error in {method} request to {endpoint}", e)
             raise
     
-    def _parse_rate_limit_headers(self, headers: Dict[str, str]) -> Optional[RateLimitInfo]:
-        """Parse rate limit information from response headers (override in subclass)."""
+    @staticmethod
+    def _header_lookup(headers: Dict[str, str], name: str) -> Optional[str]:
+        """Case-insensitive header lookup on a plain dict."""
+        lowered = name.lower()
+        for key, value in headers.items():
+            if key.lower() == lowered:
+                return value
         return None
+
+    def _get_retry_after_seconds(self, headers: Dict[str, str], default: int = 30) -> int:
+        """Determine how long to wait after a 429, capped to avoid stalling callers."""
+        for header in ('retry-after', 'x-ratelimit-reset'):
+            value = self._header_lookup(headers, header)
+            if value is not None:
+                try:
+                    return max(1, min(int(float(value)), 60))
+                except (TypeError, ValueError):
+                    continue
+        return default
+
+    def _parse_rate_limit_headers(self, headers: Dict[str, str]) -> Optional[RateLimitInfo]:
+        """Parse standard x-ratelimit-* headers and track the server-side window."""
+        remaining = self._header_lookup(headers, 'x-ratelimit-remaining')
+        reset = self._header_lookup(headers, 'x-ratelimit-reset')
+        if remaining is None:
+            return None
+        try:
+            self._server_requests_remaining = int(remaining)
+            if reset is not None:
+                # Henrik reports seconds until the window resets
+                reset_seconds = min(int(float(reset)), 120)
+                self._server_limit_resets_at = datetime.utcnow() + timedelta(seconds=reset_seconds)
+        except (TypeError, ValueError):
+            return None
+        return self.rate_limit
     
     async def get(self, endpoint: str, params: Dict[str, Any] = None,
                  use_cache: bool = True, cache_ttl: int = 300) -> APIResponse[Dict[str, Any]]:

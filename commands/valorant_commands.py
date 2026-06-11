@@ -432,25 +432,23 @@ class ValorantCommands(BaseCommandCog):
                 if not selected_account:
                     selected_account = accounts[0]
             
-            # Fetch match history (competitive only for accurate stats)
-            matches = await valorant_client.get_match_history(
-                selected_account['username'], 
-                selected_account['tag'], 
+            # Aggregate stats over recent competitive matches (incremental:
+            # only unseen matches are fetched, the rest come from SQLite)
+            stats = await valorant_client.get_player_stats(
+                selected_account['username'],
+                selected_account['tag'],
                 size=20,  # Analyze last 20 matches
                 mode='competitive'  # Only analyze competitive matches
             )
-            
-            if not matches:
+
+            if stats is None:
                 await self.send_error_embed(
                     ctx,
                     "No Match Data",
                     "Could not fetch match history. Account may be private or no recent matches found."
                 )
                 return
-            
-            # Calculate comprehensive stats
-            stats = valorant_client.calculate_player_stats(matches, selected_account['puuid'])
-            
+
             if not stats or stats.get('total_matches', 0) == 0:
                 await self.send_error_embed(
                     ctx,
@@ -595,7 +593,8 @@ class ValorantCommands(BaseCommandCog):
             else:
                 selected_account = valorant_client.get_linked_account(target_user.id) or accounts[0]
 
-            mmr = await valorant_client.get_mmr(selected_account['username'], selected_account['tag'])
+            mmr = await valorant_client.get_mmr(selected_account['username'], selected_account['tag'],
+                                                puuid=selected_account.get('puuid'))
             if not mmr or not mmr.get('tier'):
                 await self.send_error_embed(
                     ctx, "No Rank Data",
@@ -667,17 +666,16 @@ class ValorantCommands(BaseCommandCog):
                     )
                     return
 
-                matches = await valorant_client.get_match_history(
+                stats = await valorant_client.get_player_stats(
                     account['username'], account['tag'], size=20, mode='competitive'
                 )
-                if not matches:
+                if stats is None:
                     await self.send_error_embed(
                         ctx, "No Match Data",
                         f"Could not fetch competitive match history for {member.display_name}."
                     )
                     return
 
-                stats = valorant_client.calculate_player_stats(matches, account['puuid'])
                 if not stats or stats.get('total_matches', 0) == 0:
                     await self.send_error_embed(
                         ctx, "No Stats Available",
@@ -740,8 +738,10 @@ class ValorantCommands(BaseCommandCog):
             embed.add_field(name="Verdict", value=verdict, inline=False)
 
             # Current ranks (best-effort)
-            rank_a = await valorant_client.get_mmr(a['account']['username'], a['account']['tag'])
-            rank_b = await valorant_client.get_mmr(b['account']['username'], b['account']['tag'])
+            rank_a = await valorant_client.get_mmr(a['account']['username'], a['account']['tag'],
+                                                   puuid=a['account'].get('puuid'))
+            rank_b = await valorant_client.get_mmr(b['account']['username'], b['account']['tag'],
+                                                   puuid=b['account'].get('puuid'))
             if (rank_a and rank_a.get('tier')) or (rank_b and rank_b.get('tier')):
                 ra = f"{rank_a.get('emoji', '')} {rank_a['tier']}" if rank_a and rank_a.get('tier') else "Unranked"
                 rb = f"{rank_b.get('emoji', '')} {rank_b['tier']}" if rank_b and rank_b.get('tier') else "Unranked"
@@ -776,12 +776,11 @@ class ValorantCommands(BaseCommandCog):
         async def fetch(member: discord.Member, account: dict) -> Optional[dict]:
             async with semaphore:
                 try:
-                    matches = await valorant_client.get_match_history(
-                        account['username'], account['tag'], size=size
+                    stats = await valorant_client.get_player_stats(
+                        account['username'], account['tag'], size=size, mode='competitive'
                     )
-                    if not matches:
+                    if not stats:
                         return None
-                    stats = valorant_client.calculate_player_stats(matches, account['puuid'])
                     return {'member': member, 'account': account, 'stats': stats}
                 except Exception as e:
                     self.logger.warning(f"Error getting stats for {member.display_name}: {e}")
@@ -1344,24 +1343,22 @@ class ValorantCommands(BaseCommandCog):
             if not selected_account:
                 selected_account = accounts[0]
             
-            # Fetch match history
-            matches = await valorant_client.get_match_history(
-                selected_account['username'], 
-                selected_account['tag'], 
-                size=20
+            # Aggregate competitive stats (incremental fetch + SQLite rows)
+            stats = await valorant_client.get_player_stats(
+                selected_account['username'],
+                selected_account['tag'],
+                size=20,
+                mode='competitive'
             )
-            
-            if not matches:
+
+            if stats is None:
                 await self.send_error_embed(
                     ctx,
                     "No Match Data",
                     "Could not fetch match history for fun stats analysis."
                 )
                 return
-            
-            # Calculate stats
-            stats = valorant_client.calculate_player_stats(matches, selected_account['puuid'])
-            
+
             if not stats or stats.get('total_matches', 0) == 0:
                 await self.send_error_embed(
                     ctx,

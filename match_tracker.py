@@ -117,61 +117,72 @@ class MatchTracker:
             logging.debug(f"No active stack members with linked Valorant accounts in {guild.name}")
     
     async def _check_recent_matches(self, guild: discord.Guild, members: List[discord.Member]) -> None:
-        """Check recent matches for specific members"""
+        """Check recent matches for specific members.
+
+        Polls the lightweight competitive-updates endpoint (a few KB) to detect
+        new matches; full match details (multi-MB) are fetched at most once per
+        new match id and permanently cached in SQLite.
+        """
         server_matches = self.recent_matches.setdefault(guild.id, {})
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.MATCH_CUTOFF_HOURS)
-        
+
         for member in members:
             try:
                 primary_account = valorant_client.get_linked_account(member.id)
                 if not primary_account:
                     continue
-                
-                # Get recent matches (competitive only)
-                matches = await valorant_client.get_match_history(
+
+                # Cheap poll: recent competitive match ids + timestamps only
+                updates = await valorant_client.get_recent_competitive_updates(
                     primary_account['username'],
                     primary_account['tag'],
-                    size=1,  # Only check most recent match for polling efficiency
-                    mode='competitive'  # Only track competitive matches
+                    puuid=primary_account.get('puuid')
                 )
-                
-                if not matches:
+
+                if not updates:
                     continue
-                
-                # Check if this member has a new most recent match
-                latest_match = matches[0]  # Most recent match
-                latest_match_id = latest_match.get('metadata', {}).get('matchid')
-                
+
+                latest_update = updates[0]  # Most recent match
+                latest_match_id = latest_update.get('match_id')
+
                 if not latest_match_id:
                     continue
-                
+
                 # Check if this is a new match for this member
                 last_known_match = self.tracked_members.get(member.id, {}).get('last_match_id')
-                
+
                 if last_known_match != latest_match_id:
                     # Update the last known match for this member
                     self.tracked_members[member.id]['last_match_id'] = latest_match_id
-                    
+
                     # Skip if we've already processed this match globally
                     if latest_match_id in server_matches:
                         continue
-                    
-                    # Skip old matches
-                    started_at = latest_match.get('metadata', {}).get('game_start', '')
-                    match_time = parse_henrik_timestamp(started_at)
-                    if match_time:
-                        if match_time < cutoff_time:
-                            continue
-                    else:
+
+                    # Skip old matches (before paying for the full details)
+                    match_time = latest_update.get('started_at')
+                    if not match_time or match_time < cutoff_time:
                         continue
-                    
+
+                    # New recent match: fetch full details once (SQLite-cached)
+                    latest_match = await valorant_client.get_match_details(latest_match_id)
+                    if not latest_match:
+                        continue
+
                     # Skip if match is not completed
                     if not latest_match.get('metadata', {}).get('game_length', 0):
                         continue
-                    
+
                     # Find all Discord members in this match
                     discord_members_in_match = await self._find_discord_members_in_match(guild, latest_match)
-                    
+
+                    # Persist per-match stat rows for every linked player in the
+                    # match, so stats commands have warm data without API calls
+                    valorant_client.record_match_stats_for_players(
+                        latest_match,
+                        [dm['account'].get('puuid') for dm in discord_members_in_match]
+                    )
+
                     # Only process if minimum Discord members were in the match
                     if len(discord_members_in_match) >= self.MIN_DISCORD_MEMBERS:
                         server_matches[latest_match_id] = {
@@ -179,16 +190,16 @@ class MatchTracker:
                             'members': discord_members_in_match,
                             'match_data': latest_match
                         }
-                        
+
                         # Send match results to appropriate channel
                         await self._send_match_results(guild, latest_match, discord_members_in_match)
-                        
+
                         # Update stack activity tracking
                         await self._update_stack_activity(guild, discord_members_in_match, latest_match)
-                        
+
             except Exception as e:
                 log_error(f"checking matches for {member.display_name}", e)
-        
+
         # Clean up old matches
         for match_id in list(server_matches.keys()):
             if server_matches[match_id]['timestamp'] < cutoff_time:
@@ -463,7 +474,7 @@ class MatchTracker:
                 continue
 
             try:
-                mmr = await valorant_client.get_mmr(username, tag)
+                mmr = await valorant_client.get_mmr(username, tag, puuid=account.get('puuid'))
             except Exception as e:
                 log_error(f"fetching rank for {username}#{tag}", e)
                 mmr = None
@@ -637,7 +648,8 @@ class MatchTracker:
             if not account:
                 continue
             try:
-                mmr = await valorant_client.get_mmr(account['username'], account['tag'])
+                mmr = await valorant_client.get_mmr(account['username'], account['tag'],
+                                                    puuid=account.get('puuid'))
             except Exception:
                 mmr = None
             if mmr and mmr.get('tier'):
