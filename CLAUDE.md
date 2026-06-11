@@ -349,6 +349,17 @@ ShootyBot uses a tiered approach to keep Henrik API usage cheap and fast:
 - **Adding new statlines**: extend the row dict in `build_match_stats_row()` (and the
   `player_match_stats` schema / `extra` JSON column), then fold it in `aggregate_match_rows()`.
   Historical rows can be recomputed from permanently stored matches without API calls.
+  The `extra` JSON column already carries: spike plants/defuses (incl. ninja defuses),
+  money spent / loadout values / most expensive death, friendly fire & AFK rounds
+  (from the `behavior` block), total ability casts (None = data missing), fastest kill
+  (ms) and longest kill distance (game units, ~100/meter). Clutch attempts/wins
+  (`1v1`-`1v5`) are detected per round and fill the `clutches_*` columns.
+- **Post-game recap highlights**: `_calculate_fun_match_stats()` in `match_tracker.py`
+  generates scored highlight candidates from every stat source, then
+  `_select_highlights()` picks the most interesting post-game (highest score first,
+  one per category, max 2 per member). To add a highlight, add a candidate with an
+  interest score (rare plays like aces/ninja defuses ~90+, fillers ~20-40) — never
+  append directly to the highlights list.
 
 ### Configuration:
 - `HENRIK_API_KEY` (required by Henrik), `HENRIK_REQUESTS_PER_MINUTE` (Basic=30, Advanced=90),

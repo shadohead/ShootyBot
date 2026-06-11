@@ -678,17 +678,66 @@ class MatchTracker:
         return embed
 
     def _calculate_fun_match_stats(self, match_data: dict, discord_members: List[Dict]) -> Dict:
-        """Calculate fun and interesting match statistics"""
+        """Compute every candidate highlight for the match, score each by how
+        interesting it is, then pick a varied set of the best ones.
+
+        Every stat we can derive (scoreboard, round analysis, clutches, spike
+        plays, economy, behavior, match flow) becomes a scored candidate;
+        _select_highlights decides post-game which ones are actually worth
+        showing instead of always leading with kills/damage.
+        """
         stats = {
             'highlights': [],
             'top_performers': {},
             'funny_stats': {}
         }
-        
+
         if not discord_members:
             return stats
-        
-        # Collect player stats
+
+        candidates: List[Dict[str, Any]] = []
+        player_stats, mk_counts = self._collect_player_stats(match_data, discord_members)
+
+        if len(player_stats) >= 2:
+            self._add_scoreboard_candidates(candidates, player_stats, mk_counts)
+            self._add_team_fact_candidates(candidates, player_stats, match_data)
+
+        self._add_advanced_candidates(candidates, match_data, discord_members)
+        self._add_match_flow_candidates(candidates, match_data, discord_members)
+
+        stats['highlights'] = self._select_highlights(candidates)
+        return stats
+
+    @staticmethod
+    def _add_candidate(candidates: List[Dict[str, Any]], score: float, category: str,
+                       text: str, member_id: Optional[int] = None) -> None:
+        candidates.append({'score': score, 'category': category,
+                           'text': text, 'member_id': member_id})
+
+    @staticmethod
+    def _select_highlights(candidates: List[Dict[str, Any]], max_per_member: int = 2) -> List[str]:
+        """Pick the most interesting highlights with some variety: highest
+        score first, one highlight per category, and at most max_per_member
+        highlights about any single squad member (team-wide ones are exempt)."""
+        selected = []
+        used_categories = set()
+        member_counts: Dict[int, int] = {}
+        for cand in sorted(candidates, key=lambda c: c['score'], reverse=True):
+            if cand['category'] in used_categories:
+                continue
+            member_id = cand.get('member_id')
+            if member_id is not None and member_counts.get(member_id, 0) >= max_per_member:
+                continue
+            used_categories.add(cand['category'])
+            if member_id is not None:
+                member_counts[member_id] = member_counts.get(member_id, 0) + 1
+            selected.append(cand['text'])
+        return selected
+
+    @staticmethod
+    def _collect_player_stats(match_data: dict, discord_members: List[Dict]):
+        """Flatten scoreboard stats for each tracked member and count their
+        multikill rounds from round data."""
         player_stats = []
         puuid_to_member = {}
         for dm in discord_members:
@@ -713,10 +762,8 @@ class MatchTracker:
                 'damage_received': player_data.get('damage_received', 0),
                 'agent': player_data.get('character', 'Unknown')
             })
-        
-        # Gather multikill counts from round data
-        mk_counts = {puuid: {'2k': 0, '3k': 0, '4k': 0, '5k': 0} for puuid in puuid_to_member}
 
+        mk_counts = {puuid: {'2k': 0, '3k': 0, '4k': 0, '5k': 0} for puuid in puuid_to_member}
         for round_data in match_data.get('rounds', []):
             for ps in round_data.get('player_stats', []):
                 puuid = ps.get('player_puuid')
@@ -731,340 +778,624 @@ class MatchTracker:
                     elif kills_in_round >= 2:
                         mk_counts[puuid]['2k'] += 1
 
-        # Calculate enhanced highlights
-        if len(player_stats) >= 2:
-            # Top Fragger with more flair
-            top_fragger = max(player_stats, key=lambda x: x['kills'])
-            if top_fragger['kills'] >= 25:
-                stats['highlights'].append(f"🔥🔥 **DEMON MODE**: {top_fragger['member'].display_name} ({top_fragger['kills']} kills) - GOING NUCLEAR!")
-            elif top_fragger['kills'] >= 20:
-                stats['highlights'].append(f"🔥 **Top Fragger**: {top_fragger['member'].display_name} ({top_fragger['kills']} kills) - ON FIRE!")
-            else:
-                stats['highlights'].append(f"🎯 **Top Fragger**: {top_fragger['member'].display_name} ({top_fragger['kills']} kills)")
-            
-            # Most Damage with context
-            top_damage = max(player_stats, key=lambda x: x['damage_made'])
-            if top_damage['damage_made'] >= 4000:
-                stats['highlights'].append(f"💥 **DAMAGE MONSTER**: {top_damage['member'].display_name} ({top_damage['damage_made']:,} damage) - ANNIHILATION!")
-            elif top_damage['damage_made'] >= 3000:
-                stats['highlights'].append(f"💥 **Damage Dealer**: {top_damage['member'].display_name} ({top_damage['damage_made']:,} damage)")
-            else:
-                stats['highlights'].append(f"💪 **Damage Leader**: {top_damage['member'].display_name} ({top_damage['damage_made']:,} damage)")
-            
-            # Best KDA with performance tiers
-            kda_players = [(p, (p['kills'] + p['assists']) / max(p['deaths'], 1)) for p in player_stats]
-            best_kda = max(kda_players, key=lambda x: x[1])
-            if best_kda[1] >= 3.0:
-                stats['highlights'].append(f"👑 **KDA KING**: {best_kda[0]['member'].display_name} ({best_kda[1]:.2f} KDA) - UNTOUCHABLE!")
-            elif best_kda[1] >= 2.0:
-                stats['highlights'].append(f"⭐ **KDA Master**: {best_kda[0]['member'].display_name} ({best_kda[1]:.2f} KDA)")
-            else:
-                stats['highlights'].append(f"💪 **Best KDA**: {best_kda[0]['member'].display_name} ({best_kda[1]:.2f} KDA)")
-            
-            # Enhanced fun/weird stats
-            total_shots = sum(p['headshots'] + p['bodyshots'] + p['legshots'] for p in player_stats)
-            if total_shots > 0:
-                # Most leg shots with humor
-                leg_shot_king = max(player_stats, key=lambda x: x['legshots'])
-                if leg_shot_king['legshots'] > 0:
-                    leg_percentage = (leg_shot_king['legshots'] / max(leg_shot_king['headshots'] + leg_shot_king['bodyshots'] + leg_shot_king['legshots'], 1)) * 100
-                    if leg_percentage > self.LEG_SHOT_THRESHOLD_PERCENT:
-                        if leg_percentage > 25:
-                            stats['highlights'].append(f"🦵 **LEG DESTROYER**: {leg_shot_king['member'].display_name} ({leg_shot_king['legshots']} leg shots, {leg_percentage:.1f}%) - Ankle Biter!")
-                        else:
-                            stats['highlights'].append(f"🦵 **Leg Shot Specialist**: {leg_shot_king['member'].display_name} ({leg_shot_king['legshots']} leg shots, {leg_percentage:.1f}%)")
-                
-                # Enhanced headshot accuracy
-                headshot_ace = max(player_stats, key=lambda x: x['headshots'] / max(x['headshots'] + x['bodyshots'] + x['legshots'], 1))
-                total_shots_player = headshot_ace['headshots'] + headshot_ace['bodyshots'] + headshot_ace['legshots']
-                if total_shots_player > 20:  # Only if they took enough shots
-                    hs_percentage = (headshot_ace['headshots'] / total_shots_player) * 100
-                    if hs_percentage > 40:
-                        stats['highlights'].append(f"🎯 **HEADSHOT DEMON**: {headshot_ace['member'].display_name} ({hs_percentage:.1f}% HS) - INSANE AIM!")
-                    elif hs_percentage > self.HEADSHOT_THRESHOLD_PERCENT:
-                        stats['highlights'].append(f"🎯 **Headshot Machine**: {headshot_ace['member'].display_name} ({hs_percentage:.1f}% HS accuracy)")
-                
-                # Support player recognition
-                assist_king = max(player_stats, key=lambda x: x['assists'])
-                if assist_king['assists'] >= 10:
-                    stats['highlights'].append(f"🤝 **SUPPORT HERO**: {assist_king['member'].display_name} ({assist_king['assists']} assists) - Team Player!")
-                elif assist_king['assists'] >= 7:
-                    stats['highlights'].append(f"🤝 **Team Player**: {assist_king['member'].display_name} ({assist_king['assists']} assists)")
+        return player_stats, mk_counts
 
-                # Multi-kill highlights using round data
-                for p in player_stats:
-                    counts = mk_counts.get(p['puuid'], {})
-                    if counts.get('5k', 0) > 0:
-                        ace_count = counts['5k']
-                        plural = 's' if ace_count > 1 else ''
-                        stats['highlights'].append(
-                            f"🔥 **ACE ALERT**: {p['member'].display_name} scored {ace_count} ACE{plural}!")
-                    elif counts.get('4k', 0) > 0:
-                        fourk = counts['4k']
-                        plural = 's' if fourk > 1 else ''
-                        stats['highlights'].append(
-                            f"⚡ **MULTIKILL MASTER**: {p['member'].display_name} landed {fourk} 4K{plural}!")
-                    elif counts.get('3k', 0) >= 2:
-                        threek = counts['3k']
-                        plural = 's' if threek > 1 else ''
-                        stats['highlights'].append(
-                            f"💥 {p['member'].display_name} racked up {threek} 3K{plural}!")
-            
-            # Enhanced damage analysis
-            tank_player = max(player_stats, key=lambda x: x['damage_received'])
-            glass_cannon = None
-            
-            # Find glass cannon (high damage dealt, high damage taken)
-            for p in player_stats:
-                if p['damage_made'] > 3000 and p['damage_received'] > self.HIGH_DAMAGE_THRESHOLD:
-                    glass_cannon = p
-                    break
-            
-            if glass_cannon:
-                ratio = glass_cannon['damage_made'] / max(glass_cannon['damage_received'], 1)
-                stats['highlights'].append(f"💎 **GLASS CANNON**: {glass_cannon['member'].display_name} ({glass_cannon['damage_made']:,}D dealt, {glass_cannon['damage_received']:,}D taken)")
-            elif tank_player['damage_received'] > self.HIGH_DAMAGE_THRESHOLD:
-                if tank_player['damage_received'] > 4000:
-                    stats['highlights'].append(f"🛡️ **HUMAN FORTRESS**: {tank_player['member'].display_name} ({tank_player['damage_received']:,} damage tanked) - UNMOVABLE!")
-                else:
-                    stats['highlights'].append(f"🛡️ **Human Shield**: {tank_player['member'].display_name} ({tank_player['damage_received']:,} damage taken)")
-            
-            # Economic efficiency (low deaths with good damage)
-            efficient_player = min(player_stats, key=lambda x: x['deaths'] / max(x['damage_made'], 1))
-            if efficient_player['deaths'] <= 12 and efficient_player['damage_made'] >= 2500:
-                efficiency = efficient_player['damage_made'] / max(efficient_player['deaths'], 1)
-                stats['highlights'].append(f"💰 **ECONOMY MASTER**: {efficient_player['member'].display_name} ({efficiency:.0f} damage per death) - Efficient!")
-            
-            # NEW FUN HIGHLIGHTS
-            
-            # The Survivor (lowest deaths)
-            survivor = min(player_stats, key=lambda x: x['deaths'])
-            if survivor['deaths'] <= 8 and len(player_stats) >= 3:
-                if survivor['deaths'] <= 5:
-                    stats['highlights'].append(f"🛡️ **IMMORTAL**: {survivor['member'].display_name} ({survivor['deaths']} deaths) - Untouchable!")
-                else:
-                    stats['highlights'].append(f"💚 **Survivor**: {survivor['member'].display_name} ({survivor['deaths']} deaths) - Hard to kill!")
-            
-            # The Feeder (highest deaths with humor)
-            feeder = max(player_stats, key=lambda x: x['deaths'])
-            if feeder['deaths'] >= 20 and len(player_stats) >= 3:
-                if feeder['deaths'] >= 25:
-                    stats['highlights'].append(f"💀 **SACRIFICE**: {feeder['member'].display_name} ({feeder['deaths']} deaths) - Taking one for the team!")
-                else:
-                    stats['highlights'].append(f"😵 **Brave Soul**: {feeder['member'].display_name} ({feeder['deaths']} deaths) - No fear!")
-            
-            # Score Leader (highest combat score)
-            score_leader = max(player_stats, key=lambda x: x['score'])
-            if score_leader['score'] >= 300:
-                if score_leader['score'] >= 400:
-                    stats['highlights'].append(f"🌟 **MVP PERFORMANCE**: {score_leader['member'].display_name} ({score_leader['score']} ACS) - LEGENDARY!")
-                else:
-                    stats['highlights'].append(f"⭐ **Score Leader**: {score_leader['member'].display_name} ({score_leader['score']} ACS)")
-            
-            # Kill/Death ratio extremes
-            kd_ratios = [(p, p['kills'] / max(p['deaths'], 1)) for p in player_stats]
-            best_kd = max(kd_ratios, key=lambda x: x[1])
-            worst_kd = min(kd_ratios, key=lambda x: x[1])
-            
-            if best_kd[1] >= 2.5 and best_kd[0]['kills'] >= 15:
-                stats['highlights'].append(f"🔥 **K/D MONSTER**: {best_kd[0]['member'].display_name} ({best_kd[1]:.2f} K/D) - Unstoppable!")
-            
-            # The Spray Master (most bodyshots)
-            spray_master = max(player_stats, key=lambda x: x['bodyshots'])
-            total_shots_spray = spray_master['headshots'] + spray_master['bodyshots'] + spray_master['legshots']
-            if total_shots_spray > 30:
-                body_percentage = (spray_master['bodyshots'] / total_shots_spray) * 100
-                if body_percentage > 60:
-                    stats['highlights'].append(f"🎯 **SPRAY CONTROL**: {spray_master['member'].display_name} ({body_percentage:.1f}% body shots) - Consistent aim!")
-            
-            # Damage vs Score efficiency
-            for p in player_stats:
-                if p['damage_made'] > 0 and p['score'] > 0:
-                    damage_per_score = p['damage_made'] / p['score']
-                    if damage_per_score > 12:  # High damage per score point
-                        stats['highlights'].append(f"💥 **DAMAGE EFFICIENT**: {p['member'].display_name} (High damage-to-score ratio) - Pure DPS!")
-                        break
-            
-            # The Clutch Factor (low assists but high kills - potential clutch player)
-            for p in player_stats:
-                if p['kills'] >= 15 and p['assists'] <= 5 and p['kills'] > p['assists'] * 2:
-                    stats['highlights'].append(f"🎭 **LONE WOLF**: {p['member'].display_name} ({p['kills']} kills, {p['assists']} assists) - Solo carry!")
-                    break
-            
-            # Agent-specific fun facts
-            agent_counts = {}
-            for p in player_stats:
-                agent = p['agent']
-                if agent not in agent_counts:
-                    agent_counts[agent] = []
-                agent_counts[agent].append(p)
-            
-            # Duelist performance
-            duelist_agents = ['Jett', 'Reyna', 'Phoenix', 'Raze', 'Yoru', 'Neon', 'Iso']
-            duelists = [p for p in player_stats if p['agent'] in duelist_agents]
-            if duelists:
-                top_duelist = max(duelists, key=lambda x: x['kills'])
-                if top_duelist['kills'] >= 20:
-                    stats['highlights'].append(f"⚔️ **DUELIST DIFF**: {top_duelist['member'].display_name} ({top_duelist['agent']}) - Entry fragging king!")
-            
-            # Controller performance (high assists)
-            controller_agents = ['Brimstone', 'Omen', 'Viper', 'Astra', 'Harbor', 'Clove']
-            controllers = [p for p in player_stats if p['agent'] in controller_agents]
-            if controllers:
-                top_controller = max(controllers, key=lambda x: x['assists'])
-                if top_controller['assists'] >= 12:
-                    stats['highlights'].append(f"🧠 **BIG BRAIN**: {top_controller['member'].display_name} ({top_controller['agent']}) - Tactical genius!")
-            
-            # Sentinel/Initiator highlights
-            sentinel_agents = ['Killjoy', 'Cypher', 'Sage', 'Chamber', 'Deadlock', 'Vyse']
-            sentinels = [p for p in player_stats if p['agent'] in sentinel_agents]
-            if sentinels:
-                top_sentinel = max(sentinels, key=lambda x: x['score'])
-                if top_sentinel['score'] >= 300:
-                    stats['highlights'].append(f"🔒 **SITE ANCHOR**: {top_sentinel['member'].display_name} ({top_sentinel['agent']}) - Holding it down!")
-            
-            # The Balanced Player (good at everything)
-            for p in player_stats:
-                if (p['kills'] >= 15 and p['assists'] >= 8 and p['deaths'] <= 15 and 
-                    p['damage_made'] >= 2500):
-                    stats['highlights'].append(f"⚖️ **COMPLETE PLAYER**: {p['member'].display_name} - Excels in all areas!")
-                    break
-            
-            # The Damage Dealer with Low Impact (high damage, low kills)
-            for p in player_stats:
-                if p['damage_made'] >= 3000 and p['kills'] <= 12:
-                    stats['highlights'].append(f"💢 **DAMAGE DEALER**: {p['member'].display_name} ({p['damage_made']:,} damage, {p['kills']} kills) - Setting up teammates!")
-                    break
-            
-            # The Finisher (low damage but high kills - good at finishing)
-            for p in player_stats:
-                if p['kills'] >= 18 and p['damage_made'] <= 2500:
-                    efficiency_ratio = p['kills'] / (p['damage_made'] / 1000)
-                    stats['highlights'].append(f"🎯 **THE FINISHER**: {p['member'].display_name} - Efficient eliminations!")
-                    break
-            
-            # Match intensity metrics
-            total_team_damage = sum(p['damage_made'] for p in player_stats)
-            total_team_kills = sum(p['kills'] for p in player_stats)
-            total_team_deaths = sum(p['deaths'] for p in player_stats)
-            
-            # Fun match facts with more personality
-            fun_facts = [
-                f"💥 **Team Devastation**: {total_team_damage:,} total damage dealt!",
-                f"⚔️ **Combined Scoreline**: {total_team_kills}/{total_team_deaths} K/D",
-                f"🦸 **Agent Squad**: {', '.join(set(p['agent'] for p in player_stats))}"
-            ]
-            
-            # Add more fun statistical insights
-            total_team_assists = sum(p['assists'] for p in player_stats)
-            total_team_headshots = sum(p['headshots'] for p in player_stats)
-            total_team_bodyshots = sum(p['bodyshots'] for p in player_stats)
-            total_team_legshots = sum(p['legshots'] for p in player_stats)
-            total_team_score = sum(p['score'] for p in player_stats)
-            
-            # Team KDA
-            team_kda = (total_team_kills + total_team_assists) / max(total_team_deaths, 1)
-            if team_kda >= 2.0:
-                fun_facts.append(f"👑 **Team KDA**: {team_kda:.2f} - Dominant performance!")
-            elif team_kda >= 1.5:
-                fun_facts.append(f"💪 **Team KDA**: {team_kda:.2f} - Solid teamwork!")
-            else:
-                fun_facts.append(f"⚔️ **Team KDA**: {team_kda:.2f} - Hard fought!")
-            
-            # Accuracy insights
-            if total_shots > 0:
-                team_hs_rate = (total_team_headshots / total_shots) * 100
-                team_accuracy_type = ""
-                if team_hs_rate >= 25:
-                    team_accuracy_type = "🎯 **LASER PRECISION**"
-                elif team_hs_rate >= 20:
-                    team_accuracy_type = "🔥 **Sharp Shooting**"
-                elif team_hs_rate >= 15:
-                    team_accuracy_type = "💪 **Decent Aim**"
-                else:
-                    team_accuracy_type = "🎲 **Spray & Pray**"
-                
-                fun_facts.append(f"{team_accuracy_type}: {team_hs_rate:.1f}% headshot rate")
-            
-            # Damage distribution
-            avg_damage = total_team_damage / len(player_stats)
-            if avg_damage >= 3500:
-                fun_facts.append("💀 **DAMAGE GODS**: Everyone hitting hard!")
-            elif avg_damage >= 2500:
-                fun_facts.append("💥 **Balanced Attack**: Even damage spread!")
-            
-            # Score distribution
-            avg_score = total_team_score / len(player_stats)
-            if avg_score >= 350:
-                fun_facts.append("🌟 **ALL-STAR LINEUP**: High scoring across the board!")
-            elif avg_score >= 250:
-                fun_facts.append("⭐ **Solid Squad**: Consistent performance!")
-            
-            # Fun team dynamics
-            kill_spread = max(p['kills'] for p in player_stats) - min(p['kills'] for p in player_stats)
-            if kill_spread <= 5:
-                fun_facts.append("🤝 **TEAM EFFORT**: Kills spread evenly!")
-            elif kill_spread >= 15:
-                fun_facts.append("🎭 **CARRY MODE**: Someone's doing the heavy lifting!")
-            
-            # Deaths analysis
-            total_team_damage_taken = sum(p['damage_received'] for p in player_stats)
-            if total_team_damage_taken > 20000:
-                fun_facts.append("🛡️ **BULLET SPONGES**: Tank squad activated!")
-            
-            # Add intensity rating
-            if total_team_damage > 15000:
-                fun_facts.append("🔥 **INTENSITY**: OFF THE CHARTS!")
-            elif total_team_damage > 10000:
-                fun_facts.append("⚡ **INTENSITY**: High-octane match!")
-            
-            # Round-based insights (if available)
-            rounds_played = match_data.get('metadata', {}).get('rounds_played', 0)
-            if rounds_played > 0:
-                avg_kills_per_round = total_team_kills / rounds_played
-                if avg_kills_per_round >= 3.0:
-                    fun_facts.append(f"🔥 **ROUND DOMINATION**: {avg_kills_per_round:.1f} kills/round!")
-                elif avg_kills_per_round >= 2.0:
-                    fun_facts.append(f"💪 **STEADY PRESSURE**: {avg_kills_per_round:.1f} kills/round")
-            
-            # Economic warfare
-            if total_team_deaths <= 60:  # Low team deaths
-                fun_facts.append("💰 **ECONOMY KINGS**: Minimal losses!")
-            elif total_team_deaths >= 100:
-                fun_facts.append("💸 **HIGH RISK, HIGH REWARD**: Going for broke!")
+    def _add_scoreboard_candidates(self, candidates: List[Dict[str, Any]],
+                                   player_stats: List[Dict], mk_counts: Dict) -> None:
+        """Scored highlight candidates from basic scoreboard stats."""
+        add = self._add_candidate
 
-            # Swing round analysis
-            swing_rounds = self._identify_swing_rounds(match_data)
-            if swing_rounds:
-                stack_team = None
-                for dm in discord_members:
-                    team = dm['player_data'].get('team')
-                    if team:
-                        stack_team = team.lower()
-                        break
+        # Top Fragger with more flair
+        top_fragger = max(player_stats, key=lambda x: x['kills'])
+        if top_fragger['kills'] >= 25:
+            add(candidates, 78, 'top_fragger',
+                f"🔥🔥 **DEMON MODE**: {top_fragger['member'].display_name} ({top_fragger['kills']} kills) - GOING NUCLEAR!",
+                top_fragger['member'].id)
+        elif top_fragger['kills'] >= 20:
+            add(candidates, 62, 'top_fragger',
+                f"🔥 **Top Fragger**: {top_fragger['member'].display_name} ({top_fragger['kills']} kills) - ON FIRE!",
+                top_fragger['member'].id)
+        elif top_fragger['kills'] > 0:
+            add(candidates, 40, 'top_fragger',
+                f"🎯 **Top Fragger**: {top_fragger['member'].display_name} ({top_fragger['kills']} kills)",
+                top_fragger['member'].id)
 
-                stack_swing = None
-                enemy_swing = None
-                for sr in swing_rounds:
-                    if sr['winner'] == stack_team:
-                        if not stack_swing or sr['diff'] > stack_swing['diff']:
-                            stack_swing = sr
+        # Most Damage with context
+        top_damage = max(player_stats, key=lambda x: x['damage_made'])
+        if top_damage['damage_made'] >= 4000:
+            add(candidates, 64, 'damage',
+                f"💥 **DAMAGE MONSTER**: {top_damage['member'].display_name} ({top_damage['damage_made']:,} damage) - ANNIHILATION!",
+                top_damage['member'].id)
+        elif top_damage['damage_made'] >= 3000:
+            add(candidates, 50, 'damage',
+                f"💥 **Damage Dealer**: {top_damage['member'].display_name} ({top_damage['damage_made']:,} damage)",
+                top_damage['member'].id)
+        elif top_damage['damage_made'] > 0:
+            add(candidates, 35, 'damage',
+                f"💪 **Damage Leader**: {top_damage['member'].display_name} ({top_damage['damage_made']:,} damage)",
+                top_damage['member'].id)
+
+        # Best KDA with performance tiers
+        kda_players = [(p, (p['kills'] + p['assists']) / max(p['deaths'], 1)) for p in player_stats]
+        best_kda = max(kda_players, key=lambda x: x[1])
+        if best_kda[1] >= 3.0:
+            add(candidates, 60, 'kda',
+                f"👑 **KDA KING**: {best_kda[0]['member'].display_name} ({best_kda[1]:.2f} KDA) - UNTOUCHABLE!",
+                best_kda[0]['member'].id)
+        elif best_kda[1] >= 2.0:
+            add(candidates, 48, 'kda',
+                f"⭐ **KDA Master**: {best_kda[0]['member'].display_name} ({best_kda[1]:.2f} KDA)",
+                best_kda[0]['member'].id)
+        else:
+            add(candidates, 35, 'kda',
+                f"💪 **Best KDA**: {best_kda[0]['member'].display_name} ({best_kda[1]:.2f} KDA)",
+                best_kda[0]['member'].id)
+
+        total_shots = sum(p['headshots'] + p['bodyshots'] + p['legshots'] for p in player_stats)
+        if total_shots > 0:
+            # Most leg shots with humor
+            leg_shot_king = max(player_stats, key=lambda x: x['legshots'])
+            if leg_shot_king['legshots'] > 0:
+                leg_percentage = (leg_shot_king['legshots'] / max(leg_shot_king['headshots'] + leg_shot_king['bodyshots'] + leg_shot_king['legshots'], 1)) * 100
+                if leg_percentage > self.LEG_SHOT_THRESHOLD_PERCENT:
+                    if leg_percentage > 25:
+                        add(candidates, 66, 'legshots',
+                            f"🦵 **LEG DESTROYER**: {leg_shot_king['member'].display_name} ({leg_shot_king['legshots']} leg shots, {leg_percentage:.1f}%) - Ankle Biter!",
+                            leg_shot_king['member'].id)
                     else:
-                        if not enemy_swing or sr['diff'] > enemy_swing['diff']:
-                            enemy_swing = sr
+                        add(candidates, 52, 'legshots',
+                            f"🦵 **Leg Shot Specialist**: {leg_shot_king['member'].display_name} ({leg_shot_king['legshots']} leg shots, {leg_percentage:.1f}%)",
+                            leg_shot_king['member'].id)
 
-                if stack_swing:
-                    stats['highlights'].append(
-                        f"💸 **Swing Round**: Round {stack_swing['round']} won with {stack_swing['diff']:,} credit deficit!"
-                    )
-                if enemy_swing:
-                    stats['highlights'].append(
-                        f"😱 **Enemy Swing Round**: Opponents stole Round {enemy_swing['round']} with {enemy_swing['diff']:,} credit disadvantage!"
-                    )
+            # Headshot accuracy
+            headshot_ace = max(player_stats, key=lambda x: x['headshots'] / max(x['headshots'] + x['bodyshots'] + x['legshots'], 1))
+            total_shots_player = headshot_ace['headshots'] + headshot_ace['bodyshots'] + headshot_ace['legshots']
+            if total_shots_player > 20:  # Only if they took enough shots
+                hs_percentage = (headshot_ace['headshots'] / total_shots_player) * 100
+                if hs_percentage > 40:
+                    add(candidates, 70, 'headshots',
+                        f"🎯 **HEADSHOT DEMON**: {headshot_ace['member'].display_name} ({hs_percentage:.1f}% HS) - INSANE AIM!",
+                        headshot_ace['member'].id)
+                elif hs_percentage > self.HEADSHOT_THRESHOLD_PERCENT:
+                    add(candidates, 56, 'headshots',
+                        f"🎯 **Headshot Machine**: {headshot_ace['member'].display_name} ({hs_percentage:.1f}% HS accuracy)",
+                        headshot_ace['member'].id)
 
-            stats['highlights'].extend(random.sample(fun_facts, min(2, len(fun_facts))))
-        
-        return stats
+            # Support player recognition
+            assist_king = max(player_stats, key=lambda x: x['assists'])
+            if assist_king['assists'] >= 10:
+                add(candidates, 54, 'assists',
+                    f"🤝 **SUPPORT HERO**: {assist_king['member'].display_name} ({assist_king['assists']} assists) - Team Player!",
+                    assist_king['member'].id)
+            elif assist_king['assists'] >= 7:
+                add(candidates, 42, 'assists',
+                    f"🤝 **Team Player**: {assist_king['member'].display_name} ({assist_king['assists']} assists)",
+                    assist_king['member'].id)
+
+            # Multi-kill highlights using round data
+            for p in player_stats:
+                counts = mk_counts.get(p['puuid'], {})
+                if counts.get('5k', 0) > 0:
+                    ace_count = counts['5k']
+                    plural = 's' if ace_count > 1 else ''
+                    add(candidates, 95, f"multikill:{p['member'].id}",
+                        f"🔥 **ACE ALERT**: {p['member'].display_name} scored {ace_count} ACE{plural}!",
+                        p['member'].id)
+                elif counts.get('4k', 0) > 0:
+                    fourk = counts['4k']
+                    plural = 's' if fourk > 1 else ''
+                    add(candidates, 80, f"multikill:{p['member'].id}",
+                        f"⚡ **MULTIKILL MASTER**: {p['member'].display_name} landed {fourk} 4K{plural}!",
+                        p['member'].id)
+                elif counts.get('3k', 0) >= 2:
+                    threek = counts['3k']
+                    plural = 's' if threek > 1 else ''
+                    add(candidates, 58, f"multikill:{p['member'].id}",
+                        f"💥 {p['member'].display_name} racked up {threek} 3K{plural}!",
+                        p['member'].id)
+
+        # Damage tanking analysis
+        tank_player = max(player_stats, key=lambda x: x['damage_received'])
+        glass_cannon = None
+        for p in player_stats:
+            if p['damage_made'] > 3000 and p['damage_received'] > self.HIGH_DAMAGE_THRESHOLD:
+                glass_cannon = p
+                break
+
+        if glass_cannon:
+            add(candidates, 55, 'damage_tank',
+                f"💎 **GLASS CANNON**: {glass_cannon['member'].display_name} ({glass_cannon['damage_made']:,}D dealt, {glass_cannon['damage_received']:,}D taken)",
+                glass_cannon['member'].id)
+        elif tank_player['damage_received'] > self.HIGH_DAMAGE_THRESHOLD:
+            if tank_player['damage_received'] > 4000:
+                add(candidates, 53, 'damage_tank',
+                    f"🛡️ **HUMAN FORTRESS**: {tank_player['member'].display_name} ({tank_player['damage_received']:,} damage tanked) - UNMOVABLE!",
+                    tank_player['member'].id)
+            else:
+                add(candidates, 44, 'damage_tank',
+                    f"🛡️ **Human Shield**: {tank_player['member'].display_name} ({tank_player['damage_received']:,} damage taken)",
+                    tank_player['member'].id)
+
+        # Economic efficiency (low deaths with good damage)
+        efficient_player = min(player_stats, key=lambda x: x['deaths'] / max(x['damage_made'], 1))
+        if efficient_player['deaths'] <= 12 and efficient_player['damage_made'] >= 2500:
+            efficiency = efficient_player['damage_made'] / max(efficient_player['deaths'], 1)
+            add(candidates, 45, 'efficiency',
+                f"💰 **ECONOMY MASTER**: {efficient_player['member'].display_name} ({efficiency:.0f} damage per death) - Efficient!",
+                efficient_player['member'].id)
+
+        # The Survivor (lowest deaths)
+        survivor = min(player_stats, key=lambda x: x['deaths'])
+        if survivor['deaths'] <= 8 and len(player_stats) >= 3:
+            if survivor['deaths'] <= 5:
+                add(candidates, 56, 'survivor',
+                    f"🛡️ **IMMORTAL**: {survivor['member'].display_name} ({survivor['deaths']} deaths) - Untouchable!",
+                    survivor['member'].id)
+            else:
+                add(candidates, 44, 'survivor',
+                    f"💚 **Survivor**: {survivor['member'].display_name} ({survivor['deaths']} deaths) - Hard to kill!",
+                    survivor['member'].id)
+
+        # The Feeder (highest deaths with humor)
+        feeder = max(player_stats, key=lambda x: x['deaths'])
+        if feeder['deaths'] >= 20 and len(player_stats) >= 3:
+            if feeder['deaths'] >= 25:
+                add(candidates, 60, 'feeder',
+                    f"💀 **SACRIFICE**: {feeder['member'].display_name} ({feeder['deaths']} deaths) - Taking one for the team!",
+                    feeder['member'].id)
+            else:
+                add(candidates, 50, 'feeder',
+                    f"😵 **Brave Soul**: {feeder['member'].display_name} ({feeder['deaths']} deaths) - No fear!",
+                    feeder['member'].id)
+
+        # Score Leader (highest combat score)
+        score_leader = max(player_stats, key=lambda x: x['score'])
+        if score_leader['score'] >= 300:
+            if score_leader['score'] >= 400:
+                add(candidates, 66, 'acs',
+                    f"🌟 **MVP PERFORMANCE**: {score_leader['member'].display_name} ({score_leader['score']} ACS) - LEGENDARY!",
+                    score_leader['member'].id)
+            else:
+                add(candidates, 50, 'acs',
+                    f"⭐ **Score Leader**: {score_leader['member'].display_name} ({score_leader['score']} ACS)",
+                    score_leader['member'].id)
+
+        # Kill/Death ratio extremes
+        kd_ratios = [(p, p['kills'] / max(p['deaths'], 1)) for p in player_stats]
+        best_kd = max(kd_ratios, key=lambda x: x[1])
+        if best_kd[1] >= 2.5 and best_kd[0]['kills'] >= 15:
+            add(candidates, 58, 'kd',
+                f"🔥 **K/D MONSTER**: {best_kd[0]['member'].display_name} ({best_kd[1]:.2f} K/D) - Unstoppable!",
+                best_kd[0]['member'].id)
+
+        # The Spray Master (most bodyshots)
+        spray_master = max(player_stats, key=lambda x: x['bodyshots'])
+        total_shots_spray = spray_master['headshots'] + spray_master['bodyshots'] + spray_master['legshots']
+        if total_shots_spray > 30:
+            body_percentage = (spray_master['bodyshots'] / total_shots_spray) * 100
+            if body_percentage > 60:
+                add(candidates, 40, 'spray',
+                    f"🎯 **SPRAY CONTROL**: {spray_master['member'].display_name} ({body_percentage:.1f}% body shots) - Consistent aim!",
+                    spray_master['member'].id)
+
+        # Damage vs Score efficiency
+        for p in player_stats:
+            if p['damage_made'] > 0 and p['score'] > 0:
+                damage_per_score = p['damage_made'] / p['score']
+                if damage_per_score > 12:  # High damage per score point
+                    add(candidates, 38, 'dmg_per_score',
+                        f"💥 **DAMAGE EFFICIENT**: {p['member'].display_name} (High damage-to-score ratio) - Pure DPS!",
+                        p['member'].id)
+                    break
+
+        # The Clutch Factor (low assists but high kills - potential clutch player)
+        for p in player_stats:
+            if p['kills'] >= 15 and p['assists'] <= 5 and p['kills'] > p['assists'] * 2:
+                add(candidates, 46, 'lone_wolf',
+                    f"🎭 **LONE WOLF**: {p['member'].display_name} ({p['kills']} kills, {p['assists']} assists) - Solo carry!",
+                    p['member'].id)
+                break
+
+        # Role-based callouts
+        duelist_agents = ['Jett', 'Reyna', 'Phoenix', 'Raze', 'Yoru', 'Neon', 'Iso']
+        duelists = [p for p in player_stats if p['agent'] in duelist_agents]
+        if duelists:
+            top_duelist = max(duelists, key=lambda x: x['kills'])
+            if top_duelist['kills'] >= 20:
+                add(candidates, 44, 'role_duelist',
+                    f"⚔️ **DUELIST DIFF**: {top_duelist['member'].display_name} ({top_duelist['agent']}) - Entry fragging king!",
+                    top_duelist['member'].id)
+
+        controller_agents = ['Brimstone', 'Omen', 'Viper', 'Astra', 'Harbor', 'Clove']
+        controllers = [p for p in player_stats if p['agent'] in controller_agents]
+        if controllers:
+            top_controller = max(controllers, key=lambda x: x['assists'])
+            if top_controller['assists'] >= 12:
+                add(candidates, 44, 'role_controller',
+                    f"🧠 **BIG BRAIN**: {top_controller['member'].display_name} ({top_controller['agent']}) - Tactical genius!",
+                    top_controller['member'].id)
+
+        sentinel_agents = ['Killjoy', 'Cypher', 'Sage', 'Chamber', 'Deadlock', 'Vyse']
+        sentinels = [p for p in player_stats if p['agent'] in sentinel_agents]
+        if sentinels:
+            top_sentinel = max(sentinels, key=lambda x: x['score'])
+            if top_sentinel['score'] >= 300:
+                add(candidates, 42, 'role_sentinel',
+                    f"🔒 **SITE ANCHOR**: {top_sentinel['member'].display_name} ({top_sentinel['agent']}) - Holding it down!",
+                    top_sentinel['member'].id)
+
+        # The Balanced Player (good at everything)
+        for p in player_stats:
+            if (p['kills'] >= 15 and p['assists'] >= 8 and p['deaths'] <= 15 and
+                    p['damage_made'] >= 2500):
+                add(candidates, 47, 'complete',
+                    f"⚖️ **COMPLETE PLAYER**: {p['member'].display_name} - Excels in all areas!",
+                    p['member'].id)
+                break
+
+        # The Damage Dealer with Low Impact (high damage, low kills)
+        for p in player_stats:
+            if p['damage_made'] >= 3000 and p['kills'] <= 12:
+                add(candidates, 40, 'dmg_low_kills',
+                    f"💢 **DAMAGE DEALER**: {p['member'].display_name} ({p['damage_made']:,} damage, {p['kills']} kills) - Setting up teammates!",
+                    p['member'].id)
+                break
+
+        # The Finisher (low damage but high kills - good at finishing)
+        for p in player_stats:
+            if p['kills'] >= 18 and p['damage_made'] <= 2500:
+                add(candidates, 39, 'finisher',
+                    f"🎯 **THE FINISHER**: {p['member'].display_name} - Efficient eliminations!",
+                    p['member'].id)
+                break
+
+    def _add_team_fact_candidates(self, candidates: List[Dict[str, Any]],
+                                  player_stats: List[Dict], match_data: dict) -> None:
+        """Low-priority team-wide fun facts; two are sampled in as filler when
+        nothing more interesting claims the slots."""
+        total_team_damage = sum(p['damage_made'] for p in player_stats)
+        total_team_kills = sum(p['kills'] for p in player_stats)
+        total_team_deaths = sum(p['deaths'] for p in player_stats)
+        total_team_assists = sum(p['assists'] for p in player_stats)
+        total_team_headshots = sum(p['headshots'] for p in player_stats)
+        total_team_score = sum(p['score'] for p in player_stats)
+        total_shots = sum(p['headshots'] + p['bodyshots'] + p['legshots'] for p in player_stats)
+
+        fun_facts = [
+            f"💥 **Team Devastation**: {total_team_damage:,} total damage dealt!",
+            f"⚔️ **Combined Scoreline**: {total_team_kills}/{total_team_deaths} K/D",
+            f"🦸 **Agent Squad**: {', '.join(set(p['agent'] for p in player_stats))}"
+        ]
+
+        team_kda = (total_team_kills + total_team_assists) / max(total_team_deaths, 1)
+        if team_kda >= 2.0:
+            fun_facts.append(f"👑 **Team KDA**: {team_kda:.2f} - Dominant performance!")
+        elif team_kda >= 1.5:
+            fun_facts.append(f"💪 **Team KDA**: {team_kda:.2f} - Solid teamwork!")
+        else:
+            fun_facts.append(f"⚔️ **Team KDA**: {team_kda:.2f} - Hard fought!")
+
+        if total_shots > 0:
+            team_hs_rate = (total_team_headshots / total_shots) * 100
+            if team_hs_rate >= 25:
+                team_accuracy_type = "🎯 **LASER PRECISION**"
+            elif team_hs_rate >= 20:
+                team_accuracy_type = "🔥 **Sharp Shooting**"
+            elif team_hs_rate >= 15:
+                team_accuracy_type = "💪 **Decent Aim**"
+            else:
+                team_accuracy_type = "🎲 **Spray & Pray**"
+            fun_facts.append(f"{team_accuracy_type}: {team_hs_rate:.1f}% headshot rate")
+
+        avg_damage = total_team_damage / len(player_stats)
+        if avg_damage >= 3500:
+            fun_facts.append("💀 **DAMAGE GODS**: Everyone hitting hard!")
+        elif avg_damage >= 2500:
+            fun_facts.append("💥 **Balanced Attack**: Even damage spread!")
+
+        avg_score = total_team_score / len(player_stats)
+        if avg_score >= 350:
+            fun_facts.append("🌟 **ALL-STAR LINEUP**: High scoring across the board!")
+        elif avg_score >= 250:
+            fun_facts.append("⭐ **Solid Squad**: Consistent performance!")
+
+        kill_spread = max(p['kills'] for p in player_stats) - min(p['kills'] for p in player_stats)
+        if kill_spread <= 5:
+            fun_facts.append("🤝 **TEAM EFFORT**: Kills spread evenly!")
+        elif kill_spread >= 15:
+            fun_facts.append("🎭 **CARRY MODE**: Someone's doing the heavy lifting!")
+
+        total_team_damage_taken = sum(p['damage_received'] for p in player_stats)
+        if total_team_damage_taken > 20000:
+            fun_facts.append("🛡️ **BULLET SPONGES**: Tank squad activated!")
+
+        if total_team_damage > 15000:
+            fun_facts.append("🔥 **INTENSITY**: OFF THE CHARTS!")
+        elif total_team_damage > 10000:
+            fun_facts.append("⚡ **INTENSITY**: High-octane match!")
+
+        rounds_played = match_data.get('metadata', {}).get('rounds_played', 0)
+        if rounds_played > 0:
+            avg_kills_per_round = total_team_kills / rounds_played
+            if avg_kills_per_round >= 3.0:
+                fun_facts.append(f"🔥 **ROUND DOMINATION**: {avg_kills_per_round:.1f} kills/round!")
+            elif avg_kills_per_round >= 2.0:
+                fun_facts.append(f"💪 **STEADY PRESSURE**: {avg_kills_per_round:.1f} kills/round")
+
+        if total_team_deaths <= 60:
+            fun_facts.append("💰 **ECONOMY KINGS**: Minimal losses!")
+        elif total_team_deaths >= 100:
+            fun_facts.append("💸 **HIGH RISK, HIGH REWARD**: Going for broke!")
+
+        for idx, fact in enumerate(random.sample(fun_facts, min(2, len(fun_facts)))):
+            self._add_candidate(candidates, 22 - idx * 2, f'fun_fact_{idx}', fact)
+
+    def _add_advanced_candidates(self, candidates: List[Dict[str, Any]], match_data: dict,
+                                 discord_members: List[Dict]) -> None:
+        """Candidates from the full per-player round analysis (clutches, entry
+        duels, KAST, pistols, weapons, spike plays, economy, behavior)."""
+        add = self._add_candidate
+
+        rows = []
+        for dm in discord_members:
+            member = dm['member']
+            puuid = dm.get('account', {}).get('puuid') or dm['player_data'].get('puuid')
+            if not puuid:
+                continue
+            try:
+                row = valorant_client.build_match_stats_row(match_data, puuid)
+            except Exception as e:
+                log_error("computing advanced match stats", e)
+                row = None
+            if row:
+                rows.append((member, row))
+
+        if not rows:
+            return
+
+        # Clutches: each member's biggest clutch (or biggest near-miss)
+        clutch_scores = {'1v1': 55, '1v2': 75, '1v3': 88, '1v4': 93, '1v5': 97}
+        for member, row in rows:
+            clutches_won = row.get('clutches_won') or {}
+            clutches_attempted = row.get('clutches_attempted') or {}
+            for key in ('1v5', '1v4', '1v3', '1v2', '1v1'):
+                won = clutches_won.get(key, 0)
+                if won:
+                    times = f" {won} times" if won > 1 else ""
+                    add(candidates, clutch_scores[key], f'clutch:{member.id}',
+                        f"🧊 **CLUTCH MASTER**: {member.display_name} won a {key} clutch{times}!",
+                        member.id)
+                    break
+                if key in ('1v5', '1v4', '1v3') and clutches_attempted.get(key, 0):
+                    add(candidates, 48, f'clutch:{member.id}',
+                        f"💔 **SO CLOSE**: {member.display_name} fought a {key} but couldn't close it",
+                        member.id)
+                    break
+
+        # Entry duels: first bloods and first deaths
+        entry_king = max(rows, key=lambda mr: mr[1].get('first_bloods', 0) or 0)
+        first_bloods = entry_king[1].get('first_bloods', 0) or 0
+        if first_bloods >= 4:
+            add(candidates, min(70, 45 + 4 * first_bloods), 'first_bloods',
+                f"⚔️ **OPENING DUELIST**: {entry_king[0].display_name} drew first blood {first_bloods} times!",
+                entry_king[0].id)
+
+        first_to_fall = max(rows, key=lambda mr: mr[1].get('first_deaths', 0) or 0)
+        first_deaths = first_to_fall[1].get('first_deaths', 0) or 0
+        if first_deaths >= 6:
+            add(candidates, 54, 'first_deaths',
+                f"🪦 **FIRST TO FALL**: {first_to_fall[0].display_name} died first {first_deaths} times... someone has to go in",
+                first_to_fall[0].id)
+
+        # KAST: most (and least) useful round-over-round
+        rounds_played = rows[0][1].get('rounds_played', 0) or 0
+        if rounds_played >= 12:
+            kast_sorted = sorted(rows, key=lambda mr: mr[1].get('kast_rounds', 0) or 0, reverse=True)
+            top_member, top_row = kast_sorted[0]
+            top_kast = ((top_row.get('kast_rounds', 0) or 0) / rounds_played) * 100
+            if top_kast >= 75:
+                add(candidates, 50, 'kast_high',
+                    f"🤝 **MOST VALUABLE TEAMMATE**: {top_member.display_name} contributed in {top_kast:.0f}% of rounds (KAST)",
+                    top_member.id)
+            if len(kast_sorted) >= 2:
+                low_member, low_row = kast_sorted[-1]
+                low_kast = ((low_row.get('kast_rounds', 0) or 0) / rounds_played) * 100
+                if low_kast < 45:
+                    add(candidates, 52, 'kast_low',
+                        f"👻 **SPECTATOR MODE**: {low_member.display_name} impacted only {low_kast:.0f}% of rounds",
+                        low_member.id)
+
+        # Pistol rounds (team-wide, same for everyone in the stack)
+        pistols_played = rows[0][1].get('pistol_rounds_played', 0) or 0
+        pistols_won = rows[0][1].get('pistol_rounds_won', 0) or 0
+        if pistols_played == 2:
+            if pistols_won == 2:
+                add(candidates, 58, 'pistols', "🔫 **PISTOL SWEEP**: Won both pistol rounds!")
+            elif pistols_won == 0:
+                add(candidates, 50, 'pistols', "💸 **PISTOL PROBLEMS**: Lost both pistol rounds 😬")
+
+        # Eco round wins
+        eco_hero = max(rows, key=lambda mr: mr[1].get('eco_rounds_won', 0) or 0)
+        eco_wins = eco_hero[1].get('eco_rounds_won', 0) or 0
+        if eco_wins >= 2:
+            add(candidates, 52, 'eco',
+                f"🥄 **BUDGET WARRIOR**: {eco_hero[0].display_name} won {eco_wins} rounds on eco buys",
+                eco_hero[0].id)
+
+        # Weapon personality
+        for member, row in rows:
+            weapon_kills = {str(k).lower(): v for k, v in (row.get('weapon_kills') or {}).items()}
+            knife_kills = sum(v for k, v in weapon_kills.items() if 'melee' in k or 'knife' in k)
+            if knife_kills:
+                plural = 's' if knife_kills > 1 else ''
+                add(candidates, 92, f'knife:{member.id}',
+                    f"🔪 **HUMILIATION**: {member.display_name} got {knife_kills} knife kill{plural}!",
+                    member.id)
+            sheriff_kills = weapon_kills.get('sheriff', 0)
+            if sheriff_kills >= 3:
+                add(candidates, 60, 'sheriff',
+                    f"🤠 **SHERIFF SHOWDOWN**: {member.display_name} landed {sheriff_kills} Sheriff kills",
+                    member.id)
+            odin_kills = weapon_kills.get('odin', 0) + weapon_kills.get('ares', 0)
+            if odin_kills >= 4:
+                add(candidates, 58, 'odin',
+                    f"🚜 **MACHINE GUN MAIN**: {member.display_name} mowed down {odin_kills} with the LMG",
+                    member.id)
+            operator_kills = weapon_kills.get('operator', 0)
+            if operator_kills >= 5:
+                add(candidates, 56, 'operator',
+                    f"🔭 **OPERATOR MENACE**: {member.display_name} got {operator_kills} Operator kills",
+                    member.id)
+
+        # Spike plays
+        for member, row in rows:
+            extra = row.get('extra') or {}
+            ninja_defuses = extra.get('ninja_defuses', 0) or 0
+            if ninja_defuses:
+                add(candidates, 94, f'ninja:{member.id}',
+                    f"🥷 **NINJA DEFUSE**: {member.display_name} defused with enemies still alive!",
+                    member.id)
+
+        plant_leader = max(rows, key=lambda mr: (mr[1].get('extra') or {}).get('plants', 0) or 0)
+        plants = (plant_leader[1].get('extra') or {}).get('plants', 0) or 0
+        if plants >= 3:
+            add(candidates, min(55, 44 + plants), 'plants',
+                f"💣 **DEMOLITION CREW**: {plant_leader[0].display_name} planted the spike {plants} times",
+                plant_leader[0].id)
+
+        defuse_leader = max(rows, key=lambda mr: (mr[1].get('extra') or {}).get('defuses', 0) or 0)
+        defuses = (defuse_leader[1].get('extra') or {}).get('defuses', 0) or 0
+        if defuses >= 2:
+            add(candidates, 50, 'defuses',
+                f"✂️ **WIRE CUTTER**: {defuse_leader[0].display_name} defused {defuses} spikes",
+                defuse_leader[0].id)
+
+        # Behavior roasts
+        for member, row in rows:
+            extra = row.get('extra') or {}
+            friendly_fire = extra.get('friendly_fire_damage', 0) or 0
+            if friendly_fire >= 100:
+                add(candidates, 72, f'friendly_fire:{member.id}',
+                    f"🤡 **FRIENDLY FIRE**: {member.display_name} dealt {friendly_fire:.0f} damage to their OWN team",
+                    member.id)
+            afk_rounds = extra.get('afk_rounds', 0) or 0
+            if afk_rounds >= 2:
+                add(candidates, 68, f'afk:{member.id}',
+                    f"😴 **AFK MOMENT**: {member.display_name} sat out {afk_rounds:.0f} rounds",
+                    member.id)
+
+        # Record book: fastest kill and longest-range kill in the squad
+        fastest = None
+        for member, row in rows:
+            fastest_kill_ms = (row.get('extra') or {}).get('fastest_kill_ms', 0) or 0
+            if fastest_kill_ms > 0 and (fastest is None or fastest_kill_ms < fastest[1]):
+                fastest = (member, fastest_kill_ms)
+        if fastest and fastest[1] <= 5000:
+            add(candidates, 55, 'fastest_kill',
+                f"⚡ **INSTANT AGGRESSION**: {fastest[0].display_name}'s fastest kill came {fastest[1] / 1000:.1f}s into a round",
+                fastest[0].id)
+
+        long_shot = max(rows, key=lambda mr: (mr[1].get('extra') or {}).get('longest_kill_distance', 0) or 0)
+        distance = (long_shot[1].get('extra') or {}).get('longest_kill_distance', 0) or 0
+        if distance >= 4000:  # game units; ~100 units per meter
+            add(candidates, 54 if distance >= 4500 else 50, 'long_range',
+                f"📏 **LONG RANGE**: {long_shot[0].display_name} landed a kill from ~{distance / 100:.0f}m away",
+                long_shot[0].id)
+
+        # Economy extremes
+        pricey = max(rows, key=lambda mr: (mr[1].get('extra') or {}).get('most_expensive_death', 0) or 0)
+        loadout_lost = (pricey[1].get('extra') or {}).get('most_expensive_death', 0) or 0
+        if loadout_lost >= 5500:
+            add(candidates, 48, 'expensive_death',
+                f"💎 **MOST EXPENSIVE DEATH**: {pricey[0].display_name} donated a {loadout_lost:,}-credit loadout",
+                pricey[0].id)
+
+        spender = max(rows, key=lambda mr: (mr[1].get('extra') or {}).get('money_spent', 0) or 0)
+        money_spent = (spender[1].get('extra') or {}).get('money_spent', 0) or 0
+        if money_spent >= 25000:
+            add(candidates, 30, 'spender',
+                f"🤑 **BIG SPENDER**: {spender[0].display_name} burned through {money_spent:,} credits",
+                spender[0].id)
+
+        # Ability usage extremes (None means the API omitted ability data)
+        ability_rows = [(m, r, (r.get('extra') or {}).get('ability_casts'))
+                        for m, r in rows]
+        ability_rows = [(m, r, c) for m, r, c in ability_rows if c is not None]
+        if ability_rows:
+            util_wizard = max(ability_rows, key=lambda mrc: mrc[2])
+            if util_wizard[2] >= 50:
+                add(candidates, 40, 'util_max',
+                    f"🧙 **UTILITY WIZARD**: {util_wizard[0].display_name} threw out {util_wizard[2]} abilities",
+                    util_wizard[0].id)
+            util_minimalist = min(ability_rows, key=lambda mrc: mrc[2])
+            if util_minimalist[2] <= 8 and (util_minimalist[1].get('rounds_played', 0) or 0) >= 18:
+                add(candidates, 46, 'util_min',
+                    f"🔫 **AIM IS MY UTILITY**: {util_minimalist[0].display_name} cast only {util_minimalist[2]} abilities all match",
+                    util_minimalist[0].id)
+
+    def _add_match_flow_candidates(self, candidates: List[Dict[str, Any]], match_data: dict,
+                                   discord_members: List[Dict]) -> None:
+        """Match-level storylines: comebacks, throws, overtime, stomps and
+        economy swing rounds."""
+        add = self._add_candidate
+
+        stack_team = None
+        for dm in discord_members:
+            team = (dm['player_data'].get('team') or '').lower()
+            if team:
+                stack_team = team
+                break
+
+        if stack_team:
+            our_rounds = their_rounds = 0
+            max_deficit = max_lead = 0
+            for round_data in match_data.get('rounds', []):
+                winner = (round_data.get('winning_team') or '').lower()
+                if not winner:
+                    continue
+                if winner == stack_team:
+                    our_rounds += 1
+                else:
+                    their_rounds += 1
+                max_deficit = max(max_deficit, their_rounds - our_rounds)
+                max_lead = max(max_lead, our_rounds - their_rounds)
+
+            teams = match_data.get('teams', {})
+            team_won = teams.get(stack_team, {}).get('has_won', False)
+
+            if team_won and max_deficit >= 4:
+                add(candidates, 86, 'comeback',
+                    f"🔥 **COMEBACK KINGS**: Won after trailing by {max_deficit} rounds!")
+            elif not team_won and max_lead >= 4:
+                add(candidates, 80, 'comeback',
+                    f"📉 **THE THROW**: Lost after leading by {max_lead} rounds 💀")
+
+            if our_rounds >= 12 and their_rounds >= 12:
+                add(candidates, 70, 'overtime',
+                    f"⏱️ **OVERTIME THRILLER**: This one went the distance at {our_rounds}-{their_rounds}!")
+            elif team_won and our_rounds >= 13 and their_rounds <= 3:
+                add(candidates, 60, 'stomp',
+                    f"🧹 **CLEAN SWEEP**: {our_rounds}-{their_rounds} stomp!")
+
+        # Swing round analysis (lower-economy team stealing rounds)
+        swing_rounds = self._identify_swing_rounds(match_data)
+        if swing_rounds and stack_team:
+            stack_swing = None
+            enemy_swing = None
+            for sr in swing_rounds:
+                if sr['winner'] == stack_team:
+                    if not stack_swing or sr['diff'] > stack_swing['diff']:
+                        stack_swing = sr
+                else:
+                    if not enemy_swing or sr['diff'] > enemy_swing['diff']:
+                        enemy_swing = sr
+
+            if stack_swing:
+                add(candidates, 62, 'swing',
+                    f"💸 **Swing Round**: Round {stack_swing['round']} won with {stack_swing['diff']:,} credit deficit!")
+            if enemy_swing:
+                add(candidates, 56, 'enemy_swing',
+                    f"😱 **Enemy Swing Round**: Opponents stole Round {enemy_swing['round']} with {enemy_swing['diff']:,} credit disadvantage!")
 
     def _identify_swing_rounds(self, match_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Identify rounds where the lower economy team won."""

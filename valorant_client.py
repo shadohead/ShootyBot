@@ -607,6 +607,12 @@ class ValorantClient(BaseAPIClient):
         won = teams[team_key].get('has_won', False) if team_key in teams else None
         started = parse_henrik_timestamp(metadata.get('game_start'))
 
+        behavior = player_data.get('behavior') or {}
+        friendly_fire = behavior.get('friendly_fire') or {}
+        ability = player_data.get('ability_casts') or {}
+        ability_total = sum((ability.get(k) or 0)
+                            for k in ('c_cast', 'q_cast', 'e_cast', 'x_cast'))
+
         row = {
             'mode': (metadata.get('mode_id') or metadata.get('mode') or metadata.get('queue') or '').lower() or None,
             'map': metadata.get('map', 'Unknown'),
@@ -637,9 +643,26 @@ class ValorantClient(BaseAPIClient):
             'eco_rounds_played': 0,
             'shots_hit': 0,
             'shots_fired': 0,
-            'clutches_attempted': {},
-            'clutches_won': {},
+            'clutches_attempted': {'1v1': 0, '1v2': 0, '1v3': 0, '1v4': 0, '1v5': 0},
+            'clutches_won': {'1v1': 0, '1v2': 0, '1v3': 0, '1v4': 0, '1v5': 0},
             'weapon_kills': {},
+            'extra': {
+                'plants': 0,
+                'defuses': 0,
+                'ninja_defuses': 0,
+                'money_spent': 0,
+                'loadout_value_total': 0,
+                'rounds_with_economy': 0,
+                'most_expensive_death': 0,
+                'fastest_kill_ms': 0,
+                'longest_kill_distance': 0,
+                'friendly_fire_damage': friendly_fire.get('outgoing', 0) or 0,
+                'friendly_fire_received': friendly_fire.get('incoming', 0) or 0,
+                'afk_rounds': behavior.get('afk_rounds', 0) or 0,
+                # None (not 0) when the API omitted ability data entirely, so
+                # consumers can tell "cast nothing" apart from "unknown"
+                'ability_casts': ability_total if ability else None,
+            },
         }
 
         self._compute_round_stats(match, player_data, player_puuid, row)
@@ -666,9 +689,12 @@ class ValorantClient(BaseAPIClient):
             return
 
         player_team = (players.get(player_puuid, {}).get('team') or '').lower()
+        extra = row['extra']
 
         for round_num, round_data in enumerate(rounds_data):
             round_events = round_data.get('player_stats', [])
+            winning_team = (round_data.get('winning_team') or '').lower()
+            team_won_round = bool(winning_team) and winning_team == player_team
 
             # Track kills/deaths/assists in this round for each player
             round_kills = defaultdict(int)
@@ -692,6 +718,9 @@ class ValorantClient(BaseAPIClient):
                         'victim_puuid': kill_event.get('victim_puuid'),
                         'kill_time': kill_event.get('kill_time_in_round', 0),
                     })
+
+                    if puuid == player_puuid:
+                        self._track_kill_records(kill_event, player_puuid, extra)
 
                     victim_puuid = kill_event.get('victim_puuid')
                     if victim_puuid in players:
@@ -770,10 +799,18 @@ class ValorantClient(BaseAPIClient):
             if kast_qualified:
                 row['kast_rounds'] += 1
 
-            # Pistol / eco round tracking (queryable extras for fun statlines)
-            winning_team = (round_data.get('winning_team') or '').lower()
-            team_won_round = bool(winning_team) and winning_team == player_team
+            # Clutch detection: did we end up the last one standing on our
+            # team with enemies still alive? Counted at the moment the
+            # situation starts (teammate deaths only come from kill events,
+            # so spike-detonation deaths are approximated).
+            if player_team and all_kill_events:
+                self._detect_clutch(all_kill_events, players, player_puuid,
+                                    player_team, team_won_round, row)
 
+            # Spike plants / defuses (including "ninja" defuses with enemies alive)
+            self._track_spike_events(round_data, players, player_puuid, player_team, extra)
+
+            # Pistol / eco round tracking (queryable extras for fun statlines)
             if round_num in (0, 12):
                 row['pistol_rounds_played'] += 1
                 if team_won_round:
@@ -781,12 +818,91 @@ class ValorantClient(BaseAPIClient):
 
             for player_round in round_events:
                 if player_round.get('player_puuid') == player_puuid:
-                    loadout_value = (player_round.get('economy') or {}).get('loadout_value', 0)
+                    economy = player_round.get('economy') or {}
+                    loadout_value = economy.get('loadout_value', 0) or 0
+                    extra['money_spent'] += economy.get('spent', 0) or 0
+                    extra['loadout_value_total'] += loadout_value
+                    extra['rounds_with_economy'] += 1
+                    if round_deaths[player_puuid] > 0 and loadout_value > extra['most_expensive_death']:
+                        extra['most_expensive_death'] = loadout_value
                     if loadout_value and loadout_value < 2000:
                         row['eco_rounds_played'] += 1
                         if team_won_round:
                             row['eco_rounds_won'] += 1
                     break
+
+    @staticmethod
+    def _track_kill_records(kill_event: Dict[str, Any], player_puuid: str,
+                            extra: Dict[str, Any]) -> None:
+        """Update fastest-kill and longest-distance-kill records from one of
+        the player's own kill events."""
+        kill_time = kill_event.get('kill_time_in_round', 0) or 0
+        if kill_time > 0 and (extra['fastest_kill_ms'] == 0 or kill_time < extra['fastest_kill_ms']):
+            extra['fastest_kill_ms'] = kill_time
+
+        victim_loc = kill_event.get('victim_death_location') or {}
+        if not victim_loc:
+            return
+        for loc in kill_event.get('player_locations_on_kill') or []:
+            if loc.get('player_puuid') != player_puuid:
+                continue
+            spot = loc.get('location') or {}
+            if spot:
+                dx = (spot.get('x', 0) or 0) - (victim_loc.get('x', 0) or 0)
+                dy = (spot.get('y', 0) or 0) - (victim_loc.get('y', 0) or 0)
+                distance = int((dx * dx + dy * dy) ** 0.5)
+                if distance > extra['longest_kill_distance']:
+                    extra['longest_kill_distance'] = distance
+            break
+
+    @staticmethod
+    def _detect_clutch(all_kill_events: List[Dict[str, Any]], players: Dict[str, Dict],
+                       player_puuid: str, player_team: str, team_won_round: bool,
+                       row: Dict[str, Any]) -> None:
+        """Record a 1vN clutch attempt (and win) if the player became the last
+        alive on their team during this round."""
+        alive = set(players)
+        clutch_size = 0
+        for event in sorted(all_kill_events, key=lambda e: e['kill_time']):
+            alive.discard(event['victim_puuid'])
+            if player_puuid not in alive:
+                break
+            teammates = [p for p in alive
+                         if p != player_puuid and (players[p].get('team') or '').lower() == player_team]
+            enemies = [p for p in alive
+                       if (players[p].get('team') or '').lower() != player_team]
+            if not teammates and enemies:
+                clutch_size = len(enemies)
+                break
+
+        if clutch_size:
+            key = f"1v{min(clutch_size, 5)}"
+            row['clutches_attempted'][key] = row['clutches_attempted'].get(key, 0) + 1
+            if team_won_round:
+                row['clutches_won'][key] = row['clutches_won'].get(key, 0) + 1
+
+    @staticmethod
+    def _track_spike_events(round_data: Dict[str, Any], players: Dict[str, Dict],
+                            player_puuid: str, player_team: str,
+                            extra: Dict[str, Any]) -> None:
+        """Count the player's spike plants and defuses for one round. A defuse
+        with at least one enemy still alive is also counted as a ninja defuse."""
+        plant = round_data.get('plant_events') or {}
+        if (plant.get('planted_by') or {}).get('puuid') == player_puuid:
+            extra['plants'] += 1
+
+        defuse = round_data.get('defuse_events') or {}
+        if (defuse.get('defused_by') or {}).get('puuid') == player_puuid:
+            extra['defuses'] += 1
+            enemies_alive = 0
+            for loc in defuse.get('player_locations_on_defuse') or []:
+                loc_puuid = loc.get('player_puuid')
+                loc_team = (players.get(loc_puuid, {}).get('team')
+                            or loc.get('player_team') or '').lower()
+                if loc_puuid != player_puuid and loc_team and loc_team != player_team:
+                    enemies_alive += 1
+            if enemies_alive:
+                extra['ninja_defuses'] += 1
 
     def _estimate_round_stats(self, player_data: Dict[str, Any], row: Dict[str, Any],
                               rounds_played: int, match_won: bool) -> None:
@@ -922,7 +1038,17 @@ class ValorantClient(BaseAPIClient):
             'map_performance': {},
             'total_shots_fired': 0,
             'total_shots_hit': 0,
-            'weapon_kills': {}
+            'weapon_kills': {},
+            'plants': 0,
+            'defuses': 0,
+            'ninja_defuses': 0,
+            'money_spent': 0,
+            'friendly_fire_damage': 0,
+            'afk_rounds': 0,
+            'ability_casts': 0,
+            'fastest_kill_ms': 0,
+            'longest_kill_distance': 0,
+            'most_expensive_death': 0,
         }
 
         for row in rows:
@@ -980,6 +1106,19 @@ class ValorantClient(BaseAPIClient):
 
             for weapon, count in (row.get('weapon_kills') or {}).items():
                 stats['weapon_kills'][weapon] = stats['weapon_kills'].get(weapon, 0) + count
+
+            # Fold the extra statlines (older rows may not have them)
+            extra = row.get('extra') or {}
+            for extra_key in ('plants', 'defuses', 'ninja_defuses', 'money_spent',
+                              'friendly_fire_damage', 'afk_rounds', 'ability_casts'):
+                stats[extra_key] += extra.get(extra_key) or 0
+            fastest = extra.get('fastest_kill_ms') or 0
+            if fastest and (stats['fastest_kill_ms'] == 0 or fastest < stats['fastest_kill_ms']):
+                stats['fastest_kill_ms'] = fastest
+            stats['longest_kill_distance'] = max(
+                stats['longest_kill_distance'], extra.get('longest_kill_distance') or 0)
+            stats['most_expensive_death'] = max(
+                stats['most_expensive_death'], extra.get('most_expensive_death') or 0)
 
             # Agent performance tracking
             agent_stats = stats['agent_performance'].setdefault(agent_name, {
