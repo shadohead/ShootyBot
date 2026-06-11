@@ -117,61 +117,72 @@ class MatchTracker:
             logging.debug(f"No active stack members with linked Valorant accounts in {guild.name}")
     
     async def _check_recent_matches(self, guild: discord.Guild, members: List[discord.Member]) -> None:
-        """Check recent matches for specific members"""
+        """Check recent matches for specific members.
+
+        Polls the lightweight competitive-updates endpoint (a few KB) to detect
+        new matches; full match details (multi-MB) are fetched at most once per
+        new match id and permanently cached in SQLite.
+        """
         server_matches = self.recent_matches.setdefault(guild.id, {})
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.MATCH_CUTOFF_HOURS)
-        
+
         for member in members:
             try:
                 primary_account = valorant_client.get_linked_account(member.id)
                 if not primary_account:
                     continue
-                
-                # Get recent matches (competitive only)
-                matches = await valorant_client.get_match_history(
+
+                # Cheap poll: recent competitive match ids + timestamps only
+                updates = await valorant_client.get_recent_competitive_updates(
                     primary_account['username'],
                     primary_account['tag'],
-                    size=1,  # Only check most recent match for polling efficiency
-                    mode='competitive'  # Only track competitive matches
+                    puuid=primary_account.get('puuid')
                 )
-                
-                if not matches:
+
+                if not updates:
                     continue
-                
-                # Check if this member has a new most recent match
-                latest_match = matches[0]  # Most recent match
-                latest_match_id = latest_match.get('metadata', {}).get('matchid')
-                
+
+                latest_update = updates[0]  # Most recent match
+                latest_match_id = latest_update.get('match_id')
+
                 if not latest_match_id:
                     continue
-                
+
                 # Check if this is a new match for this member
                 last_known_match = self.tracked_members.get(member.id, {}).get('last_match_id')
-                
+
                 if last_known_match != latest_match_id:
                     # Update the last known match for this member
                     self.tracked_members[member.id]['last_match_id'] = latest_match_id
-                    
+
                     # Skip if we've already processed this match globally
                     if latest_match_id in server_matches:
                         continue
-                    
-                    # Skip old matches
-                    started_at = latest_match.get('metadata', {}).get('game_start', '')
-                    match_time = parse_henrik_timestamp(started_at)
-                    if match_time:
-                        if match_time < cutoff_time:
-                            continue
-                    else:
+
+                    # Skip old matches (before paying for the full details)
+                    match_time = latest_update.get('started_at')
+                    if not match_time or match_time < cutoff_time:
                         continue
-                    
+
+                    # New recent match: fetch full details once (SQLite-cached)
+                    latest_match = await valorant_client.get_match_details(latest_match_id)
+                    if not latest_match:
+                        continue
+
                     # Skip if match is not completed
                     if not latest_match.get('metadata', {}).get('game_length', 0):
                         continue
-                    
+
                     # Find all Discord members in this match
                     discord_members_in_match = await self._find_discord_members_in_match(guild, latest_match)
-                    
+
+                    # Persist per-match stat rows for every linked player in the
+                    # match, so stats commands have warm data without API calls
+                    valorant_client.record_match_stats_for_players(
+                        latest_match,
+                        [dm['account'].get('puuid') for dm in discord_members_in_match]
+                    )
+
                     # Only process if minimum Discord members were in the match
                     if len(discord_members_in_match) >= self.MIN_DISCORD_MEMBERS:
                         server_matches[latest_match_id] = {
@@ -179,16 +190,16 @@ class MatchTracker:
                             'members': discord_members_in_match,
                             'match_data': latest_match
                         }
-                        
+
                         # Send match results to appropriate channel
                         await self._send_match_results(guild, latest_match, discord_members_in_match)
-                        
+
                         # Update stack activity tracking
                         await self._update_stack_activity(guild, discord_members_in_match, latest_match)
-                        
+
             except Exception as e:
                 log_error(f"checking matches for {member.display_name}", e)
-        
+
         # Clean up old matches
         for match_id in list(server_matches.keys()):
             if server_matches[match_id]['timestamp'] < cutoff_time:
@@ -463,7 +474,7 @@ class MatchTracker:
                 continue
 
             try:
-                mmr = await valorant_client.get_mmr(username, tag)
+                mmr = await valorant_client.get_mmr(username, tag, puuid=account.get('puuid'))
             except Exception as e:
                 log_error(f"fetching rank for {username}#{tag}", e)
                 mmr = None
@@ -503,7 +514,10 @@ class MatchTracker:
         window_start = (start_dt - timedelta(minutes=10)) if start_dt else None
         window_end = end_dt + timedelta(minutes=5)
 
-        # Collect matches played in-window across all participant accounts
+        # Collect matches played in-window across all participant accounts.
+        # Discovery uses the lightweight competitive-updates endpoint (few KB);
+        # full details come from the permanent SQLite cache - the tracker has
+        # usually already stored them while the session was running.
         matches_by_id: Dict[str, Dict[str, Any]] = {}
         member_puuids: Dict[str, discord.Member] = {}
 
@@ -516,26 +530,31 @@ class MatchTracker:
                 if puuid:
                     member_puuids[puuid] = member
                 try:
-                    matches = await valorant_client.get_match_history(
-                        account['username'], account['tag'],
-                        size=5, mode='competitive'
+                    updates = await valorant_client.get_recent_competitive_updates(
+                        account['username'], account['tag'], puuid=puuid
                     )
                 except Exception as e:
                     log_error(f"fetching session matches for {account.get('username')}", e)
-                    matches = None
+                    updates = None
 
-                for match in matches or []:
-                    mid = match.get('metadata', {}).get('matchid')
+                for update in updates or []:
+                    mid = update.get('match_id')
                     if not mid or mid in matches_by_id:
                         continue
-                    started = parse_henrik_timestamp(match.get('metadata', {}).get('game_start', ''))
+                    started = update.get('started_at')
                     if started is None:
                         continue
                     if window_start and started < window_start:
                         continue
                     if started > window_end:
                         continue
-                    matches_by_id[mid] = match
+                    match = await valorant_client.get_match_details(mid)
+                    if match:
+                        matches_by_id[mid] = match
+
+        # Warm the per-match stat rows for everyone we fetched details for
+        for match in matches_by_id.values():
+            valorant_client.record_match_stats_for_players(match, list(member_puuids.keys()))
 
         # Aggregate per-player stats and W/L across in-window matches
         player_totals: Dict[int, Dict[str, Any]] = {}
@@ -637,7 +656,8 @@ class MatchTracker:
             if not account:
                 continue
             try:
-                mmr = await valorant_client.get_mmr(account['username'], account['tag'])
+                mmr = await valorant_client.get_mmr(account['username'], account['tag'],
+                                                    puuid=account.get('puuid'))
             except Exception:
                 mmr = None
             if mmr and mmr.get('tier'):
@@ -1193,53 +1213,55 @@ class MatchTracker:
         if not members_to_check:
             return None
         
-        # Check the most recent match for each member
+        # Check the most recent matches for each member: discover match ids via
+        # the lightweight competitive-updates endpoint, then pull full details
+        # from the permanent SQLite cache (API only for genuinely new matches)
         for member in members_to_check:
             try:
                 # Get all linked accounts for this user, not just primary
                 all_accounts = valorant_client.get_all_linked_accounts(member.id)
                 if not all_accounts:
                     continue
-                
+
                 # Check matches for all linked accounts to get better coverage
                 for account in all_accounts:
-                    matches = await valorant_client.get_match_history(
+                    updates = await valorant_client.get_recent_competitive_updates(
                         account['username'],
                         account['tag'],
-                        size=5,  # Get more recent matches for better coverage
-                        mode='competitive',  # Only check competitive matches
-                        force_refresh=force_fresh  # Use the parameter to control freshness
+                        puuid=account.get('puuid'),
+                        force_refresh=force_fresh
                     )
-                    
-                    if not matches:
+
+                    if not updates:
                         continue
-                    
-                    # Check each match to find the most recent one with Discord members
-                    for match in matches:
-                        # Check if this match is already processed
-                        match_id = match.get('metadata', {}).get('matchid')
+
+                    # Check the most recent matches to find one with Discord members
+                    for update in updates[:5]:
+                        match_id = update.get('match_id')
                         if not match_id:
                             continue
-                        
+
+                        was_stored = database_manager.get_stored_match(match_id) is not None
+                        match = await valorant_client.get_match_details(match_id)
+                        if not match:
+                            continue
+
                         # Find Discord members in this match
                         discord_members_in_match = await self._find_discord_members_in_match(guild, match)
-                        
+
                         if len(discord_members_in_match) >= 1:
-                            # Check if we already have this match in our database
-                            stored_match = database_manager.get_stored_match(match_id)
-                            
                             embed = await self._create_match_embed(match, discord_members_in_match)
                             # Add manual check indicator
                             if embed:
-                                if stored_match:
+                                if was_stored:
                                     embed.set_footer(text="🔍 Manual match lookup (cached) • ShootyBot")
                                 else:
                                     embed.set_footer(text="🔍 Manual match lookup (fresh) • ShootyBot")
                             return embed
-                    
+
             except Exception as e:
                 log_error(f"in manual check for {member.display_name}", e)
-        
+
         return None
 
     async def _load_state_from_database(self) -> None:

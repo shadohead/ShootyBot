@@ -1,6 +1,7 @@
 """Tests for rank/RR integration, head-to-head comparison, and session recap."""
 
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, AsyncMock, patch
 import discord
 
@@ -70,8 +71,8 @@ async def test_get_mmr_parses_response():
     assert result['elo'] == 1845
     assert result['peak'] == 'Diamond 2'
     assert result['emoji'] == '💎'
-    # base_url must be restored after the v2 swap
-    assert client.base_url == "https://api.henrikdev.xyz/valorant/v1"
+    # versioned endpoints share one immutable base URL
+    assert client.base_url == "https://api.henrikdev.xyz/valorant"
 
 
 @pytest.mark.asyncio
@@ -86,8 +87,8 @@ async def test_get_mmr_returns_none_on_exception():
     client = ValorantClient()
     client.get = AsyncMock(side_effect=Exception("boom"))
     assert await client.get_mmr('user', 'tag') is None
-    # base_url still restored even when the call blows up
-    assert client.base_url == "https://api.henrikdev.xyz/valorant/v1"
+    # base URL is never mutated, even when the call blows up
+    assert client.base_url == "https://api.henrikdev.xyz/valorant"
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +279,13 @@ async def test_session_recap_with_games(discord_member_factory):
                 2: [{'username': 'Bob', 'tag': 'NA1', 'puuid': 'pb'}]}
     fake_client.get_all_linked_accounts.side_effect = lambda uid: accounts.get(uid, [])
     fake_client.get_linked_account.side_effect = lambda uid: accounts.get(uid, [None])[0]
-    fake_client.get_match_history = AsyncMock(return_value=[match])
+    fake_client.get_recent_competitive_updates = AsyncMock(return_value=[
+        {'match_id': 'm1',
+         'started_at': datetime(2024, 1, 1, 0, 30, tzinfo=timezone.utc),
+         'rr_change': 20}
+    ])
+    fake_client.get_match_details = AsyncMock(return_value=match)
+    fake_client.record_match_stats_for_players = MagicMock(return_value=2)
     fake_client.get_mmr = AsyncMock(return_value=None)
 
     session = _make_session('2024-01-01T00:00:00+00:00', '2024-01-01T02:00:00+00:00', 120)
@@ -309,7 +316,8 @@ async def test_session_recap_no_games(discord_member_factory):
     fake_client = MagicMock()
     fake_client.get_all_linked_accounts.return_value = []
     fake_client.get_linked_account.return_value = None
-    fake_client.get_match_history = AsyncMock(return_value=[])
+    fake_client.get_recent_competitive_updates = AsyncMock(return_value=[])
+    fake_client.get_match_details = AsyncMock(return_value=None)
     fake_client.get_mmr = AsyncMock(return_value=None)
 
     session = _make_session('2024-01-01T00:00:00+00:00', '2024-01-01T00:45:00+00:00', 45)
@@ -329,18 +337,16 @@ async def test_session_recap_excludes_out_of_window_matches(discord_member_facto
     m1.bot = False
     guild = MagicMock(spec=discord.Guild)
 
-    # Match started long before the session window
-    old_match = {
-        'metadata': {'matchid': 'old', 'game_start': '2023-12-01T00:00:00Z'},
-        'teams': {'red': {'has_won': True}, 'blue': {'has_won': False}},
-        'players': {'all_players': [
-            {'puuid': 'pa', 'team': 'Red', 'stats': {'kills': 25, 'deaths': 10, 'assists': 5}},
-        ]},
-    }
+    # Match played long before the session window
     fake_client = MagicMock()
     fake_client.get_all_linked_accounts.return_value = [{'username': 'Alice', 'tag': 'NA1', 'puuid': 'pa'}]
     fake_client.get_linked_account.return_value = {'username': 'Alice', 'tag': 'NA1', 'puuid': 'pa'}
-    fake_client.get_match_history = AsyncMock(return_value=[old_match])
+    fake_client.get_recent_competitive_updates = AsyncMock(return_value=[
+        {'match_id': 'old',
+         'started_at': datetime(2023, 12, 1, 0, 0, tzinfo=timezone.utc),
+         'rr_change': 20}
+    ])
+    fake_client.get_match_details = AsyncMock()
     fake_client.get_mmr = AsyncMock(return_value=None)
 
     session = _make_session('2024-01-01T00:00:00+00:00', '2024-01-01T02:00:00+00:00', 120)
@@ -349,3 +355,5 @@ async def test_session_recap_excludes_out_of_window_matches(discord_member_facto
         embed = await tracker.build_session_recap(guild, [m1], session)
 
     assert any('No tracked games' in f.name for f in embed.fields)
+    # Out-of-window matches must not trigger a (heavy) details fetch
+    fake_client.get_match_details.assert_not_called()

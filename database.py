@@ -169,6 +169,51 @@ class DatabaseManager:
                     )
                 """)
                 
+                # Per-match, per-player computed stats. One row per (puuid, match),
+                # written once when a match is first processed (match data is
+                # immutable) and queried/aggregated for all stats features.
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS player_match_stats (
+                        puuid TEXT NOT NULL,
+                        match_id TEXT NOT NULL,
+                        mode TEXT,                      -- normalized lowercase queue (e.g. 'competitive')
+                        map TEXT,
+                        agent TEXT,
+                        started_at TEXT,                -- ISO timestamp, used for ordering
+                        won INTEGER DEFAULT 0,
+                        rounds_played INTEGER DEFAULT 0,
+                        kills INTEGER DEFAULT 0,
+                        deaths INTEGER DEFAULT 0,
+                        assists INTEGER DEFAULT 0,
+                        headshots INTEGER DEFAULT 0,
+                        bodyshots INTEGER DEFAULT 0,
+                        legshots INTEGER DEFAULT 0,
+                        score INTEGER DEFAULT 0,
+                        damage_made INTEGER DEFAULT 0,
+                        damage_received INTEGER DEFAULT 0,
+                        kast_rounds INTEGER DEFAULT 0,
+                        first_bloods INTEGER DEFAULT 0,
+                        first_deaths INTEGER DEFAULT 0,
+                        multikills_2k INTEGER DEFAULT 0,
+                        multikills_3k INTEGER DEFAULT 0,
+                        multikills_4k INTEGER DEFAULT 0,
+                        multikills_5k INTEGER DEFAULT 0,
+                        rounds_survived INTEGER DEFAULT 0,
+                        pistol_rounds_won INTEGER DEFAULT 0,
+                        pistol_rounds_played INTEGER DEFAULT 0,
+                        eco_rounds_won INTEGER DEFAULT 0,
+                        eco_rounds_played INTEGER DEFAULT 0,
+                        shots_hit INTEGER DEFAULT 0,
+                        shots_fired INTEGER DEFAULT 0,
+                        clutches_attempted TEXT,        -- JSON {'1v2': n, ...}
+                        clutches_won TEXT,              -- JSON {'1v2': n, ...}
+                        weapon_kills TEXT,              -- JSON {weapon: kills}
+                        extra TEXT,                     -- JSON bag for future statlines
+                        stored_at TEXT NOT NULL,
+                        PRIMARY KEY (puuid, match_id)
+                    )
+                """)
+
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS henrik_accounts (
                         account_key TEXT PRIMARY KEY,  -- Format: username_tag or puuid
@@ -209,6 +254,8 @@ class DatabaseManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_accounts_puuid ON henrik_accounts(puuid)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_accounts_last_accessed ON henrik_accounts(last_accessed)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_henrik_accounts_data_size ON henrik_accounts(data_size)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_player_match_stats_puuid_mode ON player_match_stats(puuid, mode, started_at DESC)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_player_match_stats_match ON player_match_stats(match_id)")
                 
                 # Run migrations for existing installations
                 self._run_migrations(conn)
@@ -893,7 +940,126 @@ class DatabaseManager:
                 return False
             finally:
                 conn.close()
-    
+
+    # Per-match player stats (queryable, computed once per match)
+
+    # Columns persisted as JSON strings in player_match_stats
+    _PMS_JSON_FIELDS = ('clutches_attempted', 'clutches_won', 'weapon_kills', 'extra')
+    # Plain scalar columns in player_match_stats (everything except keys/JSON/stored_at)
+    _PMS_SCALAR_FIELDS = (
+        'mode', 'map', 'agent', 'started_at', 'won', 'rounds_played',
+        'kills', 'deaths', 'assists', 'headshots', 'bodyshots', 'legshots',
+        'score', 'damage_made', 'damage_received', 'kast_rounds',
+        'first_bloods', 'first_deaths',
+        'multikills_2k', 'multikills_3k', 'multikills_4k', 'multikills_5k',
+        'rounds_survived', 'pistol_rounds_won', 'pistol_rounds_played',
+        'eco_rounds_won', 'eco_rounds_played', 'shots_hit', 'shots_fired',
+    )
+
+    def _pms_insert_values(self, puuid: str, match_id: str, row: Dict[str, Any],
+                           stored_at: str) -> List[Any]:
+        """Build the VALUES list for one player_match_stats insert."""
+        values = [puuid, match_id, stored_at]
+        for field in self._PMS_SCALAR_FIELDS:
+            values.append(row.get(field))
+        for field in self._PMS_JSON_FIELDS:
+            values.append(json.dumps(row.get(field) or {}))
+        return values
+
+    @property
+    def _pms_insert_sql(self) -> str:
+        columns = ['puuid', 'match_id', 'stored_at'] + \
+            list(self._PMS_SCALAR_FIELDS) + list(self._PMS_JSON_FIELDS)
+        placeholders = ', '.join('?' for _ in columns)
+        return (f"INSERT OR REPLACE INTO player_match_stats ({', '.join(columns)}) "
+                f"VALUES ({placeholders})")
+
+    def store_player_match_stats(self, puuid: str, match_id: str, row: Dict[str, Any]) -> bool:
+        """Store computed per-match stats for one player. Idempotent by (puuid, match_id)."""
+        return self.store_player_match_stats_bulk([(puuid, match_id, row)]) == 1
+
+    def store_player_match_stats_bulk(self, entries: List[Tuple[str, str, Dict[str, Any]]]) -> int:
+        """Store many (puuid, match_id, row) stat lines in one transaction.
+
+        One connection/commit for the whole batch - much cheaper on SD-card
+        I/O than per-row writes. Returns the number of rows stored.
+        """
+        if not entries:
+            return 0
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                conn.executemany(
+                    self._pms_insert_sql,
+                    [self._pms_insert_values(puuid, match_id, row, now)
+                     for puuid, match_id, row in entries]
+                )
+                conn.commit()
+                return len(entries)
+            except Exception as e:
+                logging.error(f"Error storing per-match stats batch ({len(entries)} rows): {e}")
+                conn.rollback()
+                return 0
+            finally:
+                conn.close()
+
+    def _pms_row_to_dict(self, row) -> Dict[str, Any]:
+        """Convert a player_match_stats DB row to a plain dict with parsed JSON fields."""
+        result = dict(row)
+        for field in self._PMS_JSON_FIELDS:
+            try:
+                result[field] = json.loads(result.get(field) or '{}')
+            except (TypeError, ValueError):
+                result[field] = {}
+        return result
+
+    def get_player_match_stats(self, puuid: str, mode: str = None,
+                               limit: int = 20) -> List[Dict[str, Any]]:
+        """Get a player's per-match stat rows, most recent first."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                if mode:
+                    rows = conn.execute("""
+                        SELECT * FROM player_match_stats
+                        WHERE puuid = ? AND mode = ?
+                        ORDER BY started_at DESC LIMIT ?
+                    """, (puuid, mode.lower(), limit)).fetchall()
+                else:
+                    rows = conn.execute("""
+                        SELECT * FROM player_match_stats
+                        WHERE puuid = ?
+                        ORDER BY started_at DESC LIMIT ?
+                    """, (puuid, limit)).fetchall()
+                return [self._pms_row_to_dict(r) for r in rows]
+            except Exception as e:
+                logging.error(f"Error getting per-match stats for {puuid}: {e}")
+                return []
+            finally:
+                conn.close()
+
+    def get_player_match_stats_for_ids(self, puuid: str,
+                                       match_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Get per-match stat rows for specific match ids. Returns {match_id: row}."""
+        if not match_ids:
+            return {}
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                placeholders = ', '.join('?' for _ in match_ids)
+                rows = conn.execute(
+                    f"SELECT * FROM player_match_stats "
+                    f"WHERE puuid = ? AND match_id IN ({placeholders})",
+                    [puuid] + list(match_ids)
+                ).fetchall()
+                return {r['match_id']: self._pms_row_to_dict(r) for r in rows}
+            except Exception as e:
+                logging.error(f"Error getting per-match stats by ids for {puuid}: {e}")
+                return {}
+            finally:
+                conn.close()
+
     def get_stored_account(self, username: str = None, tag: str = None, puuid: str = None) -> Optional[Dict[str, Any]]:
         """Get stored account data if it exists"""
         with self._lock:

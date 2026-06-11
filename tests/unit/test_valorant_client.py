@@ -19,7 +19,7 @@ class TestValorantClientInit:
         """Test client initialization with API key"""
         client = ValorantClient()
         
-        assert client.base_url == "https://api.henrikdev.xyz/valorant/v1"
+        assert client.base_url == "https://api.henrikdev.xyz/valorant"
         assert client.api_key == 'test_api_key'
         # Authorization header is now handled by BaseAPIClient
         auth_headers = client._get_auth_headers()
@@ -30,7 +30,7 @@ class TestValorantClientInit:
         """Test client initialization without API key"""
         client = ValorantClient()
         
-        assert client.base_url == "https://api.henrikdev.xyz/valorant/v1"
+        assert client.base_url == "https://api.henrikdev.xyz/valorant"
         assert client.api_key == ''
         # No authorization headers when no API key
         auth_headers = client._get_auth_headers()
@@ -105,7 +105,7 @@ class TestAccountAPI:
         result = await client.get_account_info("TestPlayer", "NA1")
         
         # Verify the call
-        mock_get.assert_called_once_with('account/TestPlayer/NA1', cache_ttl=300)
+        mock_get.assert_called_once_with('v1/account/TestPlayer/NA1', cache_ttl=300)
         
         # Verify the result
         assert result is not None
@@ -129,7 +129,7 @@ class TestAccountAPI:
         result = await client.get_account_info("NonExistent", "USER")
 
         assert result is None
-        mock_get.assert_called_once_with('account/NonExistent/USER', cache_ttl=300)
+        mock_get.assert_called_once_with('v1/account/NonExistent/USER', cache_ttl=300)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status_code,expected_none", [
@@ -148,7 +148,7 @@ class TestAccountAPI:
 
             result = await client.get_account_info("User", "TAG")
 
-            mock_get.assert_called_once_with('account/User/TAG', cache_ttl=300)
+            mock_get.assert_called_once_with('v1/account/User/TAG', cache_ttl=300)
 
             if expected_none:
                 assert result is None
@@ -219,8 +219,9 @@ class TestMatchHistoryAPI:
 
             result = await client.get_match_history("User", "TAG")
 
+            # PUUID is known, so the by-puuid matchlist endpoint is used
             mock_get.assert_called_once_with(
-                'matches/na/User/TAG',
+                'v3/by-puuid/matches/na/abc',
                 params={'size': 5},
                 cache_ttl=180
             )

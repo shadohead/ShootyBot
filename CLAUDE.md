@@ -314,6 +314,46 @@ python3 test_database_fast.py
 4. Commit with descriptive commit message
 5. Deploy to production with proper process management
 
+## Henrik API Usage Architecture
+
+ShootyBot uses a tiered approach to keep Henrik API usage cheap and fast:
+
+### Endpoint Tiers (cheapest first):
+1. **SQLite (free)**: Completed matches are immutable - full match JSON is permanently
+   cached in `henrik_matches`, and per-player computed stats live in `player_match_stats`
+   (one row per puuid+match, computed exactly once).
+2. **Lightweight endpoints (few KB, served from Henrik's DB/cache)**:
+   - `v1/by-puuid/stored-matches/{region}/{puuid}` - match id discovery + basic scoreboard
+   - `v1/by-puuid/mmr-history/{region}/{puuid}` - live competitive updates (new-match polling)
+   - `v2/by-puuid/mmr/{region}/{puuid}` - current rank/RR
+3. **Heavy endpoints (multi-MB, live Riot fetch)**:
+   - `v3/by-puuid/matches/{region}/{puuid}` - full matchlist (**size capped at 10 by the API**)
+   - `v2/match/{matchid}` - single match details
+
+### Key Rules:
+- **Always prefer by-puuid endpoints** - they skip Riot-ID resolution and survive renames.
+  PUUIDs starting with `manual_` are placeholders from `/shootymanuallink` and must not be
+  sent to by-puuid endpoints (`ValorantClient._usable_puuid` handles this).
+- **Never mutate `base_url`** - endpoint paths carry their version prefix (`v1/...`, `v3/...`).
+- **Stats flow**: commands call `get_player_stats()` which discovers recent match ids via
+  lightweight endpoints, reuses `player_match_stats` rows, fetches only unseen matches
+  (one bulk matchlist call if >=3 missing, else per-match), and aggregates rows.
+  `calculate_player_stats()` is the pure in-memory equivalent (no API/DB) used by legacy
+  paths and tests.
+- **Match tracker polling**: polls `get_recent_competitive_updates()` (few KB) per minute;
+  full match details are fetched at most once per new match id, then stat rows are recorded
+  for every linked player in the match (`record_match_stats_for_players`).
+- **4xx responses are returned, not retried** - only 429 (after waiting) and 5xx/network
+  errors go through retry with backoff. Henrik's `x-ratelimit-remaining`/`x-ratelimit-reset`
+  headers are honored before sending requests.
+- **Adding new statlines**: extend the row dict in `build_match_stats_row()` (and the
+  `player_match_stats` schema / `extra` JSON column), then fold it in `aggregate_match_rows()`.
+  Historical rows can be recomputed from permanently stored matches without API calls.
+
+### Configuration:
+- `HENRIK_API_KEY` (required by Henrik), `HENRIK_REQUESTS_PER_MINUTE` (Basic=30, Advanced=90),
+  `VALORANT_REGION` (default `na`).
+
 ## Advanced Valorant Statistics & API Analysis
 
 ### Henrik API Stats Calculation
