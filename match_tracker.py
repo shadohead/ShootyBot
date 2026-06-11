@@ -329,6 +329,9 @@ class MatchTracker:
         team_won = False
         tracked_puuids = set()
 
+        # Members who crossed up a full tier this game (shown inline)
+        ranked_up_ids = await self._get_ranked_up_member_ids(discord_members)
+
         for dm in discord_members:
             member = dm['member']
             player_data = dm['player_data']
@@ -348,7 +351,8 @@ class MatchTracker:
             kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
             rank = get_player_rank(player_data)
             rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
-            member_list.append(f"• **{member.display_name}**: {kda}{rank_str}")
+            rankup_str = " ⬆️ **Rank Up!**" if member.id in ranked_up_ids else ""
+            member_list.append(f"• **{member.display_name}**: {kda}{rank_str}{rankup_str}")
 
         # Add untracked teammates (players on the same team who aren't linked via shootylink)
         all_players = match.get('players', {}).get('all_players', [])
@@ -378,15 +382,6 @@ class MatchTracker:
             value="\n".join(member_list) if member_list else "No squad members found",
             inline=False
         )
-
-        # Celebrate any squad members who ranked up this game (best-effort)
-        rank_ups = await self._get_squad_rank_ups(discord_members)
-        if rank_ups:
-            embed.add_field(
-                name="🎉 Rank Up!",
-                value=rank_ups,
-                inline=False
-            )
 
         # Add enhanced fun highlights
         if fun_stats['highlights']:
@@ -449,19 +444,17 @@ class MatchTracker:
         embed.set_footer(text="Use /shootylink to show up in post-match recaps!")
         return embed
 
-    async def _get_squad_rank_ups(self, discord_members: List[Dict]) -> Optional[str]:
-        """Build celebratory lines for squad members who ranked up this game.
+    async def _get_ranked_up_member_ids(self, discord_members: List[Dict]) -> set:
+        """Return the ids of squad members who crossed up a full tier this game.
 
-        Only includes players who crossed up at least one full tier as a result
-        of their most recent game. A promotion is detected when the last game's
-        RR gain pushed them past a tier boundary: their pre-game RR-in-tier
+        A promotion is detected when the last game's RR gain pushed the player
+        past a tier boundary: their pre-game RR-in-tier
         (``ranking_in_tier - mmr_change``) was below zero.
 
         Best-effort: silently skips members whose MMR can't be fetched (private
-        profile, API down, no key). Returns ``None`` when nobody ranked up, so
-        callers can omit the field entirely and keep recaps quiet.
+        profile, API down, no key), so the recap still renders without them.
         """
-        lines = []
+        ranked_up = set()
         for dm in discord_members:
             account = dm.get('account', {}) or {}
             username = account.get('username')
@@ -475,25 +468,21 @@ class MatchTracker:
                 log_error(f"fetching rank for {username}#{tag}", e)
                 mmr = None
 
-            if not mmr or not mmr.get('tier'):
+            if not mmr:
                 continue
 
             rr = mmr.get('rr')
             change = mmr.get('rr_change')
-
-            # Only celebrate genuine promotions: a positive RR change whose
-            # pre-game RR-in-tier was negative means a tier boundary was crossed.
+            # Genuine promotion: a positive RR change whose pre-game RR-in-tier
+            # was negative means a tier boundary was crossed this game.
             if rr is None or change is None or change <= 0:
                 continue
             if (rr - change) >= 0:
                 continue
 
-            member = dm['member']
-            lines.append(
-                f"🎉 **{member.display_name}** ranked up to {mmr.get('emoji', '')} **{mmr['tier']}**!"
-            )
+            ranked_up.add(dm['member'].id)
 
-        return "\n".join(lines) if lines else None
+        return ranked_up
 
     async def build_session_recap(self, guild: discord.Guild, participants: List[discord.Member], session) -> discord.Embed:
         """Build an end-of-session recap embed.
