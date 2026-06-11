@@ -319,13 +319,15 @@ class TestGetPlayerStats:
         with patch('valorant_client.database_manager.get_player_match_stats_for_ids',
                    return_value={}), \
              patch('valorant_client.database_manager.get_stored_match', return_value=None), \
-             patch('valorant_client.database_manager.store_player_match_stats') as mock_store_row:
+             patch('valorant_client.database_manager.store_player_match_stats_bulk') as mock_store_rows:
             stats = await client.get_player_stats('User', 'TAG', size=5)
 
         assert stats['total_matches'] == 1
         client.get_match_details.assert_called_once_with('match-1')
         client.get_match_history.assert_not_called()  # below bulk threshold
-        mock_store_row.assert_called_once()
+        # the new row is persisted in the flush batch
+        (entries,) = mock_store_rows.call_args.args
+        assert [(e[0], e[1]) for e in entries] == [('player-1', 'match-1')]
 
     @pytest.mark.asyncio
     async def test_many_missing_matches_use_one_bulk_call(self, client):
@@ -341,7 +343,7 @@ class TestGetPlayerStats:
                    return_value={}), \
              patch('valorant_client.database_manager.get_stored_match', return_value=None), \
              patch('valorant_client.database_manager.store_match'), \
-             patch('valorant_client.database_manager.store_player_match_stats'):
+             patch('valorant_client.database_manager.store_player_match_stats_bulk'):
             stats = await client.get_player_stats('User', 'TAG', size=5)
 
         assert stats['total_matches'] == 5
@@ -357,7 +359,7 @@ class TestGetPlayerStats:
         client.get_match_history = AsyncMock(return_value=matches)
 
         with patch('valorant_client.database_manager.store_match'), \
-             patch('valorant_client.database_manager.store_player_match_stats'):
+             patch('valorant_client.database_manager.store_player_match_stats_bulk'):
             stats = await client.get_player_stats('User', 'TAG', size=20)
 
         assert stats['total_matches'] == 1
@@ -377,18 +379,19 @@ class TestGetPlayerStats:
 class TestRecordMatchStats:
     def test_records_rows_for_each_player(self, client):
         match = build_full_match()
-        with patch('valorant_client.database_manager.store_player_match_stats',
-                   return_value=True) as mock_store:
+        with patch('valorant_client.database_manager.store_player_match_stats_bulk',
+                   side_effect=len) as mock_store:
             count = client.record_match_stats_for_players(match, ['player-1', 'enemy-1', None])
 
         assert count == 2
-        stored_puuids = {call.args[0] for call in mock_store.call_args_list}
-        assert stored_puuids == {'player-1', 'enemy-1'}
+        # all rows for the match go to the database in one batch
+        (entries,) = mock_store.call_args.args
+        assert {e[0] for e in entries} == {'player-1', 'enemy-1'}
 
     def test_no_match_id_stores_nothing(self, client):
         match = build_full_match()
         del match['metadata']['matchid']
-        with patch('valorant_client.database_manager.store_player_match_stats') as mock_store:
+        with patch('valorant_client.database_manager.store_player_match_stats_bulk') as mock_store:
             assert client.record_match_stats_for_players(match, ['player-1']) == 0
         mock_store.assert_not_called()
 

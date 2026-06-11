@@ -144,8 +144,7 @@ class ValorantClient(BaseAPIClient):
             response = await self.get(f'v1/account/{username}/{tag}', cache_ttl=300)
             
             if response.success:
-                # Henrik API wraps data in 'data' field
-                account_data = response.data['data'] if 'data' in response.data else response.data
+                account_data = self._unwrap(response)
                 
                 # Store the account data permanently
                 database_manager.store_account(account_data, username=username, tag=tag)
@@ -402,7 +401,8 @@ class ValorantClient(BaseAPIClient):
             return None
 
     async def get_recent_competitive_updates(self, username: str, tag: str,
-                                             puuid: str = None) -> Optional[List[Dict[str, Any]]]:
+                                             puuid: str = None,
+                                             force_refresh: bool = False) -> Optional[List[Dict[str, Any]]]:
         """Get the player's recent competitive updates (lightweight, live data).
 
         Uses the v1 mmr-history endpoint: a small payload listing recent
@@ -421,7 +421,7 @@ class ValorantClient(BaseAPIClient):
             else:
                 endpoint = f'v1/mmr-history/{self.region}/{username}/{tag}'
 
-            response = await self.get(endpoint, cache_ttl=60)
+            response = await self.get(endpoint, use_cache=not force_refresh, cache_ttl=60)
             if not response.success:
                 logging.debug(f"mmr-history fetch failed for {username}#{tag}: {response.status_code}")
                 return None
@@ -659,8 +659,10 @@ class ValorantClient(BaseAPIClient):
 
         rounds_data = match.get('rounds', [])
         if not rounds_data:
-            # No round data available - fall back to estimates
-            self._estimate_round_stats(player_data, row, len(rounds_data), bool(row.get('won')))
+            # No round data available - fall back to estimates over the
+            # match's reported round count
+            self._estimate_round_stats(player_data, row, row.get('rounds_played', 0) or 0,
+                                       bool(row.get('won')))
             return
 
         player_team = (players.get(player_puuid, {}).get('team') or '').lower()
@@ -1150,6 +1152,7 @@ class ValorantClient(BaseAPIClient):
             if ordered_ids:
                 known = database_manager.get_player_match_stats_for_ids(puuid, ordered_ids)
                 missing = [mid for mid in ordered_ids if mid not in known]
+                new_rows = []  # (puuid, match_id, row) persisted in one batch
 
                 # Fill from permanently stored match data (no API cost)
                 still_missing = []
@@ -1157,7 +1160,7 @@ class ValorantClient(BaseAPIClient):
                     stored = database_manager.get_stored_match(mid)
                     row = self.build_match_stats_row(stored, puuid) if stored else None
                     if row:
-                        database_manager.store_player_match_stats(puuid, mid, row)
+                        new_rows.append((puuid, mid, row))
                         known[mid] = row
                     else:
                         still_missing.append(mid)
@@ -1176,7 +1179,7 @@ class ValorantClient(BaseAPIClient):
                         if mid in still_missing:
                             row = self.build_match_stats_row(match, puuid)
                             if row:
-                                database_manager.store_player_match_stats(puuid, mid, row)
+                                new_rows.append((puuid, mid, row))
                                 known[mid] = row
                     still_missing = [mid for mid in still_missing if mid not in known]
 
@@ -1185,8 +1188,10 @@ class ValorantClient(BaseAPIClient):
                     match = await self.get_match_details(mid)
                     row = self.build_match_stats_row(match, puuid) if match else None
                     if row:
-                        database_manager.store_player_match_stats(puuid, mid, row)
+                        new_rows.append((puuid, mid, row))
                         known[mid] = row
+
+                database_manager.store_player_match_stats_bulk(new_rows)
 
                 rows = [known[mid] for mid in ordered_ids if mid in known]
                 if mode_norm:
@@ -1202,21 +1207,27 @@ class ValorantClient(BaseAPIClient):
             if matches is None:
                 return None
 
-            # Persist what we fetched so future calls are incremental
+            # Compute rows once: persist them for future incremental calls and
+            # aggregate the same rows for the response
+            rows = []
+            new_rows = []
             for match in matches:
-                mid = self._match_id_of(match)
-                if not mid or not match.get('is_available', True):
+                if not match.get('is_available', True):
                     continue
-                database_manager.store_match(mid, match)
-                if mode_norm and mode_norm == 'competitive' and not self._is_competitive_match(match):
+                mid = self._match_id_of(match)
+                if mid:
+                    database_manager.store_match(mid, match)
+                if mode_norm == 'competitive' and not self._is_competitive_match(match):
                     continue
                 row = self.build_match_stats_row(match, puuid)
-                if row:
-                    database_manager.store_player_match_stats(puuid, mid, row)
+                if not row:
+                    continue
+                rows.append(row)
+                if mid:
+                    new_rows.append((puuid, mid, row))
+            database_manager.store_player_match_stats_bulk(new_rows)
 
-            return self.calculate_player_stats(
-                matches, puuid, competitive_only=(mode_norm == 'competitive')
-            )
+            return self.aggregate_match_rows(rows)
         except Exception as e:
             log_error(f"getting player stats for {username}#{tag}", e)
             return None
@@ -1263,15 +1274,15 @@ class ValorantClient(BaseAPIClient):
         if not match_id:
             return 0
 
-        count = 0
+        entries = []
         for puuid in {p for p in puuids if p}:
             try:
                 row = self.build_match_stats_row(match_data, puuid)
-                if row and database_manager.store_player_match_stats(puuid, match_id, row):
-                    count += 1
+                if row:
+                    entries.append((puuid, match_id, row))
             except Exception as e:
                 log_error(f"recording match stats for {puuid} in {match_id}", e)
-        return count
+        return database_manager.store_player_match_stats_bulk(entries)
 
     def _calculate_streaks(self, stats: Dict[str, Any]):
         """Calculate win/loss streaks from recent matches"""

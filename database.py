@@ -956,33 +956,51 @@ class DatabaseManager:
         'eco_rounds_won', 'eco_rounds_played', 'shots_hit', 'shots_fired',
     )
 
+    def _pms_insert_values(self, puuid: str, match_id: str, row: Dict[str, Any],
+                           stored_at: str) -> List[Any]:
+        """Build the VALUES list for one player_match_stats insert."""
+        values = [puuid, match_id, stored_at]
+        for field in self._PMS_SCALAR_FIELDS:
+            values.append(row.get(field))
+        for field in self._PMS_JSON_FIELDS:
+            values.append(json.dumps(row.get(field) or {}))
+        return values
+
+    @property
+    def _pms_insert_sql(self) -> str:
+        columns = ['puuid', 'match_id', 'stored_at'] + \
+            list(self._PMS_SCALAR_FIELDS) + list(self._PMS_JSON_FIELDS)
+        placeholders = ', '.join('?' for _ in columns)
+        return (f"INSERT OR REPLACE INTO player_match_stats ({', '.join(columns)}) "
+                f"VALUES ({placeholders})")
+
     def store_player_match_stats(self, puuid: str, match_id: str, row: Dict[str, Any]) -> bool:
         """Store computed per-match stats for one player. Idempotent by (puuid, match_id)."""
+        return self.store_player_match_stats_bulk([(puuid, match_id, row)]) == 1
+
+    def store_player_match_stats_bulk(self, entries: List[Tuple[str, str, Dict[str, Any]]]) -> int:
+        """Store many (puuid, match_id, row) stat lines in one transaction.
+
+        One connection/commit for the whole batch - much cheaper on SD-card
+        I/O than per-row writes. Returns the number of rows stored.
+        """
+        if not entries:
+            return 0
         with self._lock:
             conn = self._get_connection()
             try:
                 now = datetime.now(timezone.utc).isoformat()
-                columns = ['puuid', 'match_id', 'stored_at']
-                values = [puuid, match_id, now]
-                for field in self._PMS_SCALAR_FIELDS:
-                    columns.append(field)
-                    values.append(row.get(field))
-                for field in self._PMS_JSON_FIELDS:
-                    columns.append(field)
-                    values.append(json.dumps(row.get(field) or {}))
-
-                placeholders = ', '.join('?' for _ in columns)
-                conn.execute(
-                    f"INSERT OR REPLACE INTO player_match_stats ({', '.join(columns)}) "
-                    f"VALUES ({placeholders})",
-                    values
+                conn.executemany(
+                    self._pms_insert_sql,
+                    [self._pms_insert_values(puuid, match_id, row, now)
+                     for puuid, match_id, row in entries]
                 )
                 conn.commit()
-                return True
+                return len(entries)
             except Exception as e:
-                logging.error(f"Error storing per-match stats {puuid}/{match_id}: {e}")
+                logging.error(f"Error storing per-match stats batch ({len(entries)} rows): {e}")
                 conn.rollback()
-                return False
+                return 0
             finally:
                 conn.close()
 
