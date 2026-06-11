@@ -379,12 +379,12 @@ class MatchTracker:
             inline=False
         )
 
-        # Add rank / RR updates for the tracked squad (best-effort)
-        rank_updates = await self._get_squad_rank_updates(discord_members)
-        if rank_updates:
+        # Celebrate any squad members who ranked up this game (best-effort)
+        rank_ups = await self._get_squad_rank_ups(discord_members)
+        if rank_ups:
             embed.add_field(
-                name="📈 Rank Updates",
-                value=rank_updates,
+                name="🎉 Rank Up!",
+                value=rank_ups,
                 inline=False
             )
 
@@ -449,11 +449,17 @@ class MatchTracker:
         embed.set_footer(text="Use /shootylink to show up in post-match recaps!")
         return embed
 
-    async def _get_squad_rank_updates(self, discord_members: List[Dict]) -> Optional[str]:
-        """Build a rank/RR update line for each tracked squad member.
+    async def _get_squad_rank_ups(self, discord_members: List[Dict]) -> Optional[str]:
+        """Build celebratory lines for squad members who ranked up this game.
 
-        Best-effort: skips members whose MMR can't be fetched (private profile,
-        API down, no key) so the recap still renders without them.
+        Only includes players who crossed up at least one full tier as a result
+        of their most recent game. A promotion is detected when the last game's
+        RR gain pushed them past a tier boundary: their pre-game RR-in-tier
+        (``ranking_in_tier - mmr_change``) was below zero.
+
+        Best-effort: silently skips members whose MMR can't be fetched (private
+        profile, API down, no key). Returns ``None`` when nobody ranked up, so
+        callers can omit the field entirely and keep recaps quiet.
         """
         lines = []
         for dm in discord_members:
@@ -472,23 +478,19 @@ class MatchTracker:
             if not mmr or not mmr.get('tier'):
                 continue
 
-            member = dm['member']
             rr = mmr.get('rr')
             change = mmr.get('rr_change')
-            rr_str = f"{rr} RR" if rr is not None else ""
 
-            if change is None:
-                change_str = ""
-            elif change > 0:
-                change_str = f" (🟢 +{change})"
-            elif change < 0:
-                change_str = f" (🔴 {change})"
-            else:
-                change_str = " (⚪ ±0)"
+            # Only celebrate genuine promotions: a positive RR change whose
+            # pre-game RR-in-tier was negative means a tier boundary was crossed.
+            if rr is None or change is None or change <= 0:
+                continue
+            if (rr - change) >= 0:
+                continue
 
-            sep = " · " if rr_str else ""
+            member = dm['member']
             lines.append(
-                f"• **{member.display_name}**: {mmr.get('emoji', '')} {mmr['tier']}{sep}{rr_str}{change_str}"
+                f"🎉 **{member.display_name}** ranked up to {mmr.get('emoji', '')} **{mmr['tier']}**!"
             )
 
         return "\n".join(lines) if lines else None

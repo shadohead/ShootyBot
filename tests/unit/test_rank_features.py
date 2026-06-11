@@ -119,7 +119,7 @@ async def test_match_embed_shows_player_rank(discord_member_factory):
     with patch('match_tracker.format_time_ago', return_value='just now'), \
          patch.object(tracker, '_calculate_fun_match_stats',
                       return_value={'highlights': [], 'top_performers': {}, 'funny_stats': {}}), \
-         patch.object(tracker, '_get_squad_rank_updates', AsyncMock(return_value=None)):
+         patch.object(tracker, '_get_squad_rank_ups', AsyncMock(return_value=None)):
         embed = await tracker._create_match_embed(match, discord_members)
 
     squad_field = next(f for f in embed.fields if 'Squad' in f.name)
@@ -127,32 +127,71 @@ async def test_match_embed_shows_player_rank(discord_member_factory):
 
 
 # ---------------------------------------------------------------------------
-# _get_squad_rank_updates
+# _get_squad_rank_ups (celebratory: only on a full-tier promotion)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_squad_rank_updates_formats_rr_change(discord_member_factory):
+async def test_squad_rank_up_celebrated_on_promotion(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
     member = discord_member_factory(user_id=1, name='Player1')
     discord_members = [{'member': member,
                         'account': {'puuid': 'p1', 'username': 'Player1', 'tag': 'NA1'}}]
 
+    # rr=5, change=+18 -> pre-game RR-in-tier was -13 -> crossed a tier boundary
+    fake_client = MagicMock()
+    fake_client.get_mmr = AsyncMock(return_value={
+        'tier': 'Diamond 1', 'rr': 5, 'rr_change': 18, 'emoji': '💎', 'peak': 'Diamond 1',
+    })
+    with patch('match_tracker.valorant_client', fake_client):
+        result = await tracker._get_squad_rank_ups(discord_members)
+
+    assert result is not None
+    assert 'ranked up' in result
+    assert 'Player1' in result
+    assert 'Diamond 1' in result
+
+
+@pytest.mark.asyncio
+async def test_squad_rank_up_silent_without_promotion(discord_member_factory):
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+    member = discord_member_factory(user_id=1, name='Player1')
+    discord_members = [{'member': member,
+                        'account': {'puuid': 'p1', 'username': 'Player1', 'tag': 'NA1'}}]
+
+    # rr=45, change=+18 -> pre-game RR was 27, no boundary crossed -> no field
     fake_client = MagicMock()
     fake_client.get_mmr = AsyncMock(return_value={
         'tier': 'Diamond 1', 'rr': 45, 'rr_change': 18, 'emoji': '💎', 'peak': 'Diamond 2',
     })
     with patch('match_tracker.valorant_client', fake_client):
-        result = await tracker._get_squad_rank_updates(discord_members)
+        result = await tracker._get_squad_rank_ups(discord_members)
 
-    assert 'Player1' in result
-    assert 'Diamond 1' in result
-    assert '45 RR' in result
-    assert '+18' in result
+    assert result is None
 
 
 @pytest.mark.asyncio
-async def test_squad_rank_updates_skips_accounts_without_credentials(discord_member_factory):
+async def test_squad_rank_up_silent_on_rr_loss(discord_member_factory):
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+    member = discord_member_factory(user_id=1, name='Player1')
+    discord_members = [{'member': member,
+                        'account': {'puuid': 'p1', 'username': 'Player1', 'tag': 'NA1'}}]
+
+    # Negative RR change is never a rank up, even at low RR
+    fake_client = MagicMock()
+    fake_client.get_mmr = AsyncMock(return_value={
+        'tier': 'Diamond 1', 'rr': 5, 'rr_change': -16, 'emoji': '💎', 'peak': 'Diamond 2',
+    })
+    with patch('match_tracker.valorant_client', fake_client):
+        result = await tracker._get_squad_rank_ups(discord_members)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_squad_rank_up_skips_accounts_without_credentials(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
     member = discord_member_factory(user_id=1, name='Player1')
@@ -162,7 +201,7 @@ async def test_squad_rank_updates_skips_accounts_without_credentials(discord_mem
     fake_client = MagicMock()
     fake_client.get_mmr = AsyncMock()
     with patch('match_tracker.valorant_client', fake_client):
-        result = await tracker._get_squad_rank_updates(discord_members)
+        result = await tracker._get_squad_rank_ups(discord_members)
 
     assert result is None
     fake_client.get_mmr.assert_not_called()
