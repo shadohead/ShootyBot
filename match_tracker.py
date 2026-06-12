@@ -191,8 +191,13 @@ class MatchTracker:
                             'match_data': latest_match
                         }
 
+                        # How many games this stack has run back-to-back today
+                        # (recent_matches only retains the last MATCH_CUTOFF_HOURS)
+                        game_number = len(server_matches)
+
                         # Send match results to appropriate channel
-                        await self._send_match_results(guild, latest_match, discord_members_in_match)
+                        await self._send_match_results(
+                            guild, latest_match, discord_members_in_match, game_number)
 
                         # Update stack activity tracking
                         await self._update_stack_activity(guild, discord_members_in_match, latest_match)
@@ -230,7 +235,7 @@ class MatchTracker:
         
         return discord_members
     
-    async def _send_match_results(self, guild: discord.Guild, match: Dict[str, Any], discord_members: List[Dict[str, Any]]) -> None:
+    async def _send_match_results(self, guild: discord.Guild, match: Dict[str, Any], discord_members: List[Dict[str, Any]], game_number: int = 1) -> None:
         """Send match results to relevant stack channels"""
 
         target_channels = []
@@ -260,14 +265,14 @@ class MatchTracker:
             return
 
         try:
-            embed = await self._create_match_embed(match, discord_members)
+            embed = await self._create_match_embed(match, discord_members, game_number)
             for ch in target_channels:
                 await ch.send(embed=embed)
 
         except Exception as e:
             log_error("sending match results", e)
     
-    async def _create_match_embed(self, match: dict, discord_members: List[Dict]) -> discord.Embed:
+    async def _create_match_embed(self, match: dict, discord_members: List[Dict], game_number: int = 1) -> discord.Embed:
         """Create a fun match results embed"""
         metadata = match.get('metadata', {})
         map_name = metadata.get('map', 'Unknown')
@@ -427,33 +432,114 @@ class MatchTracker:
                     inline=False
                 )
 
-        # Add humorous roast if the stack lost badly
+        # Add a post-match comment that reacts to the result, the margin, and
+        # how many games deep the stack is into the session.
+        my_rounds = teams.get(team_color, {}).get('rounds_won', 0) if teams else 0
+        opponent_rounds = 0
+        if teams:
+            for color, data in teams.items():
+                if color != team_color:
+                    opponent_rounds = data.get('rounds_won', 0)
+                    break
+
         if not team_won:
-            my_rounds = teams.get(team_color, {}).get('rounds_won', 0) if teams else 0
-            opponent_rounds = 0
-            if teams:
-                for color, data in teams.items():
-                    if color != team_color:
-                        opponent_rounds = data.get('rounds_won', 0)
-                        break
+            name, value = self._build_loss_comment(my_rounds, opponent_rounds, game_number)
+        else:
+            name, value = self._build_win_comment(my_rounds, opponent_rounds, game_number)
 
-            total_kills = sum(dm['player_data'].get('stats', {}).get('kills', 0) for dm in discord_members)
-            total_deaths = sum(dm['player_data'].get('stats', {}).get('deaths', 0) for dm in discord_members)
-            total_assists = sum(dm['player_data'].get('stats', {}).get('assists', 0) for dm in discord_members)
-            team_kda = (total_kills + total_assists) / max(total_deaths, 1)
+        if value:
+            embed.add_field(name=name, value=value, inline=False)
 
-            roast_lines = [f"Score {my_rounds}-{opponent_rounds}."]
-            roast_lines.append("Warm up game 🔥")
-            roast_lines.append("Can't end it on that one 😅")
-
-            embed.add_field(
-                name="😅 Tough Loss",
-                value="\n".join(roast_lines),
-                inline=False,
-            )
-        
         embed.set_footer(text="Use /shootylink to show up in post-match recaps!")
         return embed
+
+    @staticmethod
+    def _build_loss_comment(my_rounds: int, opponent_rounds: int, game_number: int) -> tuple:
+        """Build the post-match comment shown after a loss.
+
+        Reacts to the margin (heartbreaker vs. blowout) and how deep into the
+        session the stack is: game 1 is a warm-up, but after a few back-to-back
+        games that excuse runs out and we just have to keep running it back.
+        """
+        margin = opponent_rounds - my_rounds
+        lines = [f"Score {my_rounds}-{opponent_rounds}."]
+
+        if margin <= 2:
+            lines.append(random.choice([
+                "So close 😤 came right down to the wire.",
+                "Coin-flip game, could've gone either way.",
+                "One round away. We run it back.",
+                "Heartbreaker. That one stings.",
+            ]))
+        elif margin >= 8:
+            lines.append(random.choice([
+                "Yeah... we don't talk about that one 💀",
+                "Got stomped. Shake it off.",
+                "That was a beatdown. Reset and refocus.",
+                "Wrong server. Requeue. 🫠",
+            ]))
+        else:
+            lines.append(random.choice([
+                "Tough loss. On to the next one.",
+                "Not our round. Let's run it back.",
+                "We move. 🫡",
+                "Lost the match, not the war.",
+            ]))
+
+        if game_number <= 1:
+            lines.append(random.choice([
+                "Warm up game 🔥",
+                "Just shaking off the rust 🔥",
+                "Doesn't count, we were warming up 😤",
+            ]))
+        elif game_number >= 3:
+            lines.append(random.choice([
+                f"{game_number} games deep — we are NOT ending on that one 😤",
+                f"That's {game_number} in a row, one more to end on a W? 🙏",
+                f"{game_number} games in and we can't end on that one 😅",
+            ]))
+        else:
+            lines.append(random.choice([
+                "Can't end it on that one 😅",
+                "Run it back, we get the next one.",
+            ]))
+
+        return "😅 Tough Loss", "\n".join(lines)
+
+    @staticmethod
+    def _build_win_comment(my_rounds: int, opponent_rounds: int, game_number: int) -> tuple:
+        """Build the post-match comment shown after a win, nudging the stack to
+        end on a high note once they've played a few games."""
+        margin = my_rounds - opponent_rounds
+        lines = [f"Score {my_rounds}-{opponent_rounds}."]
+
+        if margin <= 2:
+            lines.append(random.choice([
+                "Clutched it out 😮‍💨 nail-biter.",
+                "Down to the wire, but it's a dub 🏆",
+                "We do not miss when it's close 😤",
+            ]))
+        elif margin >= 8:
+            lines.append(random.choice([
+                "Absolute domination 🧹",
+                "Easy work 😎",
+                "Sent them to the lobby 💀",
+            ]))
+        else:
+            lines.append(random.choice([
+                "GG — that's a dub 🏆",
+                "Clean win 💪",
+                "Business as usual 😎",
+            ]))
+
+        if game_number >= 3:
+            lines.append(random.choice([
+                f"{game_number} games in — end it on that one? 😏",
+                "End on a high note? 🎉",
+                "Perfect note to log off on 😌",
+            ]))
+
+        return "🏆 GG", "\n".join(lines)
 
     async def _get_ranked_up_member_ids(self, discord_members: List[Dict]) -> set:
         """Return the ids of squad members who crossed up a full tier this game.
@@ -740,6 +826,9 @@ class MatchTracker:
         multikill rounds from round data."""
         player_stats = []
         puuid_to_member = {}
+        # ACS is the per-round average of combat score, not the raw match total.
+        rounds_played = match_data.get('metadata', {}).get('rounds_played', 0) \
+            or len(match_data.get('rounds', []))
         for dm in discord_members:
             member = dm['member']
             player_data = dm['player_data']
@@ -748,6 +837,8 @@ class MatchTracker:
 
             puuid_to_member[puuid] = member
 
+            score = pstats.get('score', 0)
+            acs = round(score / rounds_played) if rounds_played else score
             player_stats.append({
                 'member': member,
                 'puuid': puuid,
@@ -757,7 +848,8 @@ class MatchTracker:
                 'headshots': pstats.get('headshots', 0),
                 'bodyshots': pstats.get('bodyshots', 0),
                 'legshots': pstats.get('legshots', 0),
-                'score': pstats.get('score', 0),
+                'score': score,
+                'acs': acs,
                 'damage_made': player_data.get('damage_made', 0),
                 'damage_received': player_data.get('damage_received', 0),
                 'agent': player_data.get('character', 'Unknown')
@@ -948,16 +1040,16 @@ class MatchTracker:
                     f"😵 **Brave Soul**: {feeder['member'].display_name} ({feeder['deaths']} deaths) - No fear!",
                     feeder['member'].id)
 
-        # Score Leader (highest combat score)
-        score_leader = max(player_stats, key=lambda x: x['score'])
-        if score_leader['score'] >= 300:
-            if score_leader['score'] >= 400:
+        # Score Leader (highest average combat score per round)
+        score_leader = max(player_stats, key=lambda x: x['acs'])
+        if score_leader['acs'] >= 250:
+            if score_leader['acs'] >= 350:
                 add(candidates, 66, 'acs',
-                    f"🌟 **MVP PERFORMANCE**: {score_leader['member'].display_name} ({score_leader['score']} ACS) - LEGENDARY!",
+                    f"🌟 **MVP PERFORMANCE**: {score_leader['member'].display_name} ({score_leader['acs']} ACS) - LEGENDARY!",
                     score_leader['member'].id)
             else:
                 add(candidates, 50, 'acs',
-                    f"⭐ **Score Leader**: {score_leader['member'].display_name} ({score_leader['score']} ACS)",
+                    f"⭐ **Score Leader**: {score_leader['member'].display_name} ({score_leader['acs']} ACS)",
                     score_leader['member'].id)
 
         # Kill/Death ratio extremes
@@ -1018,8 +1110,8 @@ class MatchTracker:
         sentinel_agents = ['Killjoy', 'Cypher', 'Sage', 'Chamber', 'Deadlock', 'Vyse']
         sentinels = [p for p in player_stats if p['agent'] in sentinel_agents]
         if sentinels:
-            top_sentinel = max(sentinels, key=lambda x: x['score'])
-            if top_sentinel['score'] >= 300:
+            top_sentinel = max(sentinels, key=lambda x: x['acs'])
+            if top_sentinel['acs'] >= 250:
                 add(candidates, 42, 'role_sentinel',
                     f"🔒 **SITE ANCHOR**: {top_sentinel['member'].display_name} ({top_sentinel['agent']}) - Holding it down!",
                     top_sentinel['member'].id)
@@ -1093,10 +1185,12 @@ class MatchTracker:
         elif avg_damage >= 2500:
             fun_facts.append("💥 **Balanced Attack**: Even damage spread!")
 
-        avg_score = total_team_score / len(player_stats)
-        if avg_score >= 350:
+        rounds_played = match_data.get('metadata', {}).get('rounds_played', 0) \
+            or len(match_data.get('rounds', []))
+        avg_acs = (total_team_score / len(player_stats) / rounds_played) if rounds_played else 0
+        if avg_acs >= 250:
             fun_facts.append("🌟 **ALL-STAR LINEUP**: High scoring across the board!")
-        elif avg_score >= 250:
+        elif avg_acs >= 200:
             fun_facts.append("⭐ **Solid Squad**: Consistent performance!")
 
         kill_spread = max(p['kills'] for p in player_stats) - min(p['kills'] for p in player_stats)
@@ -1153,22 +1247,17 @@ class MatchTracker:
         if not rows:
             return
 
-        # Clutches: each member's biggest clutch (or biggest near-miss)
+        # Clutches: each member's biggest clutch win (near-misses aren't a
+        # highlight - nobody wants to be reminded they choked the 1v3)
         clutch_scores = {'1v1': 55, '1v2': 75, '1v3': 88, '1v4': 93, '1v5': 97}
         for member, row in rows:
             clutches_won = row.get('clutches_won') or {}
-            clutches_attempted = row.get('clutches_attempted') or {}
             for key in ('1v5', '1v4', '1v3', '1v2', '1v1'):
                 won = clutches_won.get(key, 0)
                 if won:
                     times = f" {won} times" if won > 1 else ""
                     add(candidates, clutch_scores[key], f'clutch:{member.id}',
                         f"🧊 **CLUTCH MASTER**: {member.display_name} won a {key} clutch{times}!",
-                        member.id)
-                    break
-                if key in ('1v5', '1v4', '1v3') and clutches_attempted.get(key, 0):
-                    add(candidates, 48, f'clutch:{member.id}',
-                        f"💔 **SO CLOSE**: {member.display_name} fought a {key} but couldn't close it",
                         member.id)
                     break
 
@@ -1228,7 +1317,9 @@ class MatchTracker:
             knife_kills = sum(v for k, v in weapon_kills.items() if 'melee' in k or 'knife' in k)
             if knife_kills:
                 plural = 's' if knife_kills > 1 else ''
-                add(candidates, 92, f'knife:{member.id}',
+                # Knife kills are rare and always worth showing - score them up
+                # there with aces/ninja defuses, and reward stacking them.
+                add(candidates, min(96, 90 + 2 * knife_kills), f'knife:{member.id}',
                     f"🔪 **HUMILIATION**: {member.display_name} got {knife_kills} knife kill{plural}!",
                     member.id)
             sheriff_kills = weapon_kills.get('sheriff', 0)
@@ -1392,10 +1483,10 @@ class MatchTracker:
 
             if stack_swing:
                 add(candidates, 62, 'swing',
-                    f"💸 **Swing Round**: Round {stack_swing['round']} won with {stack_swing['diff']:,} credit deficit!")
+                    f"💸 **ROBBERY**: We robbed Round {stack_swing['round']} despite a {stack_swing['diff']:,} credit disadvantage!")
             if enemy_swing:
                 add(candidates, 56, 'enemy_swing',
-                    f"😱 **Enemy Swing Round**: Opponents stole Round {enemy_swing['round']} with {enemy_swing['diff']:,} credit disadvantage!")
+                    f"😱 **ROBBED**: Opponents robbed Round {enemy_swing['round']} despite a {enemy_swing['diff']:,} credit disadvantage!")
 
     def _identify_swing_rounds(self, match_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Identify rounds where the lower economy team won."""
