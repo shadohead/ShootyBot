@@ -127,5 +127,5 @@ async def test_swing_round_highlights(discord_member_factory):
     stats = tracker._calculate_fun_match_stats(match_data, discord_members)
     highlights = '\n'.join(stats['highlights'])
 
-    assert 'Swing Round' in highlights
-    assert 'Enemy Swing Round' in highlights
+    assert 'ROBBERY' in highlights
+    assert 'ROBBED' in highlights
