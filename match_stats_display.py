@@ -30,17 +30,35 @@ logger = logging.getLogger(__name__)
 _HALF_LENGTH = 12  # standard competitive half
 
 
+def _round_attacking_team(round_data: Dict[str, Any],
+                          puuid_team: Dict[str, str]) -> Optional[str]:
+    """The team on attack for a round, inferred from who planted the spike.
+
+    Only the attacking side can plant, so the planter's team is the attacker.
+    Returns None for rounds with no plant (e.g. a full eliminate)."""
+    planted_by = (round_data.get('plant_events') or {}).get('planted_by') or {}
+    puuid = planted_by.get('puuid')
+    if puuid and puuid in puuid_team:
+        return puuid_team[puuid]
+    return (planted_by.get('team') or '').lower() or None
+
+
 def build_round_flow(match: Dict[str, Any], team_color: str) -> str:
     """Numbered, colour-coded round-by-round strip from the squad's view.
 
     Each round shows its number, coloured green when the squad won it and red
     when they lost, rendered in a monospace ``ansi`` block so the numbers line
-    up and you can tell exactly which round was which. Rows wrap per half (and
-    again for overtime). Returns "" when round data is missing.
+    up and you can tell exactly which round was which. Each regulation half is
+    tagged ATK/DEF (inferred from who planted the spike) and rows wrap per half
+    (and again for overtime). Returns "" when round data is missing.
     """
     rounds = match.get('rounds', [])
     if not rounds or not team_color:
         return ""
+
+    all_players = match.get('players', {}).get('all_players', [])
+    puuid_team = {p.get('puuid'): (p.get('team') or '').lower()
+                  for p in all_players if p.get('puuid')}
 
     outcomes = []  # (round_number, won | None)
     for i, rd in enumerate(rounds, start=1):
@@ -48,9 +66,25 @@ def build_round_flow(match: Dict[str, Any], team_color: str) -> str:
         outcomes.append((i, (winner == team_color) if winner else None))
 
     lines = []
-    for start in range(0, len(outcomes), _HALF_LENGTH):
+    total = len(rounds)
+    for start in range(0, total, _HALF_LENGTH):
+        end = min(start + _HALF_LENGTH, total)
+
+        # Side tag. Sides hold for a regulation half but swap every round in
+        # overtime, so only the two regulation halves get an ATK/DEF label.
+        if start < 2 * _HALF_LENGTH:
+            attacker = next((t for t in (_round_attacking_team(rounds[i], puuid_team)
+                                         for i in range(start, end)) if t), None)
+            if attacker:
+                tag = (f"{_ATK}ATK{_RESET}" if attacker == team_color
+                       else f"{_DEF}DEF{_RESET}")
+            else:
+                tag = "  ?"
+        else:
+            tag = f"{_HDR} OT{_RESET}"
+
         cells = []
-        for number, won in outcomes[start:start + _HALF_LENGTH]:
+        for number, won in outcomes[start:end]:
             label = f"{number:>2}"
             if won is None:
                 cells.append(label)
@@ -58,7 +92,7 @@ def build_round_flow(match: Dict[str, Any], team_color: str) -> str:
                 cells.append(f"{_WIN}{label}{_RESET}")
             else:
                 cells.append(f"{_LOSS}{label}{_RESET}")
-        lines.append(" ".join(cells))
+        lines.append(f"{tag} │ " + " ".join(cells))
 
     return "```ansi\n" + "\n".join(lines) + "\n```"
 
@@ -119,6 +153,10 @@ _BEST_TEAM = "[0;36m"   # cyan - best on the team
 _HDR = "[1;37m"         # bold white header
 _WIN = "[0;32m"         # green team label
 _LOSS = "[0;31m"        # red team label
+
+# Round-flow side tags reuse the highlight palette: yellow attack, cyan defense.
+_ATK = _BEST_GAME
+_DEF = _BEST_TEAM
 
 _NAME_W = 14
 # (header, key, width, higher_is_better)

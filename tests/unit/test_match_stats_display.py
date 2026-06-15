@@ -19,6 +19,10 @@ def _match():
             'Blue', 'Red', 'Blue', 'Red']            # first half (7-5)
            + ['Blue', 'Red', 'Blue', 'Red', 'Blue', 'Red'])  # 13-8 by round 18-ish
     rounds = [{'winning_team': w, 'player_stats': []} for w in seq]
+    # Spike plants reveal the attacking side: Red plants in the first half,
+    # Blue plants in the second half (so Red is ATK then DEF).
+    rounds[0]['plant_events'] = {'planted_by': {'puuid': 'Shado-id'}}
+    rounds[12]['plant_events'] = {'planted_by': {'puuid': 'Enemy1-id'}}
     return {
         'metadata': {'map': 'Ascent', 'rounds_played': len(seq), 'matchid': 'abc-123'},
         'teams': {'red': {'has_won': True, 'rounds_won': 13},
@@ -45,6 +49,24 @@ def test_round_flow_numbers_rounds_and_colours_by_outcome():
     assert f'{msd._LOSS} 3{msd._RESET}' in flow
     # Wraps to a second row after the first half (more than 12 rounds)
     assert flow.count('\n') >= 3
+
+
+def test_round_flow_labels_attack_and_defense_halves():
+    flow = msd.build_round_flow(_match(), 'red')
+    lines = [l for l in flow.splitlines() if '│' in l]
+    # Red planted first half -> ATK; Blue planted second half -> Red on DEF
+    assert 'ATK' in lines[0]
+    assert 'DEF' in lines[1]
+
+
+def test_round_flow_unknown_side_when_no_plants():
+    match = _match()
+    for rd in match['rounds']:
+        rd.pop('plant_events', None)
+    flow = msd.build_round_flow(match, 'red')
+    # No plant data -> side can't be inferred, shown as '?'
+    assert '?' in flow
+    assert 'ATK' not in flow and 'DEF' not in flow
 
 
 def test_round_flow_empty_without_rounds_or_team():
