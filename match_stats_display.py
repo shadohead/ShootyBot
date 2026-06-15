@@ -13,6 +13,7 @@ The button reloads the match from the permanent ``henrik_matches`` cache, so it
 keeps working across bot restarts.
 """
 
+import asyncio
 import logging
 import re
 from typing import Dict, List, Optional, Any
@@ -21,6 +22,7 @@ import discord
 
 from valorant_client import valorant_client
 from database import database_manager
+from economy_chart import render_economy_chart, pick_squad_team
 from utils import log_error
 
 logger = logging.getLogger(__name__)
@@ -304,7 +306,31 @@ class AdvancedStatsButton(
             await interaction.followup.send(
                 "Couldn't build advanced stats for this match.", ephemeral=True)
             return
-        await interaction.followup.send(content, ephemeral=True)
+
+        chart_file = await self._build_economy_chart(match)
+        if chart_file is not None:
+            await interaction.followup.send(content, file=chart_file, ephemeral=True)
+        else:
+            await interaction.followup.send(content, ephemeral=True)
+
+    @staticmethod
+    async def _build_economy_chart(match) -> Optional[discord.File]:
+        """Render the round-economy chart off the event loop, or None on failure.
+
+        Rendering is CPU-bound (matplotlib), so it runs in the default executor
+        to avoid stalling the bot. Any failure degrades silently to text-only.
+        """
+        try:
+            squad_team = pick_squad_team(match, database_manager.get_linked_puuids())
+            loop = asyncio.get_running_loop()
+            buf = await loop.run_in_executor(
+                None, render_economy_chart, match, squad_team)
+            if buf is None:
+                return None
+            return discord.File(buf, filename="economy.png")
+        except Exception as e:
+            log_error("building economy chart", e)
+            return None
 
 
 def recap_view(match_id: Optional[str]) -> Optional[discord.ui.View]:

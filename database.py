@@ -1060,6 +1060,27 @@ class DatabaseManager:
             finally:
                 conn.close()
 
+    def get_linked_puuids(self) -> set:
+        """All real (non-placeholder) PUUIDs linked to any Discord user.
+
+        Used to orient match visualisations from the squad's perspective.
+        ``manual_`` PUUIDs come from /shootymanuallink and aren't real Riot ids,
+        so they can't appear in match data and are excluded.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                rows = conn.execute(
+                    "SELECT DISTINCT puuid FROM valorant_accounts WHERE puuid IS NOT NULL"
+                ).fetchall()
+                return {r['puuid'] for r in rows
+                        if r['puuid'] and not str(r['puuid']).startswith('manual_')}
+            except Exception as e:
+                logging.error(f"Error getting linked puuids: {e}")
+                return set()
+            finally:
+                conn.close()
+
     def get_stored_account(self, username: str = None, tag: str = None, puuid: str = None) -> Optional[Dict[str, Any]]:
         """Get stored account data if it exists"""
         with self._lock:
