@@ -409,28 +409,6 @@ class MatchTracker:
                 value=highlights_text,
                 inline=False
             )
-            
-            # Add a motivational footer based on performance
-            total_kills = sum(dm['player_data'].get('stats', {}).get('kills', 0) for dm in discord_members)
-            if total_kills >= 50:
-                embed.add_field(
-                    name="🔥 Match Rating",
-                    value="**LEGENDARY PERFORMANCE!** 🏆 This match will be remembered!",
-                    inline=False
-                )
-            elif total_kills >= 35:
-                embed.add_field(
-                    name="⚡ Match Rating",
-                    value="**INCREDIBLE GAME!** 🎆 Outstanding teamwork!",
-                    inline=False
-                )
-
-            elif total_kills >= 25:
-                embed.add_field(
-                    name="💪 Match Rating",
-                    value="**SOLID MATCH!** 🎉 Good coordination!",
-                    inline=False
-                )
 
         # Add a post-match comment that reacts to the result, the margin, and
         # how many games deep the stack is into the session.
