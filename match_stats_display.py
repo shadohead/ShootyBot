@@ -27,40 +27,40 @@ logger = logging.getLogger(__name__)
 
 # --- round flow -------------------------------------------------------------
 
-_WIN_SQUARE = "🟩"
-_LOSS_SQUARE = "🟥"
-_UNKNOWN_SQUARE = "⬜"
 _HALF_LENGTH = 12  # standard competitive half
 
 
 def build_round_flow(match: Dict[str, Any], team_color: str) -> str:
-    """A strip of 🟩/🟥 squares for the squad's win/loss each round.
+    """Numbered, colour-coded round-by-round strip from the squad's view.
 
-    Split at half-time and again for overtime (grouped in pairs) so the story
-    of the game reads left-to-right. Returns "" when round data is missing.
+    Each round shows its number, coloured green when the squad won it and red
+    when they lost, rendered in a monospace ``ansi`` block so the numbers line
+    up and you can tell exactly which round was which. Rows wrap per half (and
+    again for overtime). Returns "" when round data is missing.
     """
     rounds = match.get('rounds', [])
     if not rounds or not team_color:
         return ""
 
-    squares = []
-    for rd in rounds:
+    outcomes = []  # (round_number, won | None)
+    for i, rd in enumerate(rounds, start=1):
         winner = (rd.get('winning_team') or '').lower()
-        if not winner:
-            squares.append(_UNKNOWN_SQUARE)
-        elif winner == team_color:
-            squares.append(_WIN_SQUARE)
-        else:
-            squares.append(_LOSS_SQUARE)
+        outcomes.append((i, (winner == team_color) if winner else None))
 
-    chunks = ["".join(squares[:_HALF_LENGTH])]
-    if len(squares) > _HALF_LENGTH:
-        chunks.append("".join(squares[_HALF_LENGTH:2 * _HALF_LENGTH]))
-    if len(squares) > 2 * _HALF_LENGTH:
-        ot = squares[2 * _HALF_LENGTH:]
-        chunks.append(" ".join("".join(ot[i:i + 2]) for i in range(0, len(ot), 2)))
+    lines = []
+    for start in range(0, len(outcomes), _HALF_LENGTH):
+        cells = []
+        for number, won in outcomes[start:start + _HALF_LENGTH]:
+            label = f"{number:>2}"
+            if won is None:
+                cells.append(label)
+            elif won:
+                cells.append(f"{_WIN}{label}{_RESET}")
+            else:
+                cells.append(f"{_LOSS}{label}{_RESET}")
+        lines.append(" ".join(cells))
 
-    return "  ┃  ".join(c for c in chunks if c)
+    return "```ansi\n" + "\n".join(lines) + "\n```"
 
 
 # --- per-player display stats ----------------------------------------------

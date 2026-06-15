@@ -382,6 +382,17 @@ class MatchTracker:
                 inline=False
             )
 
+        # Round-by-round win/loss flow, shown right under the result so the
+        # game's story reads top-to-bottom (green = round won, red = lost).
+        if have_result:
+            flow = build_round_flow(match, team_color)
+            if flow:
+                embed.add_field(
+                    name="🔄 Round Flow  ·  🟢 won  🔴 lost",
+                    value=flow,
+                    inline=False
+                )
+
         # Add Discord members who played. Each line carries K/D/A plus the two
         # most useful per-round numbers (ACS, ADR); the top ACS in the squad
         # gets a 👑, and a one-line summary rolls the squad up.
@@ -452,12 +463,6 @@ class MatchTracker:
             value="\n".join(member_list) if member_list else "No squad members found",
             inline=False
         )
-
-        # Round-by-round win/loss flow from the squad's perspective.
-        if have_result:
-            flow = build_round_flow(match, team_color)
-            if flow:
-                embed.add_field(name="🔄 Round Flow", value=flow, inline=False)
 
         # Add enhanced fun highlights
         if fun_stats['highlights']:

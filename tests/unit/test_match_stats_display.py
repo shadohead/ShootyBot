@@ -35,13 +35,16 @@ def _match():
 
 # --- round flow -------------------------------------------------------------
 
-def test_round_flow_marks_wins_and_losses_from_team_perspective():
+def test_round_flow_numbers_rounds_and_colours_by_outcome():
     flow = msd.build_round_flow(_match(), 'red')
-    # First round was a Red win -> green from red's perspective
-    assert flow.startswith('🟩')
-    assert '🟥' in flow
-    # Half-time separator present (more than 12 rounds)
-    assert '┃' in flow
+    # Rendered as a monospace ansi block with round numbers
+    assert flow.startswith('```ansi')
+    assert ' 1' in flow and '13' in flow
+    # Round 1 (a Red win) is green; round 3 (a Blue win) is red, from red's view
+    assert f'{msd._WIN} 1{msd._RESET}' in flow
+    assert f'{msd._LOSS} 3{msd._RESET}' in flow
+    # Wraps to a second row after the first half (more than 12 rounds)
+    assert flow.count('\n') >= 3
 
 
 def test_round_flow_empty_without_rounds_or_team():
