@@ -388,7 +388,7 @@ class MatchTracker:
             flow = build_round_flow(match, team_color)
             if flow:
                 embed.add_field(
-                    name="🔄 Round Flow  ·  🟢 won  🔴 lost",
+                    name="🔄 Round Flow",
                     value=flow,
                     inline=False
                 )
