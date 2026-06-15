@@ -430,7 +430,7 @@ class MatchTracker:
             top_highlights = fun_stats['highlights'][:6]
             highlights_text = "\n".join([f"{highlight}" for highlight in top_highlights])
             embed.add_field(
-                name="🎆 Epic Match Highlights",
+                name="🎆 Match Highlights",
                 value=highlights_text,
                 inline=False
             )
