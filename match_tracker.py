@@ -8,6 +8,11 @@ import random
 from utils import log_error, format_time_ago, parse_henrik_timestamp
 from context_manager import context_manager
 from database import database_manager
+from match_stats_display import (
+    build_round_flow,
+    player_display_stats,
+    recap_view,
+)
 
 class MatchTracker:
     """Tracks Discord members' Valorant matches by polling for newly completed games in active shooty stacks"""
@@ -266,8 +271,10 @@ class MatchTracker:
 
         try:
             embed = await self._create_match_embed(match, discord_members, game_number)
+            match_id = match.get('metadata', {}).get('matchid')
             for ch in target_channels:
-                await ch.send(embed=embed)
+                # A fresh view per send avoids reusing one View across messages.
+                await ch.send(embed=embed, view=recap_view(match_id))
 
         except Exception as e:
             log_error("sending match results", e)
@@ -311,38 +318,85 @@ class MatchTracker:
         # Create tracker.gg link if match ID is available
         tracker_link = ""
         if match_id:
-            tracker_link = f"\n[📊 View on Tracker.gg](https://tracker.gg/valorant/match/{match_id})"
-        
-        embed = discord.Embed(
-            title="🎯 Match Results",
-            description=f"**{map_name}** • {rounds_played} rounds • {duration_str} • {time_ago_str}{tracker_link}",
-            color=0xff4655,
-            timestamp=match_timestamp
-        )
-        
+            tracker_link = f"[📊 View on Tracker.gg](https://tracker.gg/valorant/match/{match_id})"
+
         # Calculate fun stats
         fun_stats = self._calculate_fun_match_stats(match, discord_members)
-        
-        # Add team results
+
+        # Figure out which side the stack played on (all squad members are
+        # together) so the whole recap can be framed from their perspective.
+        # This drives the headline, the embed color, and the closing comment -
+        # avoiding the old layout that repeated the score and win/loss state in
+        # three different places.
         teams = match.get('teams', {})
-        if teams:
+        team_color = None
+        for dm in discord_members:
+            tc = (dm.get('player_data') or {}).get('team', '').lower()
+            if tc:
+                team_color = tc
+                break
+
+        team_won = False
+        my_rounds = 0
+        opponent_rounds = 0
+        have_result = bool(teams and team_color in teams)
+        if have_result:
+            team_won = teams[team_color].get('has_won', False)
+            my_rounds = teams[team_color].get('rounds_won', 0)
+            for color, data in teams.items():
+                if color != team_color:
+                    opponent_rounds = data.get('rounds_won', 0)
+                    break
+
+        # Single, prominent result line: outcome + scoreline shown exactly once.
+        meta_line = f"**{map_name}** • {rounds_played} rounds • {duration_str} • {time_ago_str}"
+        description_parts = []
+        if have_result:
+            outcome = "🏆 **VICTORY**" if team_won else "💀 **DEFEAT**"
+            description_parts.append(f"{outcome}　`{my_rounds} – {opponent_rounds}`")
+            embed_color = 0x3ba55d if team_won else 0xed4245
+        else:
+            embed_color = 0xff4655
+        description_parts.append(meta_line)
+        if tracker_link:
+            description_parts.append(tracker_link)
+
+        embed = discord.Embed(
+            title="🎯 Match Results",
+            description="\n".join(description_parts),
+            color=embed_color,
+            timestamp=match_timestamp
+        )
+
+        # If we couldn't tie the squad to a team, fall back to a neutral
+        # scoreboard so the result is still visible.
+        if not have_result and teams:
             team_info = []
-            for team_color, team_data in teams.items():
-                result = "🏆 **WON**" if team_data.get('has_won', False) else "❌ **LOST**"
+            for color, team_data in teams.items():
                 rounds_won = team_data.get('rounds_won', 0)
-                team_info.append(f"{team_color.title()}: {result} ({rounds_won} rounds)")
-            
+                marker = "🏆" if team_data.get('has_won', False) else "▫️"
+                team_info.append(f"{marker} {color.title()} — {rounds_won}")
             embed.add_field(
                 name="🏆 Match Result",
                 value="\n".join(team_info),
                 inline=False
             )
-        
-        # Add Discord members who played
-        member_list = []
-        stack_result = ""
-        team_color = None
-        team_won = False
+
+        # Round-by-round win/loss flow, shown right under the result so the
+        # game's story reads top-to-bottom (green = round won, red = lost).
+        if have_result:
+            flow = build_round_flow(match, team_color)
+            if flow:
+                embed.add_field(
+                    name="🔄",
+                    value=flow,
+                    inline=False
+                )
+
+        # Add Discord members who played. Each line carries K/D/A plus the two
+        # most useful per-round numbers (ACS, ADR); the top ACS in the squad
+        # gets a 👑, and a one-line summary rolls the squad up.
+        entries = []  # (display_name, stats, rank_str, rankup_str)
         tracked_puuids = set()
 
         # Members who crossed up a full tier this game (shown inline)
@@ -351,24 +405,15 @@ class MatchTracker:
         for dm in discord_members:
             member = dm['member']
             player_data = dm['player_data']
-            stats = player_data.get('stats', {})
-
-            # Determine stack result (same for all players since they're together)
-            if not stack_result:
-                team_color = player_data.get('team', '').lower()
-                if teams and team_color in teams:
-                    team_won = teams[team_color].get('has_won', False)
-                stack_result = "🏆 WON" if team_won else "❌ LOST"
-
             puuid = dm.get('account', {}).get('puuid') or player_data.get('puuid')
             if puuid:
                 tracked_puuids.add(puuid)
 
-            kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
+            pstats = player_display_stats(match, player_data, puuid)
             rank = get_player_rank(player_data)
             rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
             rankup_str = " ⬆️ **Rank Up!**" if member.id in ranked_up_ids else ""
-            member_list.append(f"• **{member.display_name}**: {kda}{rank_str}{rankup_str}")
+            entries.append((member.display_name, pstats, rank_str, rankup_str))
 
         # Add untracked teammates (players on the same team who aren't linked via shootylink)
         all_players = match.get('players', {}).get('all_players', [])
@@ -379,22 +424,42 @@ class MatchTracker:
                     continue
                 if player.get('puuid') in tracked_puuids:
                     continue
-                stats = player.get('stats', {})
                 name = player.get('name', 'Unknown')
                 tag = player.get('tag', '')
                 display_name = f"{name}#{tag}" if tag else name
-                kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
+                pstats = player_display_stats(match, player, player.get('puuid'))
                 rank = get_player_rank(player)
                 rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
-                member_list.append(f"• **{display_name}**: {kda}{rank_str}")
+                entries.append((display_name, pstats, rank_str, ""))
                 untracked_count += 1
 
+        top_acs = max((s['acs'] for _, s, _, _ in entries), default=0)
+        member_list = []
+        for display_name, s, rank_str, rankup_str in entries:
+            crown = "👑 " if top_acs and s['acs'] == top_acs else ""
+            kda = f"{s['kills']}/{s['deaths']}/{s['assists']}"
+            extra = f" · {s['acs']} ACS · {s['adr']} ADR" if (s['acs'] or s['adr']) else ""
+            member_list.append(f"• {crown}**{display_name}**: {kda}{extra}{rank_str}{rankup_str}")
+
+        # One-line squad roll-up above the per-player lines.
+        if entries:
+            tot_k = sum(s['kills'] for _, s, _, _ in entries)
+            tot_d = sum(s['deaths'] for _, s, _, _ in entries)
+            tot_a = sum(s['assists'] for _, s, _, _ in entries)
+            avg_acs = round(sum(s['acs'] for _, s, _, _ in entries) / len(entries))
+            tot_fk = sum(s['fk'] for _, s, _, _ in entries)
+            tot_fd = sum(s['fd'] for _, s, _, _ in entries)
+            summary = f"**Squad:** {tot_k}/{tot_d}/{tot_a}"
+            if avg_acs:
+                summary += f" · {avg_acs} avg ACS"
+            if tot_fk or tot_fd:
+                summary += f" · {tot_fk} FK / {tot_fd} FD"
+            member_list.insert(0, summary)
+
         squad_size = len(discord_members) + untracked_count
-        if not stack_result:
-            stack_result = "🏆 WON" if team_won else "❌ LOST"
 
         embed.add_field(
-            name=f"👥 Squad ({squad_size}) - {stack_result}",
+            name=f"👥 Squad ({squad_size})",
             value="\n".join(member_list) if member_list else "No squad members found",
             inline=False
         )
@@ -405,21 +470,14 @@ class MatchTracker:
             top_highlights = fun_stats['highlights'][:6]
             highlights_text = "\n".join([f"{highlight}" for highlight in top_highlights])
             embed.add_field(
-                name="🎆 Epic Match Highlights",
+                name="🎆 Match Highlights",
                 value=highlights_text,
                 inline=False
             )
 
         # Add a post-match comment that reacts to the result, the margin, and
-        # how many games deep the stack is into the session.
-        my_rounds = teams.get(team_color, {}).get('rounds_won', 0) if teams else 0
-        opponent_rounds = 0
-        if teams:
-            for color, data in teams.items():
-                if color != team_color:
-                    opponent_rounds = data.get('rounds_won', 0)
-                    break
-
+        # how many games deep the stack is into the session. The scoreline is
+        # already in the headline, so the comment is pure flavor.
         if not team_won:
             name, value = self._build_loss_comment(my_rounds, opponent_rounds, game_number)
         else:
@@ -440,7 +498,7 @@ class MatchTracker:
         games that excuse runs out and we just have to keep running it back.
         """
         margin = opponent_rounds - my_rounds
-        lines = [f"Score {my_rounds}-{opponent_rounds}."]
+        lines = []
 
         if margin <= 2:
             lines.append(random.choice([
@@ -489,7 +547,7 @@ class MatchTracker:
         """Build the post-match comment shown after a win, nudging the stack to
         end on a high note once they've played a few games."""
         margin = my_rounds - opponent_rounds
-        lines = [f"Score {my_rounds}-{opponent_rounds}."]
+        lines = []
 
         if margin <= 2:
             lines.append(random.choice([
