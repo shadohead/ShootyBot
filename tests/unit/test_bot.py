@@ -2,7 +2,7 @@
 import pytest
 import asyncio
 import os
-from unittest.mock import Mock, MagicMock, patch, AsyncMock, call
+from unittest.mock import Mock, MagicMock, patch, AsyncMock, call, PropertyMock
 import discord
 from discord.ext import commands
 
@@ -230,18 +230,19 @@ class TestCommandSync:
         guild1 = MagicMock(name="Guild1")
         guild2 = MagicMock(name="Guild2")
 
-        # Mock tree.sync
+        # Mock tree.sync (tree is a read-only property, so patch it)
         mock_synced_commands = [MagicMock(), MagicMock()]
-        bot.tree = MagicMock()
-        bot.tree.sync = AsyncMock(return_value=mock_synced_commands)
+        mock_tree = MagicMock()
+        mock_tree.sync = AsyncMock(return_value=mock_synced_commands)
 
         # Patch the guilds property
-        with patch.object(commands.Bot, 'guilds', new=[guild1, guild2]):
-            with patch('logging.info'):
-                await bot.sync_commands()
+        with patch.object(type(bot), 'tree', new_callable=PropertyMock, return_value=mock_tree):
+            with patch.object(commands.Bot, 'guilds', new=[guild1, guild2]):
+                with patch('logging.info'):
+                    await bot.sync_commands()
 
-                # Should sync to both guilds + global
-                assert bot.tree.sync.call_count == 3
+                    # Should sync to both guilds + global
+                    assert mock_tree.sync.call_count == 3
 
     @pytest.mark.asyncio
     async def test_sync_commands_handles_guild_errors(self):
@@ -257,18 +258,19 @@ class TestCommandSync:
                 raise Exception("Sync failed")
             return []
 
-        bot.tree = MagicMock()
-        bot.tree.sync = AsyncMock(side_effect=sync_with_error)
+        mock_tree = MagicMock()
+        mock_tree.sync = AsyncMock(side_effect=sync_with_error)
 
         # Patch the guilds property
-        with patch.object(commands.Bot, 'guilds', new=[guild1, guild2]):
-            with patch('logging.info'):
-                with patch('bot.log_error') as mock_error:
-                    # Should not raise exception
-                    await bot.sync_commands()
+        with patch.object(type(bot), 'tree', new_callable=PropertyMock, return_value=mock_tree):
+            with patch.object(commands.Bot, 'guilds', new=[guild1, guild2]):
+                with patch('logging.info'):
+                    with patch('bot.log_error') as mock_error:
+                        # Should not raise exception
+                        await bot.sync_commands()
 
-                    # Should log error for failed guild
-                    assert mock_error.called
+                        # Should log error for failed guild
+                        assert mock_error.called
 
 
 class TestMatchTracker:
