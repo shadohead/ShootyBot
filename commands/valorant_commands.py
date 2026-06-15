@@ -9,6 +9,7 @@ from valorant_client import valorant_client
 from data_manager import data_manager
 from datetime import datetime, timezone
 from match_tracker import get_match_tracker
+from match_stats_display import recap_view_from_embed
 from config import VALORANT_WEAPON_LIST
 
 
@@ -1148,7 +1149,7 @@ class ValorantCommands(BaseCommandCog):
             embed = await self.match_tracker.manual_check_recent_match(ctx.guild, member, force_fresh=fresh)
             
             if embed:
-                await ctx.send(embed=embed)
+                await ctx.send(embed=embed, view=recap_view_from_embed(embed))
             else:
                 await self.send_embed(
                     ctx,

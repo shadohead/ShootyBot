@@ -8,6 +8,11 @@ import random
 from utils import log_error, format_time_ago, parse_henrik_timestamp
 from context_manager import context_manager
 from database import database_manager
+from match_stats_display import (
+    build_round_flow,
+    player_display_stats,
+    recap_view,
+)
 
 class MatchTracker:
     """Tracks Discord members' Valorant matches by polling for newly completed games in active shooty stacks"""
@@ -266,8 +271,10 @@ class MatchTracker:
 
         try:
             embed = await self._create_match_embed(match, discord_members, game_number)
+            match_id = match.get('metadata', {}).get('matchid')
             for ch in target_channels:
-                await ch.send(embed=embed)
+                # A fresh view per send avoids reusing one View across messages.
+                await ch.send(embed=embed, view=recap_view(match_id))
 
         except Exception as e:
             log_error("sending match results", e)
@@ -375,8 +382,10 @@ class MatchTracker:
                 inline=False
             )
 
-        # Add Discord members who played
-        member_list = []
+        # Add Discord members who played. Each line carries K/D/A plus the two
+        # most useful per-round numbers (ACS, ADR); the top ACS in the squad
+        # gets a 👑, and a one-line summary rolls the squad up.
+        entries = []  # (display_name, stats, rank_str, rankup_str)
         tracked_puuids = set()
 
         # Members who crossed up a full tier this game (shown inline)
@@ -385,17 +394,15 @@ class MatchTracker:
         for dm in discord_members:
             member = dm['member']
             player_data = dm['player_data']
-            stats = player_data.get('stats', {})
-
             puuid = dm.get('account', {}).get('puuid') or player_data.get('puuid')
             if puuid:
                 tracked_puuids.add(puuid)
 
-            kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
+            pstats = player_display_stats(match, player_data, puuid)
             rank = get_player_rank(player_data)
             rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
             rankup_str = " ⬆️ **Rank Up!**" if member.id in ranked_up_ids else ""
-            member_list.append(f"• **{member.display_name}**: {kda}{rank_str}{rankup_str}")
+            entries.append((member.display_name, pstats, rank_str, rankup_str))
 
         # Add untracked teammates (players on the same team who aren't linked via shootylink)
         all_players = match.get('players', {}).get('all_players', [])
@@ -406,15 +413,37 @@ class MatchTracker:
                     continue
                 if player.get('puuid') in tracked_puuids:
                     continue
-                stats = player.get('stats', {})
                 name = player.get('name', 'Unknown')
                 tag = player.get('tag', '')
                 display_name = f"{name}#{tag}" if tag else name
-                kda = f"{stats.get('kills', 0)}/{stats.get('deaths', 0)}/{stats.get('assists', 0)}"
+                pstats = player_display_stats(match, player, player.get('puuid'))
                 rank = get_player_rank(player)
                 rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
-                member_list.append(f"• **{display_name}**: {kda}{rank_str}")
+                entries.append((display_name, pstats, rank_str, ""))
                 untracked_count += 1
+
+        top_acs = max((s['acs'] for _, s, _, _ in entries), default=0)
+        member_list = []
+        for display_name, s, rank_str, rankup_str in entries:
+            crown = "👑 " if top_acs and s['acs'] == top_acs else ""
+            kda = f"{s['kills']}/{s['deaths']}/{s['assists']}"
+            extra = f" · {s['acs']} ACS · {s['adr']} ADR" if (s['acs'] or s['adr']) else ""
+            member_list.append(f"• {crown}**{display_name}**: {kda}{extra}{rank_str}{rankup_str}")
+
+        # One-line squad roll-up above the per-player lines.
+        if entries:
+            tot_k = sum(s['kills'] for _, s, _, _ in entries)
+            tot_d = sum(s['deaths'] for _, s, _, _ in entries)
+            tot_a = sum(s['assists'] for _, s, _, _ in entries)
+            avg_acs = round(sum(s['acs'] for _, s, _, _ in entries) / len(entries))
+            tot_fk = sum(s['fk'] for _, s, _, _ in entries)
+            tot_fd = sum(s['fd'] for _, s, _, _ in entries)
+            summary = f"**Squad:** {tot_k}/{tot_d}/{tot_a}"
+            if avg_acs:
+                summary += f" · {avg_acs} avg ACS"
+            if tot_fk or tot_fd:
+                summary += f" · {tot_fk} FK / {tot_fd} FD"
+            member_list.insert(0, summary)
 
         squad_size = len(discord_members) + untracked_count
 
@@ -423,6 +452,12 @@ class MatchTracker:
             value="\n".join(member_list) if member_list else "No squad members found",
             inline=False
         )
+
+        # Round-by-round win/loss flow from the squad's perspective.
+        if have_result:
+            flow = build_round_flow(match, team_color)
+            if flow:
+                embed.add_field(name="🔄 Round Flow", value=flow, inline=False)
 
         # Add enhanced fun highlights
         if fun_stats['highlights']:
