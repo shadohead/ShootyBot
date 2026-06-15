@@ -23,6 +23,28 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def warm_up() -> bool:
+    """Eagerly import matplotlib and prime its font cache.
+
+    The first matplotlib import is slow (tens of seconds on a Pi, reading many
+    small modules off the SD card). Running this once at startup in an executor
+    moves that cost off the first user's Advanced Stats click, so every click is
+    sub-second. Blocking - run off the event loop. Returns True on success.
+    """
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        fig = plt.figure()          # first figure builds the font cache
+        fig.savefig(io.BytesIO(), format='png')
+        plt.close(fig)
+        logger.info("Economy chart renderer warmed up")
+        return True
+    except Exception as e:  # pragma: no cover - depends on the host env
+        logger.info("Economy chart warm-up skipped (matplotlib unavailable): %s", e)
+        return False
+
+
 def _puuid_team_map(match: Dict[str, Any]) -> Dict[str, str]:
     all_players = match.get('players', {}).get('all_players', [])
     return {p.get('puuid'): (p.get('team') or '').lower()

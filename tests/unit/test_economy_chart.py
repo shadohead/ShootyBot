@@ -16,6 +16,7 @@ from economy_chart import (
     compute_round_economy,
     pick_squad_team,
     render_economy_chart,
+    warm_up,
 )
 
 
@@ -120,3 +121,13 @@ def test_render_economy_chart_returns_png_or_none():
 def test_render_economy_chart_handles_missing_data():
     assert render_economy_chart(build_match(), None) is None
     assert render_economy_chart({'rounds': []}, 'red') is None
+
+
+def test_warm_up_matches_render_availability():
+    """warm_up() succeeds exactly when matplotlib can be imported."""
+    try:
+        import matplotlib  # noqa: F401
+        have_mpl = True
+    except Exception:
+        have_mpl = False
+    assert warm_up() is have_mpl

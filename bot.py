@@ -13,6 +13,7 @@ from handlers.message_formatter import DEFAULT_MSG
 from handlers.reaction_handler import add_react_options
 from match_tracker import get_match_tracker
 from match_stats_display import AdvancedStatsButton
+from economy_chart import warm_up as warm_up_economy_chart
 from utils import log_error
 from valorant_client import get_valorant_client
 
@@ -106,6 +107,11 @@ class ShootyBot(commands.Bot):
         # Persistent recap button: lets "📊 Advanced Stats" keep working across
         # restarts by reloading the match from the cache via its custom id.
         self.add_dynamic_items(AdvancedStatsButton)
+        # Pre-warm the (Pi-slow) matplotlib import off the event loop so the
+        # first Advanced Stats click after a restart renders instantly instead
+        # of eating the one-time import cost. Fire-and-forget; failure is
+        # harmless (the chart just falls back to text).
+        self.loop.run_in_executor(None, warm_up_economy_chart)
 
     async def on_ready(self) -> None:
         """Called when bot is ready."""
