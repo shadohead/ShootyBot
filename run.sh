@@ -19,7 +19,9 @@ if [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
     echo "✅ Virtual environment activated"
 else
-    echo "❌ Virtual environment not found. Run: python3.11 -m venv venv && source venv/bin/activate && pip install -r requirements.txt"
+    echo "❌ Virtual environment not found. On the Pi run: ./setup_pi_env.sh"
+    echo "   (or manually: python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt)"
+    echo "   NOTE: use python3 (Bullseye's 3.9), NOT python3.11 — piwheels cp311 wheels need glibc 2.34 and won't import on Bullseye. See setup_pi_env.sh / CLAUDE.md."
     exit 1
 fi
 

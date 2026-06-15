@@ -127,6 +127,21 @@ LOG_LEVEL=INFO
 
 The bot will check for configuration in this order: `.env` file → environment variables → `DiscordConfig.py`
 
+## Raspberry Pi Host Environment (Production)
+
+Production runs on a low-RAM Raspberry Pi (~921 MiB) on **Raspberry Pi OS Bullseye (glibc 2.31)**. Provision the host with **`setup_pi_env.sh`** (idempotent): `sudo ./setup_pi_env.sh`, then `sudo systemctl restart shootybot.service`.
+
+**The non-negotiable rule: the Pi must NEVER compile a Python dependency from source.** Building a native package (numpy/matplotlib/contourpy) exhausts memory → kernel OOM-killer hangs the entire box → it needs a physical power-cycle. This took the bot fully down on 2026-06-15 (an auto-update pulled `matplotlib`/`numpy` and the source build OOM-froze the Pi).
+
+`setup_pi_env.sh` enforces two things that keep all deps as prebuilt wheels:
+
+1. **`/etc/pip.conf`** points at **piwheels** (`extra-index-url=https://www.piwheels.org/simple`) with `prefer-binary=true` and `only-binary=numpy,scipy,pandas,matplotlib,contourpy,kiwisolver,pillow,fonttools`. The `only-binary` list makes pip **error loudly instead of compiling** those heavy packages.
+2. **The venv is built on Bullseye's native Python 3.9** (`python3 -m venv venv`), **NOT 3.11**. piwheels' `cp311` wheels are built on Bookworm (glibc 2.34+) and fail to import on Bullseye (`GLIBC_2.34 not found`) — which is what forces the source builds. On 3.9, pip auto-resolves to the newest 3.9-compatible versions (matplotlib 3.9.x / numpy 2.0.x), all as wheels. The codebase is verified 3.9-safe (no `match`/`case`, no PEP 604 runtime unions).
+
+Also: numpy's piwheels wheel links system OpenBLAS — `setup_pi_env.sh` installs `libopenblas0 libgfortran5`. Swap is raised to 1 GB as an OOM safety net.
+
+**Gotcha:** if charts stop rendering, check `venv/bin/python` is still 3.9 — a stray `python3.11 -m venv` reintroduces the glibc problem. matplotlib imports are guarded (`try/except` in `economy_chart.py`), so a broken matplotlib only degrades the recap chart to text; it never crashes the bot.
+
 ## MCP (Model Context Protocol) Servers
 
 ShootyBot can leverage MCP servers for enhanced capabilities when working with Claude Code:
