@@ -32,69 +32,33 @@ logger = logging.getLogger(__name__)
 _HALF_LENGTH = 12  # standard competitive half
 
 
-def _round_attacking_team(round_data: Dict[str, Any],
-                          puuid_team: Dict[str, str]) -> Optional[str]:
-    """The team on attack for a round, inferred from who planted the spike.
+def build_round_flow(match: Dict[str, Any]) -> str:
+    """Numbered round-by-round strip coloured by the team that won each round.
 
-    Only the attacking side can plant, so the planter's team is the attacker.
-    Returns None for rounds with no plant (e.g. a full eliminate)."""
-    planted_by = (round_data.get('plant_events') or {}).get('planted_by') or {}
-    puuid = planted_by.get('puuid')
-    if puuid and puuid in puuid_team:
-        return puuid_team[puuid]
-    return (planted_by.get('team') or '').lower() or None
-
-
-def build_round_flow(match: Dict[str, Any], team_color: str) -> str:
-    """Numbered, colour-coded round-by-round strip from the squad's view.
-
-    Each round shows its number, coloured green when the squad won it and red
-    when they lost, rendered in a monospace ``ansi`` block so the numbers line
-    up and you can tell exactly which round was which. Each regulation half is
-    tagged ATK/DEF (inferred from who planted the spike) and rows wrap per half
-    (and again for overtime). Returns "" when round data is missing.
+    Blue numbers are rounds the blue team won, red numbers are rounds the red
+    team won — the two fixed Valorant sides, so there's no squad-perspective
+    detection. Rendered in a monospace ``ansi`` block so the numbers line up,
+    wrapped every regulation half. Returns "" when round data is missing.
     """
     rounds = match.get('rounds', [])
-    if not rounds or not team_color:
+    if not rounds:
         return ""
-
-    all_players = match.get('players', {}).get('all_players', [])
-    puuid_team = {p.get('puuid'): (p.get('team') or '').lower()
-                  for p in all_players if p.get('puuid')}
-
-    outcomes = []  # (round_number, won | None)
-    for i, rd in enumerate(rounds, start=1):
-        winner = (rd.get('winning_team') or '').lower()
-        outcomes.append((i, (winner == team_color) if winner else None))
 
     lines = []
     total = len(rounds)
     for start in range(0, total, _HALF_LENGTH):
         end = min(start + _HALF_LENGTH, total)
-
-        # Side tag. Sides hold for a regulation half but swap every round in
-        # overtime, so only the two regulation halves get an ATK/DEF label.
-        if start < 2 * _HALF_LENGTH:
-            attacker = next((t for t in (_round_attacking_team(rounds[i], puuid_team)
-                                         for i in range(start, end)) if t), None)
-            if attacker:
-                tag = (f"{_ATK}ATK{_RESET}" if attacker == team_color
-                       else f"{_DEF}DEF{_RESET}")
-            else:
-                tag = "  ?"
-        else:
-            tag = f"{_HDR} OT{_RESET}"
-
         cells = []
-        for number, won in outcomes[start:end]:
-            label = f"{number:>2}"
-            if won is None:
-                cells.append(label)
-            elif won:
-                cells.append(f"{_WIN}{label}{_RESET}")
+        for i in range(start, end):
+            label = f"{i + 1:>2}"
+            winner = (rounds[i].get('winning_team') or '').lower()
+            if winner == 'blue':
+                cells.append(f"{_BLUE}{label}{_RESET}")
+            elif winner == 'red':
+                cells.append(f"{_RED}{label}{_RESET}")
             else:
-                cells.append(f"{_LOSS}{label}{_RESET}")
-        lines.append(f"{tag} │ " + " ".join(cells))
+                cells.append(label)
+        lines.append(" ".join(cells))
 
     return "```ansi\n" + "\n".join(lines) + "\n```"
 
@@ -142,6 +106,7 @@ def player_display_stats(match: Dict[str, Any], player_data: Dict[str, Any],
         'acs': round(score / rounds) if rounds else 0,
         'adr': round(damage / rounds) if rounds else 0,
         'kd': kills / deaths if deaths else float(kills),
+        'kda': (kills + assists) / deaths if deaths else float(kills + assists),
         'hs': hs, 'kast': kast,
         'fk': first_kills, 'fd': first_deaths, 'mk': multikills,
     }
@@ -153,14 +118,14 @@ _RESET = "[0m"
 _BEST_GAME = "[1;33m"   # bold yellow - best in the whole match
 _BEST_TEAM = "[0;36m"   # cyan - best on the team
 _HDR = "[1;37m"         # bold white header
-_WIN = "[0;32m"         # green team label
-_LOSS = "[0;31m"        # red team label
-
-# Round-flow side tags reuse the highlight palette: yellow attack, cyan defense.
-_ATK = _BEST_GAME
-_DEF = _BEST_TEAM
+# Sides are coloured by their fixed Valorant identity: blue team always
+# blue, red team always red — used for both the team headers and the
+# round-flow strip, so no squad-side detection is needed.
+_BLUE = "[1;34m"        # blue team
+_RED = "[1;31m"         # red team
 
 _NAME_W = 14
+_AGENT_W = 9  # widest agent name (Brimstone) fits without truncation
 # (header, key, width, higher_is_better)
 _COLS = [
     ("ACS", 'acs', 4, True),
@@ -168,6 +133,7 @@ _COLS = [
     ("D", 'deaths', 3, False),
     ("A", 'assists', 3, True),
     ("K/D", 'kd', 4, True),
+    ("KDA", 'kda', 4, True),
     ("ADR", 'adr', 4, True),
     ("HS%", 'hs', 5, True),
     ("KAST", 'kast', 5, True),
@@ -182,7 +148,7 @@ def _truncate(text: str, width: int) -> str:
 
 
 def _format_value(key: str, value: Any) -> str:
-    if key == 'kd':
+    if key in ('kd', 'kda'):
         return f"{value:.1f}"
     if key in ('hs', 'kast'):
         return f"{value}%"
@@ -221,12 +187,13 @@ def build_advanced_scoreboard(match: Dict[str, Any]) -> str:
         name = player.get('name', 'Unknown')
         tag = player.get('tag', '')
         stats['name'] = f"{name}#{tag}" if tag else name
+        stats['agent'] = player.get('character', '') or ''
         rows.append((stats, (player.get('team') or '').lower()))
 
     game_best = {key: max((r[key] for r, _ in rows), default=0)
                  for _, key, _, hib in _COLS if hib}
 
-    header = "Player".ljust(_NAME_W) + "".join(
+    header = "Player".ljust(_NAME_W) + "Agent".ljust(_AGENT_W) + "".join(
         h.rjust(w + 1) for h, _, w, _ in _COLS)
 
     lines = [f"{_HDR}{header}{_RESET}"]
@@ -247,10 +214,12 @@ def build_advanced_scoreboard(match: Dict[str, Any]) -> str:
         won = teams.get(tcol, {}).get('has_won', False)
         label = f"{tcol.title() or 'Team'} — {team_rounds(tcol)}" + (" 🏆" if won else "")
         lines.append("")
-        lines.append(f"{_WIN if won else _LOSS}{label}{_RESET}")
+        team_color = _BLUE if tcol == "blue" else _RED if tcol == "red" else _HDR
+        lines.append(f"{team_color}{label}{_RESET}")
 
         for r in members:
             cells = _truncate(r['name'], _NAME_W).ljust(_NAME_W)
+            cells += _truncate(r.get('agent', ''), _AGENT_W).ljust(_AGENT_W)
             cells += "".join(
                 " " + _cell(key, r[key], w, hib, game_best, team_best)
                 for _, key, w, hib in _COLS)
@@ -259,7 +228,14 @@ def build_advanced_scoreboard(match: Dict[str, Any]) -> str:
     body = "\n".join(lines)
     title = f"📊 **Advanced Match Stats** — {metadata.get('map', 'Unknown')}"
     legend = "🟡 best in match · 🔵 best on team"
-    return f"{title}\n```ansi\n{body}\n```\n_{legend}_"
+    sections = [f"{title}\n```ansi\n{body}\n```\n_{legend}_"]
+
+    # Round-by-round flow, coloured by the team that won each round.
+    flow = build_round_flow(match)
+    if flow:
+        sections.append(f"**Round flow**\n{flow}_🟦 Blue · 🟥 Red_")
+
+    return "\n".join(sections)
 
 
 # --- persistent reveal button ----------------------------------------------
