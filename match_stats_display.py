@@ -106,6 +106,7 @@ def player_display_stats(match: Dict[str, Any], player_data: Dict[str, Any],
         'acs': round(score / rounds) if rounds else 0,
         'adr': round(damage / rounds) if rounds else 0,
         'kd': kills / deaths if deaths else float(kills),
+        'kda': (kills + assists) / deaths if deaths else float(kills + assists),
         'hs': hs, 'kast': kast,
         'fk': first_kills, 'fd': first_deaths, 'mk': multikills,
     }
@@ -132,6 +133,7 @@ _COLS = [
     ("D", 'deaths', 3, False),
     ("A", 'assists', 3, True),
     ("K/D", 'kd', 4, True),
+    ("KDA", 'kda', 4, True),
     ("ADR", 'adr', 4, True),
     ("HS%", 'hs', 5, True),
     ("KAST", 'kast', 5, True),
@@ -146,7 +148,7 @@ def _truncate(text: str, width: int) -> str:
 
 
 def _format_value(key: str, value: Any) -> str:
-    if key == 'kd':
+    if key in ('kd', 'kda'):
         return f"{value:.1f}"
     if key in ('hs', 'kast'):
         return f"{value}%"
