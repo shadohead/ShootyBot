@@ -27,42 +27,6 @@ from utils import log_error
 
 logger = logging.getLogger(__name__)
 
-# --- round flow -------------------------------------------------------------
-
-_HALF_LENGTH = 12  # standard competitive half
-
-
-def build_round_flow(match: Dict[str, Any]) -> str:
-    """Numbered round-by-round strip coloured by the team that won each round.
-
-    Blue numbers are rounds the blue team won, red numbers are rounds the red
-    team won — the two fixed Valorant sides, so there's no squad-perspective
-    detection. Rendered in a monospace ``ansi`` block so the numbers line up,
-    wrapped every regulation half. Returns "" when round data is missing.
-    """
-    rounds = match.get('rounds', [])
-    if not rounds:
-        return ""
-
-    lines = []
-    total = len(rounds)
-    for start in range(0, total, _HALF_LENGTH):
-        end = min(start + _HALF_LENGTH, total)
-        cells = []
-        for i in range(start, end):
-            label = f"{i + 1:>2}"
-            winner = (rounds[i].get('winning_team') or '').lower()
-            if winner == 'blue':
-                cells.append(f"{_BLUE}{label}{_RESET}")
-            elif winner == 'red':
-                cells.append(f"{_RED}{label}{_RESET}")
-            else:
-                cells.append(label)
-        lines.append(" ".join(cells))
-
-    return "```ansi\n" + "\n".join(lines) + "\n```"
-
-
 # --- per-player display stats ----------------------------------------------
 
 def _rounds_played(match: Dict[str, Any]) -> int:
@@ -226,16 +190,10 @@ def build_advanced_scoreboard(match: Dict[str, Any]) -> str:
             lines.append(cells)
 
     body = "\n".join(lines)
-    title = f"📊 **Advanced Match Stats** — {metadata.get('map', 'Unknown')}"
-    legend = "🟡 best in match · 🔵 best on team"
-    sections = [f"{title}\n```ansi\n{body}\n```\n_{legend}_"]
-
-    # Round-by-round flow, coloured by the team that won each round.
-    flow = build_round_flow(match)
-    if flow:
-        sections.append(f"**Round flow**\n{flow}_🟦 Blue · 🟥 Red_")
-
-    return "\n".join(sections)
+    # Just the map name + the table; the recap headline and the economy chart
+    # (which carries its own title) supply the rest of the context.
+    title = f"**{metadata.get('map', 'Unknown')}**"
+    return f"{title}\n```ansi\n{body}\n```"
 
 
 # --- persistent reveal button ----------------------------------------------
