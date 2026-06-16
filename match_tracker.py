@@ -424,14 +424,12 @@ class MatchTracker:
                 entries.append((display_name, pstats, rank_str, ""))
                 untracked_count += 1
 
-        top_acs = max((s['acs'] for _, s, _, _ in entries), default=0)
         member_list = []
         for display_name, s, rank_str, rankup_str in entries:
-            crown = "👑 " if top_acs and s['acs'] == top_acs else ""
             kda = f"{s['kills']}/{s['deaths']}/{s['assists']}"
             # ACS/ADR live in the Advanced Stats popup — the per-player recap
             # line stays lean with just K/D/A and rank to cut the noise.
-            member_list.append(f"• {crown}**{display_name}**: {kda}{rank_str}{rankup_str}")
+            member_list.append(f"• **{display_name}**: {kda}{rank_str}{rankup_str}")
 
         # One-line squad roll-up above the per-player lines.
         if entries:
