@@ -123,7 +123,11 @@ def compute_round_economy(match: Dict[str, Any],
 _CONDITION_MARKER = {'elim': 'x', 'plant': '^', 'defuse': 'v'}
 
 _BG = '#101820'
-_GREEN = '#3ba55d'
+# Sides keep their fixed Valorant identity: blue team is always blue, red team
+# is always red. The chart plots the blue team's loadout advantage, so positive
+# (blue richer) fills blue and negative (red richer) fills red — no need to work
+# out which side the squad was on.
+_BLUE = '#3b82f6'
 _RED = '#ed4245'
 _GRID = '#2b3543'
 _TEXT = '#c8d0da'
@@ -138,7 +142,10 @@ def render_economy_chart(match: Dict[str, Any],
     """
     if not squad_team:
         return None
-    data = compute_round_economy(match, squad_team)
+    # The chart is drawn in absolute team terms (blue vs red) rather than from
+    # the squad's perspective, so colours always mean the same side. squad_team
+    # is still required as the "we have a team to anchor on" guard.
+    data = compute_round_economy(match, 'blue')
     if not data:
         return None
 
@@ -156,36 +163,36 @@ def render_economy_chart(match: Dict[str, Any],
         diff_k = [d['diff'] / 1000 for d in data]
 
         teams = match.get('teams', {})
-        squad_team = squad_team.lower()
-        enemy_team = next((c for c in teams if c.lower() != squad_team), None)
-        squad_rounds = teams.get(squad_team, {}).get('rounds_won', 0)
-        enemy_rounds = (teams.get(enemy_team, {}).get('rounds_won', 0)
-                        if enemy_team else 0)
+        blue_rounds = teams.get('blue', {}).get('rounds_won', 0)
+        red_rounds = teams.get('red', {}).get('rounds_won', 0)
         map_name = match.get('metadata', {}).get('map', 'Unknown')
 
         fig, ax = plt.subplots(figsize=(9, 3.6), dpi=110)
         fig.patch.set_facecolor(_BG)
         ax.set_facecolor(_BG)
 
+        # diff is the blue team's loadout advantage, so positive fills blue and
+        # negative fills red.
         ax.fill_between(rounds, diff_k, 0, where=[v >= 0 for v in diff_k],
-                        interpolate=True, color=_GREEN, alpha=0.45)
+                        interpolate=True, color=_BLUE, alpha=0.45)
         ax.fill_between(rounds, diff_k, 0, where=[v <= 0 for v in diff_k],
                         interpolate=True, color=_RED, alpha=0.45)
         ax.plot(rounds, diff_k, color=_TEXT, linewidth=1.4, zorder=3)
         for d, y in zip(data, diff_k):
             ax.plot(d['round'], y, marker='o', markersize=4, zorder=4,
-                    color=_GREEN if d['diff'] >= 0 else _RED)
+                    color=_BLUE if d['diff'] >= 0 else _RED)
         ax.axhline(0, color=_TEXT, linewidth=1.0, alpha=0.8)
 
-        # Round-outcome strip beneath the plot: green = squad won, red = lost,
-        # marker shape encodes the win condition.
+        # Round-outcome strip beneath the plot, coloured by the winning team
+        # (blue/red); marker shape encodes the win condition. squad_won here is
+        # True when blue won, since the economy is computed from blue's side.
         span = max((abs(v) for v in diff_k), default=1) or 1
         strip_y = -span * 1.25
         for d in data:
             if d['squad_won'] is None:
                 color = _GRID
             else:
-                color = _GREEN if d['squad_won'] else _RED
+                color = _BLUE if d['squad_won'] else _RED
             ax.scatter(d['round'], strip_y, s=46, zorder=5, color=color,
                        marker=_CONDITION_MARKER.get(d['condition'], 'x'),
                        linewidths=1.4)
@@ -202,11 +209,11 @@ def render_economy_chart(match: Dict[str, Any],
 
         ax.set_title(
             f"Economy — {map_name}   "
-            f"Squad {squad_rounds} : {enemy_rounds} Enemy",
+            f"Blue {blue_rounds} : {red_rounds} Red",
             color=_TEXT, fontsize=11, fontweight='bold', pad=10)
         ax.set_ylabel("Loadout advantage", color=_TEXT, fontsize=8)
         fig.text(0.5, 0.005,
-                 "▲ green = squad richer · ▼ red = enemy richer    "
+                 "▲ blue = blue richer · ▼ red = red richer    "
                  "strip: ✕ elim · ▲ detonation · ▼ defuse",
                  color=_TEXT, fontsize=6.5, alpha=0.75, ha='center')
 

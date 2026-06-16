@@ -39,39 +39,22 @@ def _match():
 
 # --- round flow -------------------------------------------------------------
 
-def test_round_flow_numbers_rounds_and_colours_by_outcome():
-    flow = msd.build_round_flow(_match(), 'red')
+def test_round_flow_numbers_rounds_and_colours_by_winning_team():
+    flow = msd.build_round_flow(_match())
     # Rendered as a monospace ansi block with round numbers
     assert flow.startswith('```ansi')
     assert ' 1' in flow and '13' in flow
-    # Round 1 (a Red win) is green; round 3 (a Blue win) is red, from red's view
-    assert f'{msd._WIN} 1{msd._RESET}' in flow
-    assert f'{msd._LOSS} 3{msd._RESET}' in flow
+    # Coloured by the team that won the round, not the squad's perspective:
+    # round 1 (a Red win) is red, round 3 (a Blue win) is blue.
+    assert f'{msd._RED} 1{msd._RESET}' in flow
+    assert f'{msd._BLUE} 3{msd._RESET}' in flow
     # Wraps to a second row after the first half (more than 12 rounds)
     assert flow.count('\n') >= 3
 
 
-def test_round_flow_labels_attack_and_defense_halves():
-    flow = msd.build_round_flow(_match(), 'red')
-    lines = [l for l in flow.splitlines() if '│' in l]
-    # Red planted first half -> ATK; Blue planted second half -> Red on DEF
-    assert 'ATK' in lines[0]
-    assert 'DEF' in lines[1]
-
-
-def test_round_flow_unknown_side_when_no_plants():
-    match = _match()
-    for rd in match['rounds']:
-        rd.pop('plant_events', None)
-    flow = msd.build_round_flow(match, 'red')
-    # No plant data -> side can't be inferred, shown as '?'
-    assert '?' in flow
-    assert 'ATK' not in flow and 'DEF' not in flow
-
-
-def test_round_flow_empty_without_rounds_or_team():
-    assert msd.build_round_flow({'rounds': []}, 'red') == ""
-    assert msd.build_round_flow(_match(), '') == ""
+def test_round_flow_empty_without_rounds():
+    assert msd.build_round_flow({'rounds': []}) == ""
+    assert msd.build_round_flow({}) == ""
 
 
 # --- per-player display stats ----------------------------------------------

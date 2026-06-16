@@ -9,7 +9,6 @@ from utils import log_error, format_time_ago, parse_henrik_timestamp
 from context_manager import context_manager
 from database import database_manager
 from match_stats_display import (
-    build_round_flow,
     player_display_stats,
     recap_view,
 )
@@ -382,16 +381,8 @@ class MatchTracker:
                 inline=False
             )
 
-        # Round-by-round win/loss flow, shown right under the result so the
-        # game's story reads top-to-bottom (green = round won, red = lost).
-        if have_result:
-            flow = build_round_flow(match, team_color)
-            if flow:
-                embed.add_field(
-                    name="🔄",
-                    value=flow,
-                    inline=False
-                )
+        # The round-by-round flow now lives in the Advanced Stats popup so the
+        # overview stays focused on the result and the squad.
 
         # Add Discord members who played. Each line carries K/D/A plus the two
         # most useful per-round numbers (ACS, ADR); the top ACS in the squad
