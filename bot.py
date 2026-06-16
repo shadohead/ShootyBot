@@ -10,7 +10,7 @@ import asyncio
 from config import BOT_TOKEN, COMMAND_PREFIX, LOG_LEVEL, MESSAGES, APP_VERSION, DB_MATCH_STORAGE_WARN_MB, DB_PLAYER_STATS_WARN_MB
 from context_manager import context_manager
 from handlers.message_formatter import DEFAULT_MSG
-from handlers.reaction_handler import add_react_options
+from handlers.reaction_handler import add_react_options, restore_party_state_from_reactions
 from match_tracker import get_match_tracker
 from match_stats_display import AdvancedStatsButton
 from economy_chart import warm_up as warm_up_economy_chart
@@ -36,15 +36,43 @@ class ShootyBot(commands.Bot):
         self.match_tracker: Optional[object] = None
         self._cogs_loaded: bool = False
         self.health_check_file = ".bot_health"
+        # Marker read by the auto-updater (run_python_script.sh) so it can defer
+        # a restart while a session is in progress and not interrupt players.
+        self.active_session_file = ".active_session"
+
+    def count_active_sessions(self) -> int:
+        """Count channels with a session currently in progress.
+
+        A session is "in progress" when it has a tracked session id or any
+        queued members. Used to decide whether an auto-update may restart now.
+        """
+        active = 0
+        for context in context_manager.contexts.values():
+            has_session = bool(getattr(context, "current_session_id", None))
+            has_members = bool(
+                context.bot_soloq_user_set or context.bot_fullstack_user_set
+            )
+            if has_session or has_members:
+                active += 1
+        return active
 
     @tasks.loop(minutes=2)
     async def health_check_task(self) -> None:
-        """Update health check file every 2 minutes."""
+        """Update health + active-session marker files every 2 minutes."""
+        now = str(int(time.time()))
         try:
             with open(self.health_check_file, "w") as f:
-                f.write(str(int(time.time())))
+                f.write(now)
         except Exception as e:
             logging.error(f"Failed to update health check file: {e}")
+
+        # Write "<active_count> <timestamp>" so the updater can both read the
+        # count and tell whether the marker is fresh (bot still alive).
+        try:
+            with open(self.active_session_file, "w") as f:
+                f.write(f"{self.count_active_sessions()} {now}")
+        except Exception as e:
+            logging.error(f"Failed to update active-session file: {e}")
 
     @health_check_task.before_loop
     async def before_health_check(self) -> None:
@@ -126,6 +154,15 @@ class ShootyBot(commands.Bot):
 
         # Sync commands
         await self.sync_commands()
+
+        # Rebuild any in-progress party state from Discord. Membership lives in
+        # the session message's reactions (not the DB), so after a restart we
+        # re-read those reactions instead of losing the active session.
+        try:
+            await restore_party_state_from_reactions(self)
+            await self.update_status_with_queue_count()
+        except Exception as e:
+            log_error("restoring party state on startup", e)
 
         # Start match tracker
         await self.start_match_tracker()

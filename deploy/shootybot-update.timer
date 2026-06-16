@@ -1,10 +1,15 @@
-# Timer to run the ShootyBot update check daily at 5 AM
+# Timer to run the ShootyBot update check every 15 minutes.
+# The update service itself defers the restart while a session is in progress,
+# so frequent checks never interrupt players.
 
 [Unit]
-Description=Run ShootyBot update check daily
+Description=Run ShootyBot update check every 15 minutes
 
 [Timer]
-OnCalendar=*-*-* 05:00:00
+# At minute 0, 15, 30 and 45 of every hour.
+OnCalendar=*:0/15
+# Catch up on a missed run (e.g. after the Pi was powered off) instead of
+# waiting for the next quarter-hour.
 Persistent=true
 
 [Install]

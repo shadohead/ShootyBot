@@ -55,6 +55,8 @@ coverage.xml
 *.cover
 .hypothesis/
 .bot_health
+.active_session
+.last_update_check
 # OS files
 .DS_Store
 .DS_Store?

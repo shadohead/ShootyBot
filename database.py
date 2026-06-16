@@ -644,6 +644,31 @@ class DatabaseManager:
             finally:
                 conn.close()
     
+    def get_open_session_for_channel(self, channel_id: int) -> Optional[Dict[str, Any]]:
+        """Return the most recent still-open (not yet ended) session for a channel.
+
+        Used on startup to re-link a channel's in-progress session after a bot
+        restart, so commands like ``/stend`` and the recap still work. A session
+        is "open" when its ``end_time`` is NULL.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute("""
+                    SELECT * FROM sessions
+                    WHERE channel_id = ? AND end_time IS NULL
+                    ORDER BY start_time DESC
+                    LIMIT 1
+                """, (channel_id,)).fetchone()
+
+                return dict(row) if row else None
+
+            except Exception as e:
+                logging.error(f"Error getting open session for {channel_id}: {e}")
+                return None
+            finally:
+                conn.close()
+
     # Channel settings methods
     def get_channel_settings(self, channel_id: int) -> Optional[Dict[str, Any]]:
         """Get channel settings"""
@@ -694,7 +719,24 @@ class DatabaseManager:
                 return False
             finally:
                 conn.close()
-    
+
+    def get_all_channel_settings(self) -> List[Dict[str, Any]]:
+        """Return settings rows for every channel the bot has configured.
+
+        Used on startup to find channels with an active party message
+        (``current_st_message_id``) so their state can be rebuilt.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                rows = conn.execute("SELECT * FROM channel_settings").fetchall()
+                return [dict(row) for row in rows]
+            except Exception as e:
+                logging.error(f"Error getting all channel settings: {e}")
+                return []
+            finally:
+                conn.close()
+
     # Migration and utility methods
     def migrate_from_json(self, users_file: str, sessions_file: str, channel_file: str) -> bool:
         """Migrate data from existing JSON files"""

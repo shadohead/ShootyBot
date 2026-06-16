@@ -30,11 +30,14 @@ pip install -r requirements.txt
 python3 bot.py  # Linux/Mac
 py -3 .\bot.py  # Windows
 
-# Run in production (using screen with auto-update)
+# Production: systemd (preferred) — installs the bot service + every-15-min update timer
+sudo ./setup_systemd.sh           # (re)install units; also activates a new update cadence
+
+# Run in production (legacy screen path)
 ./run_python_script.sh
 
 # CI/CD Auto-Update & Monitoring Commands
-./setup_auto_update.sh            # Setup auto-start, monitoring & daily updates
+./setup_auto_update.sh            # Legacy cron: auto-start, monitoring & 15-min updates
 ./run_python_script.sh --start         # Start bot manually
 ./run_python_script.sh --monitor       # Run health check manually
 ./run_python_script.sh --force-update  # Force immediate update check
@@ -141,6 +144,47 @@ Production runs on a low-RAM Raspberry Pi (~921 MiB) on **Raspberry Pi OS Bullse
 Also: numpy's piwheels wheel links system OpenBLAS — `setup_pi_env.sh` installs `libopenblas0 libgfortran5`. Swap is raised to 1 GB as an OOM safety net.
 
 **Gotcha:** if charts stop rendering, check `venv/bin/python` is still 3.9 — a stray `python3.11 -m venv` reintroduces the glibc problem. matplotlib imports are guarded (`try/except` in `economy_chart.py`), so a broken matplotlib only degrades the recap chart to text; it never crashes the bot.
+
+## Auto-Update & Crash-Safe Sessions
+
+ShootyBot self-updates from GitHub and survives restarts without losing an
+in-progress session. Two cooperating mechanisms:
+
+### Update cadence (systemd)
+- **`deploy/shootybot-update.timer`** fires **every 15 minutes** (`OnCalendar=*:0/15`)
+  → `shootybot-update.service` → `run_python_script.sh --force-update`. (The
+  legacy non-systemd path in `setup_auto_update.sh` installs equivalent
+  `*/15` cron jobs.)
+- **`apply_updates()`** in `run_python_script.sh`:
+  1. **Session guard** — reads the `.active_session` marker the bot writes; if a
+     session is in progress it **defers** (does NOT pull), retrying next cycle so
+     players are never interrupted.
+  2. `git pull`, then **self-deploy**: if the pull changed `deploy/` or
+     `setup_systemd.sh`, reinstall the units (`sudo -n ./setup_systemd.sh <owner>`).
+  3. Restart systemd-aware: `sudo -n systemctl restart shootybot.service`, falling
+     back to signaling the process (systemd `Restart=` relaunches it), then to the
+     legacy screen path.
+- **Drift self-heal** — `ensure_systemd_units_current()` runs on every
+  `--force-update` and reinstalls units when the installed timer differs from the
+  repo's (this is how the 5 AM→15 min change converges on its own after the older
+  updater first pulls it). **Bootstrap:** to activate a *new cadence* instantly
+  (instead of waiting for the next self-heal run), run once: `sudo ./setup_systemd.sh`.
+  Reinstalling units does NOT restart the bot, so it's safe mid-session.
+- Privilege: the update service runs as the bot user; `sudo -n` is used
+  best-effort. Without passwordless sudo it logs the one command to run by hand;
+  the process-signal restart fallback needs no sudo.
+
+### Session persistence (restart-safe)
+- Party membership (who reacted 👍/5️⃣/✅) is **never stored in the DB** — the
+  reactions on the bot's session message ARE the source of truth. On startup
+  `restore_party_state_from_reactions()` (called from `on_ready`) re-reads those
+  reactions for every channel with a saved `current_st_message_id` and rebuilds
+  the soloq/fullstack/ready sets, then re-links the still-open session via
+  `database.get_open_session_for_channel()` so `/stend` and the recap still work.
+- **Reactions use *raw* events** (`on_raw_reaction_add/remove`), NOT the
+  cache-backed `on_reaction_add/remove`. The cached variants only fire when the
+  reacted message is in the bot's in-memory cache, which is empty after a restart
+  — that was why reactions silently stopped updating the party post-restart.
 
 ## MCP (Model Context Protocol) Servers
 
@@ -287,10 +331,11 @@ python3 test_database_fast.py
 - **Command callback testing**: Test hybrid command callbacks directly using `.callback(cog, ctx)`
 
 ### Production Deployment:
-- **Process management**: Use screen/tmux for persistent bot processes
+- **Process management**: systemd (`shootybot.service`) is the production path; screen/tmux is the legacy fallback
+- **Auto-update**: every 15 minutes, session-aware and self-deploying — see "Auto-Update & Crash-Safe Sessions" above
 - **Log rotation**: Implement log rotation to prevent disk space issues
 - **Environment isolation**: Use virtual environments in production
-- **Graceful shutdown**: Handle SIGTERM/SIGINT for clean bot shutdown
+- **Graceful shutdown**: Handle SIGTERM/SIGINT for clean bot shutdown (state also rebuilds from reactions on restart)
 
 ### Debugging Tips:
 - **Enable debug logging**: Set LOG_LEVEL=DEBUG for detailed operation logs
