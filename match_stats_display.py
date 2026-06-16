@@ -124,6 +124,7 @@ _BLUE = "[1;34m"        # blue team
 _RED = "[1;31m"         # red team
 
 _NAME_W = 14
+_AGENT_W = 9  # widest agent name (Brimstone) fits without truncation
 # (header, key, width, higher_is_better)
 _COLS = [
     ("ACS", 'acs', 4, True),
@@ -184,12 +185,13 @@ def build_advanced_scoreboard(match: Dict[str, Any]) -> str:
         name = player.get('name', 'Unknown')
         tag = player.get('tag', '')
         stats['name'] = f"{name}#{tag}" if tag else name
+        stats['agent'] = player.get('character', '') or ''
         rows.append((stats, (player.get('team') or '').lower()))
 
     game_best = {key: max((r[key] for r, _ in rows), default=0)
                  for _, key, _, hib in _COLS if hib}
 
-    header = "Player".ljust(_NAME_W) + "".join(
+    header = "Player".ljust(_NAME_W) + "Agent".ljust(_AGENT_W) + "".join(
         h.rjust(w + 1) for h, _, w, _ in _COLS)
 
     lines = [f"{_HDR}{header}{_RESET}"]
@@ -215,6 +217,7 @@ def build_advanced_scoreboard(match: Dict[str, Any]) -> str:
 
         for r in members:
             cells = _truncate(r['name'], _NAME_W).ljust(_NAME_W)
+            cells += _truncate(r.get('agent', ''), _AGENT_W).ljust(_AGENT_W)
             cells += "".join(
                 " " + _cell(key, r[key], w, hib, game_best, team_best)
                 for _, key, w, hib in _COLS)
