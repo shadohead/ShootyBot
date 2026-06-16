@@ -20,6 +20,7 @@ class TestShootyBotInit:
         assert bot.match_tracker is None
         assert bot._cogs_loaded is False
         assert bot.health_check_file == ".bot_health"
+        assert bot.active_session_file == ".active_session"
         assert bot.command_prefix is not None
 
     def test_init_sets_all_intents(self):
@@ -33,19 +34,21 @@ class TestHealthCheckTask:
     """Test health check functionality"""
 
     @pytest.mark.asyncio
-    async def test_health_check_creates_file(self):
-        """Test that health check creates/updates the health file"""
+    async def test_health_check_creates_files(self):
+        """Test that health check writes the health and active-session files"""
         bot = ShootyBot()
 
         # Mock the file operations
         with patch('builtins.open', create=True) as mock_open:
             mock_file = MagicMock()
             mock_open.return_value.__enter__.return_value = mock_file
+            with patch.object(bot, 'count_active_sessions', return_value=0):
+                await bot.health_check_task()
 
-            await bot.health_check_task()
-
-            mock_open.assert_called_once_with(".bot_health", "w")
-            # Should write a timestamp
+            opened = [c.args[0] for c in mock_open.call_args_list]
+            assert ".bot_health" in opened
+            assert ".active_session" in opened
+            # Should write a timestamp / active marker
             assert mock_file.write.called
 
     @pytest.mark.asyncio
@@ -58,6 +61,33 @@ class TestHealthCheckTask:
                 # Should not raise exception
                 await bot.health_check_task()
                 mock_log.assert_called()
+
+
+class TestCountActiveSessions:
+    """Test the active-session counter used to defer auto-updates"""
+
+    def _ctx(self, session_id=None, soloq=None, fullstack=None):
+        c = Mock()
+        c.current_session_id = session_id
+        c.bot_soloq_user_set = soloq if soloq is not None else set()
+        c.bot_fullstack_user_set = fullstack if fullstack is not None else set()
+        return c
+
+    def test_counts_sessions_and_members(self):
+        bot = ShootyBot()
+        with patch('bot.context_manager') as mock_cm:
+            mock_cm.contexts.values.return_value = [
+                self._ctx(),                       # idle -> not counted
+                self._ctx(session_id="s1"),        # active session id
+                self._ctx(soloq={Mock()}),         # has queued members
+            ]
+            assert bot.count_active_sessions() == 2
+
+    def test_zero_when_all_idle(self):
+        bot = ShootyBot()
+        with patch('bot.context_manager') as mock_cm:
+            mock_cm.contexts.values.return_value = [self._ctx(), self._ctx()]
+            assert bot.count_active_sessions() == 0
 
 
 class TestStorageMonitoring:

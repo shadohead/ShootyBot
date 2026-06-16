@@ -1,8 +1,39 @@
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 import discord
-from handlers.reaction_handler import ReactionHandler, add_react_options
+from handlers.reaction_handler import (
+    ReactionHandler,
+    add_react_options,
+    restore_party_state_from_reactions,
+)
 from config import EMOJI, MESSAGES
+
+
+class _AsyncIter:
+    """Minimal async iterator to stand in for discord's reaction.users()."""
+
+    def __init__(self, items):
+        self._items = list(items)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._items:
+            raise StopAsyncIteration
+        return self._items.pop(0)
+
+
+def make_raw_payload(*, user_id=111, channel_id=222, message_id=555,
+                     emoji=EMOJI["THUMBS_UP"], member=None):
+    """Build a fake RawReactionActionEvent payload."""
+    payload = Mock()
+    payload.user_id = user_id
+    payload.channel_id = channel_id
+    payload.message_id = message_id
+    payload.emoji = emoji  # str(emoji) yields the emoji string
+    payload.member = member
+    return payload
 
 
 class TestAddReactOptions:
@@ -39,53 +70,117 @@ class TestReactionHandler:
         return ReactionHandler(bot)
     
     @pytest.mark.asyncio
-    async def test_ignore_bot_reactions(self, handler):
-        """Test that bot reactions are ignored"""
-        reaction = Mock()
-        user = Mock(bot=True)
-        
-        # Should return early for bot users
-        result = await handler.on_reaction_add(reaction, user)
-        assert result is None
-        
-        result = await handler.on_reaction_remove(reaction, user)
-        assert result is None
-    
-    @pytest.mark.asyncio
-    async def test_ignore_non_bot_messages(self, handler, mock_discord_reaction):
-        """Test that reactions on non-bot messages are ignored"""
-        reaction = mock_discord_reaction
-        reaction.message.author = Mock(id=123456)  # Not the bot
-        user = Mock(bot=False)
-        
-        # Should return early for non-bot messages
-        result = await handler.on_reaction_add(reaction, user)
-        assert result is None
-        
-        result = await handler.on_reaction_remove(reaction, user)
-        assert result is None
-    
+    async def test_ignore_own_reactions(self, handler):
+        """The bot's own reactions (matched by user id) are ignored."""
+        payload = make_raw_payload(user_id=handler.bot.user.id)
+        assert await handler.on_raw_reaction_add(payload) is None
+        assert await handler.on_raw_reaction_remove(payload) is None
+
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.context_manager')
-    async def test_ignore_outdated_messages(self, mock_context_manager, handler, mock_discord_reaction):
-        """Test that reactions on outdated messages are ignored"""
-        # Setup
-        mock_context = Mock()
-        mock_context.current_st_message_id = 999
-        mock_context_manager.get_context.return_value = mock_context
-        
-        reaction = mock_discord_reaction
-        reaction.message.id = 123  # Different from current message
-        reaction.message.author = handler.bot.user
-        reaction.message.channel = Mock(id=111222333)
-        
-        user = Mock(bot=False)
-        
-        # Should return after checking message ID
-        with patch('handlers.reaction_handler.logging'):
-            result = await handler.on_reaction_add(reaction, user)
-            assert result is None
-    
+    async def test_ignore_other_bot_reactions(self, mock_context_manager, handler):
+        """Reactions from other bot accounts are ignored."""
+        ctx = Mock()
+        ctx.current_st_message_id = 555
+        mock_context_manager.get_context.return_value = ctx
+
+        channel = AsyncMock()
+        channel.fetch_message = AsyncMock(return_value=AsyncMock())
+        handler.bot.get_channel = Mock(return_value=channel)
+
+        payload = make_raw_payload(member=Mock(id=111, name="OtherBot", bot=True))
+        assert await handler.on_raw_reaction_add(payload) is None
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_ignore_when_no_session_message(self, mock_context_manager, handler):
+        """No current session message -> nothing to update."""
+        ctx = Mock()
+        ctx.current_st_message_id = None
+        mock_context_manager.get_context.return_value = ctx
+        handler.bot.get_channel = Mock()
+
+        payload = make_raw_payload(member=Mock(id=111, name="U", bot=False))
+        assert await handler.on_raw_reaction_add(payload) is None
+        handler.bot.get_channel.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_ignore_outdated_messages(self, mock_context_manager, handler):
+        """Reactions on a message other than the latest one are ignored."""
+        ctx = Mock()
+        ctx.current_st_message_id = 999  # different from payload.message_id
+        mock_context_manager.get_context.return_value = ctx
+        handler.bot.get_channel = Mock()
+
+        payload = make_raw_payload(message_id=123,
+                                   member=Mock(id=111, name="U", bot=False))
+        assert await handler.on_raw_reaction_add(payload) is None
+        handler.bot.get_channel.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.party_status_message', return_value="updated")
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_raw_add_thumbs_up_adds_soloq(
+        self, mock_context_manager, mock_status, handler
+    ):
+        """👍 on the session message adds the user to solo queue and re-renders."""
+        ctx = Mock()
+        ctx.current_st_message_id = 555
+        ctx.current_session_id = None  # short-circuit participation tracking
+        ctx.is_soloq_user.return_value = False
+        mock_context_manager.get_context.return_value = ctx
+
+        message = Mock()
+        message.edit = AsyncMock()
+        channel = Mock()
+        channel.fetch_message = AsyncMock(return_value=message)
+        handler.bot.get_channel = Mock(return_value=channel)
+        handler.bot.update_status_with_queue_count = AsyncMock()
+
+        member = Mock(id=111, name="Player", bot=False)
+        payload = make_raw_payload(emoji=EMOJI["THUMBS_UP"], member=member)
+
+        await handler.on_raw_reaction_add(payload)
+
+        ctx.add_soloq_user.assert_called_once_with(member)
+        message.edit.assert_awaited_once_with(content="updated")
+        handler.bot.update_status_with_queue_count.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.party_status_message', return_value="updated")
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_raw_remove_thumbs_up_removes_soloq(
+        self, mock_context_manager, mock_status, handler
+    ):
+        """Removing 👍 removes the user from solo queue (resolved without member)."""
+        ctx = Mock()
+        ctx.current_st_message_id = 555
+        ctx.is_soloq_user.return_value = True
+        mock_context_manager.get_context.return_value = ctx
+
+        message = Mock()
+        message.edit = AsyncMock()
+        guild = Mock()
+        member = Mock(id=111, name="Player", bot=False)
+        guild.get_member = Mock(return_value=member)
+        channel = Mock()
+        channel.guild = guild
+        channel.fetch_message = AsyncMock(return_value=message)
+        handler.bot.get_channel = Mock(return_value=channel)
+        handler.bot.update_status_with_queue_count = AsyncMock()
+
+        # No member on remove payloads — handler must resolve via guild
+        payload = make_raw_payload(emoji=EMOJI["THUMBS_UP"], member=None)
+
+        await handler.on_raw_reaction_remove(payload)
+
+        guild.get_member.assert_called_once_with(111)
+        ctx.remove_soloq_user.assert_called_once_with(member)
+        ctx.remove_plus_ones.assert_called_once_with(member)
+        message.edit.assert_awaited_once_with(content="updated")
+
+
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.data_manager')
     async def test_track_session_participation(self, mock_data_manager, handler):
@@ -343,6 +438,83 @@ class TestVoiceStateUpdate:
 
         handler.bot.get_channel.assert_not_called()
         handler.bot.update_status_with_queue_count.assert_not_called()
+
+
+class TestRestorePartyState:
+    """Tests for rebuilding party state from reactions after a restart."""
+
+    def _bot(self):
+        bot = Mock()
+        bot.user = Mock(id=999999999)
+        return bot
+
+    def _reaction(self, emoji, users):
+        reaction = Mock()
+        reaction.emoji = emoji
+        reaction.users = Mock(return_value=_AsyncIter(users))
+        return reaction
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.database_manager')
+    async def test_restore_rebuilds_soloq_and_relinks_session(self, mock_db):
+        from context_manager import ShootyContext
+
+        bot = self._bot()
+        mock_db.get_all_channel_settings.return_value = [
+            {"channel_id": 555, "current_st_message_id": 777}
+        ]
+        mock_db.get_open_session_for_channel.return_value = {"session_id": "sess-1"}
+
+        player = Mock(id=111, name="Player", bot=False)
+        bot_user = Mock(id=999999999, name="Bot", bot=True)
+
+        message = Mock()
+        message.author = bot.user
+        message.channel = Mock(guild=None)
+        message.reactions = [self._reaction(EMOJI["THUMBS_UP"], [player, bot_user])]
+
+        channel = Mock()
+        channel.fetch_message = AsyncMock(return_value=message)
+        bot.get_channel = Mock(return_value=channel)
+
+        real_ctx = ShootyContext(555)
+        with patch('handlers.reaction_handler.context_manager') as mock_cm:
+            mock_cm.get_context.return_value = real_ctx
+            restored = await restore_party_state_from_reactions(bot)
+
+        assert restored == 1
+        assert player in real_ctx.bot_soloq_user_set
+        assert bot_user not in real_ctx.bot_soloq_user_set  # bots excluded
+        assert real_ctx.current_st_message_id == 777
+        assert real_ctx.current_session_id == "sess-1"
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.database_manager')
+    async def test_restore_skips_channels_without_message(self, mock_db):
+        bot = self._bot()
+        mock_db.get_all_channel_settings.return_value = [
+            {"channel_id": 555, "current_st_message_id": None}
+        ]
+        bot.get_channel = Mock()
+
+        restored = await restore_party_state_from_reactions(bot)
+        assert restored == 0
+        bot.get_channel.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.database_manager')
+    async def test_restore_skips_deleted_message(self, mock_db):
+        bot = self._bot()
+        mock_db.get_all_channel_settings.return_value = [
+            {"channel_id": 555, "current_st_message_id": 777}
+        ]
+        channel = Mock()
+        channel.fetch_message = AsyncMock(side_effect=discord.NotFound(Mock(), "gone"))
+        bot.get_channel = Mock(return_value=channel)
+
+        with patch('handlers.reaction_handler.context_manager'):
+            restored = await restore_party_state_from_reactions(bot)
+        assert restored == 0
 
 
 @pytest.mark.asyncio
