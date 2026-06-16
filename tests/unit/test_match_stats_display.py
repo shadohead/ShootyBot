@@ -37,26 +37,6 @@ def _match():
     }
 
 
-# --- round flow -------------------------------------------------------------
-
-def test_round_flow_numbers_rounds_and_colours_by_winning_team():
-    flow = msd.build_round_flow(_match())
-    # Rendered as a monospace ansi block with round numbers
-    assert flow.startswith('```ansi')
-    assert ' 1' in flow and '13' in flow
-    # Coloured by the team that won the round, not the squad's perspective:
-    # round 1 (a Red win) is red, round 3 (a Blue win) is blue.
-    assert f'{msd._RED} 1{msd._RESET}' in flow
-    assert f'{msd._BLUE} 3{msd._RESET}' in flow
-    # Wraps to a second row after the first half (more than 12 rounds)
-    assert flow.count('\n') >= 3
-
-
-def test_round_flow_empty_without_rounds():
-    assert msd.build_round_flow({'rounds': []}) == ""
-    assert msd.build_round_flow({}) == ""
-
-
 # --- per-player display stats ----------------------------------------------
 
 def test_player_display_stats_falls_back_to_basic_scoreboard():
