@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 from typing import Optional, Union
 import discord
 from discord.ext import commands
@@ -11,6 +12,13 @@ from config import EMOJI, MESSAGES
 # Emojis that join the party and therefore define membership when we rebuild
 # state from a message's reactions after a restart.
 _PARTY_EMOJIS = {EMOJI["THUMBS_UP"], EMOJI["FULL_STACK"], EMOJI["READY"]}
+
+# Only rebuild state from a *recent* session message on startup. A channel's
+# saved current_st_message_id can be days/weeks old (the DB keeps many sessions
+# that were never explicitly ended); reviving those would resurrect long-dead
+# parties and — because they'd report as "active" forever — permanently wedge
+# the auto-update session guard. 12h comfortably covers a real gaming night.
+RESTORE_MAX_AGE_HOURS = 12
 
 
 async def add_react_options(message: discord.Message) -> None:
@@ -38,6 +46,16 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
         message_id = settings.get("current_st_message_id")
         channel_id = settings.get("channel_id")
         if not message_id or not channel_id:
+            continue
+
+        # Skip stale sessions (snowflake carries the message's creation time),
+        # so we don't revive long-dead parties or wedge the update guard.
+        age = discord.utils.utcnow() - discord.utils.snowflake_time(message_id)
+        if age > timedelta(hours=RESTORE_MAX_AGE_HOURS):
+            logging.info(
+                f"Restore: session message in channel {channel_id} is too old "
+                f"({age}) — skipping"
+            )
             continue
 
         channel = bot.get_channel(channel_id)
