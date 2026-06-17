@@ -129,3 +129,51 @@ async def test_swing_round_highlights(discord_member_factory):
 
     assert 'ROBBERY' in highlights
     assert 'ROBBED' in highlights
+
+
+@pytest.mark.asyncio
+async def test_unlinked_teammates_eligible_for_highlights(discord_member_factory):
+    """Highlights should cover every teammate on the stack's team, including
+    unlinked randoms (by their in-game name#tag), not just shootylink-ed
+    members."""
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+
+    match_data = {
+        'metadata': {'rounds_played': 24},
+        'rounds': [],
+        'players': {
+            'all_players': [
+                # Linked member - modest game
+                {'puuid': 'p1', 'name': 'Linked', 'tag': 'NA1', 'team': 'Red',
+                 'stats': {'kills': 10, 'deaths': 14, 'assists': 4,
+                           'headshots': 5, 'bodyshots': 20, 'legshots': 2, 'score': 4000},
+                 'damage_made': 1800, 'damage_received': 3000, 'character': 'Sage'},
+                # Unlinked teammate - the actual top fragger / demon game
+                {'puuid': 'p2', 'name': 'RandoCarry', 'tag': 'EU1', 'team': 'Red',
+                 'stats': {'kills': 27, 'deaths': 9, 'assists': 6,
+                           'headshots': 30, 'bodyshots': 20, 'legshots': 1, 'score': 8000},
+                 'damage_made': 4200, 'damage_received': 2000, 'character': 'Jett'},
+                # Enemy - should never be a highlight even with a huge game
+                {'puuid': 'enemy1', 'name': 'Villain', 'tag': 'KR1', 'team': 'Blue',
+                 'stats': {'kills': 35, 'deaths': 5, 'assists': 2,
+                           'headshots': 40, 'bodyshots': 10, 'legshots': 0, 'score': 9000},
+                 'damage_made': 5000, 'damage_received': 1500, 'character': 'Reyna'},
+            ]
+        },
+    }
+
+    member = discord_member_factory(user_id=1, name='Linked')
+    discord_members = [
+        {'member': member, 'account': {'puuid': 'p1'},
+         'player_data': match_data['players']['all_players'][0]},
+    ]
+
+    stats = tracker._calculate_fun_match_stats(match_data, discord_members)
+    highlights = '\n'.join(stats['highlights'])
+
+    # The unlinked teammate's standout game produces highlights under their tag
+    assert 'RandoCarry#EU1' in highlights
+    assert 'DEMON MODE' in highlights  # 27 kills
+    # The enemy is never credited despite the best scoreboard
+    assert 'Villain' not in highlights

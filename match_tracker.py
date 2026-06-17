@@ -13,6 +13,20 @@ from match_stats_display import (
     recap_view,
 )
 
+
+class _RecapPlayer:
+    """Lightweight stand-in for a Discord member so unlinked teammates can be
+    eligible for highlights using their in-game name. It only needs to quack
+    like a discord.Member for the highlight pipeline: a ``display_name`` and a
+    stable, hashable ``id`` (we use the player's puuid)."""
+
+    __slots__ = ('display_name', 'id')
+
+    def __init__(self, display_name: str, player_id: Any) -> None:
+        self.display_name = display_name
+        self.id = player_id
+
+
 class MatchTracker:
     """Tracks Discord members' Valorant matches by polling for newly completed games in active shooty stacks"""
     
@@ -807,18 +821,64 @@ class MatchTracker:
         if not discord_members:
             return stats
 
+        # Highlights cover the whole team, not just shootylink-ed members: every
+        # teammate on the stack's side (including unlinked randoms) becomes a
+        # highlight candidate, anchored by at least one linked member.
+        team_members = self._expand_team_members(match_data, discord_members)
+
         candidates: List[Dict[str, Any]] = []
-        player_stats, mk_counts = self._collect_player_stats(match_data, discord_members)
+        player_stats, mk_counts = self._collect_player_stats(match_data, team_members)
 
         if len(player_stats) >= 2:
             self._add_scoreboard_candidates(candidates, player_stats, mk_counts)
             self._add_team_fact_candidates(candidates, player_stats, match_data)
 
-        self._add_advanced_candidates(candidates, match_data, discord_members)
-        self._add_match_flow_candidates(candidates, match_data, discord_members)
+        self._add_advanced_candidates(candidates, match_data, team_members)
+        self._add_match_flow_candidates(candidates, match_data, team_members)
 
         stats['highlights'] = self._select_highlights(candidates)
         return stats
+
+    @staticmethod
+    def _expand_team_members(match_data: dict, discord_members: List[Dict]) -> List[Dict]:
+        """Return ``discord_members`` plus lightweight stand-ins for the unlinked
+        teammates on the stack's team, so every teammate is eligible for
+        highlights (not just shootylink-ed members).
+
+        The stack's team is inferred from the linked members. If their team
+        can't be determined, the original list is returned unchanged."""
+        team_members = list(discord_members)
+
+        team_color = None
+        tracked_puuids = set()
+        for dm in discord_members:
+            puuid = dm.get('account', {}).get('puuid') or dm.get('player_data', {}).get('puuid')
+            if puuid:
+                tracked_puuids.add(puuid)
+            if not team_color:
+                tc = (dm.get('player_data') or {}).get('team', '').lower()
+                if tc:
+                    team_color = tc
+
+        if not team_color:
+            return team_members
+
+        for player in match_data.get('players', {}).get('all_players', []):
+            if (player.get('team') or '').lower() != team_color:
+                continue
+            puuid = player.get('puuid')
+            if puuid and puuid in tracked_puuids:
+                continue
+            name = player.get('name', 'Unknown')
+            tag = player.get('tag', '')
+            display_name = f"{name}#{tag}" if tag else name
+            team_members.append({
+                'member': _RecapPlayer(display_name, puuid or display_name),
+                'account': {'puuid': puuid},
+                'player_data': player,
+            })
+
+        return team_members
 
     @staticmethod
     def _add_candidate(candidates: List[Dict[str, Any]], score: float, category: str,
