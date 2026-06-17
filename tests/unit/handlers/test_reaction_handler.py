@@ -454,14 +454,19 @@ class TestRestorePartyState:
         reaction.users = Mock(return_value=_AsyncIter(users))
         return reaction
 
+    def _recent_msg_id(self):
+        """A snowflake whose embedded timestamp is 'now' (passes recency gate)."""
+        return discord.utils.time_snowflake(discord.utils.utcnow())
+
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.database_manager')
     async def test_restore_rebuilds_soloq_and_relinks_session(self, mock_db):
         from context_manager import ShootyContext
 
         bot = self._bot()
+        msg_id = self._recent_msg_id()
         mock_db.get_all_channel_settings.return_value = [
-            {"channel_id": 555, "current_st_message_id": 777}
+            {"channel_id": 555, "current_st_message_id": msg_id}
         ]
         mock_db.get_open_session_for_channel.return_value = {"session_id": "sess-1"}
 
@@ -485,8 +490,23 @@ class TestRestorePartyState:
         assert restored == 1
         assert player in real_ctx.bot_soloq_user_set
         assert bot_user not in real_ctx.bot_soloq_user_set  # bots excluded
-        assert real_ctx.current_st_message_id == 777
+        assert real_ctx.current_st_message_id == msg_id
         assert real_ctx.current_session_id == "sess-1"
+
+    @pytest.mark.asyncio
+    @patch('handlers.reaction_handler.database_manager')
+    async def test_restore_skips_stale_message(self, mock_db):
+        """A weeks-old session message must NOT be revived (would wedge updates)."""
+        bot = self._bot()
+        # Snowflake 777 -> ~2015, far older than RESTORE_MAX_AGE_HOURS
+        mock_db.get_all_channel_settings.return_value = [
+            {"channel_id": 555, "current_st_message_id": 777}
+        ]
+        bot.get_channel = Mock()
+
+        restored = await restore_party_state_from_reactions(bot)
+        assert restored == 0
+        bot.get_channel.assert_not_called()  # skipped before any fetch
 
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.database_manager')
@@ -505,8 +525,9 @@ class TestRestorePartyState:
     @patch('handlers.reaction_handler.database_manager')
     async def test_restore_skips_deleted_message(self, mock_db):
         bot = self._bot()
+        msg_id = self._recent_msg_id()
         mock_db.get_all_channel_settings.return_value = [
-            {"channel_id": 555, "current_st_message_id": 777}
+            {"channel_id": 555, "current_st_message_id": msg_id}
         ]
         channel = Mock()
         channel.fetch_message = AsyncMock(side_effect=discord.NotFound(Mock(), "gone"))

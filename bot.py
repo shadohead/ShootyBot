@@ -41,18 +41,17 @@ class ShootyBot(commands.Bot):
         self.active_session_file = ".active_session"
 
     def count_active_sessions(self) -> int:
-        """Count channels with a session currently in progress.
+        """Count channels with players currently queued.
 
-        A session is "in progress" when it has a tracked session id or any
-        queued members. Used to decide whether an auto-update may restart now.
+        Used to decide whether an auto-update may restart now. We count a
+        channel only when it has queued members — a lingering ``current_session_id``
+        with nobody in the party (e.g. a session that was never explicitly
+        ended) is NOT something worth deferring an update for, and counting it
+        would wedge the update guard indefinitely.
         """
         active = 0
         for context in context_manager.contexts.values():
-            has_session = bool(getattr(context, "current_session_id", None))
-            has_members = bool(
-                context.bot_soloq_user_set or context.bot_fullstack_user_set
-            )
-            if has_session or has_members:
+            if context.bot_soloq_user_set or context.bot_fullstack_user_set:
                 active += 1
         return active
 

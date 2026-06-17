@@ -73,13 +73,14 @@ class TestCountActiveSessions:
         c.bot_fullstack_user_set = fullstack if fullstack is not None else set()
         return c
 
-    def test_counts_sessions_and_members(self):
+    def test_counts_only_channels_with_members(self):
         bot = ShootyBot()
         with patch('bot.context_manager') as mock_cm:
             mock_cm.contexts.values.return_value = [
                 self._ctx(),                       # idle -> not counted
-                self._ctx(session_id="s1"),        # active session id
-                self._ctx(soloq={Mock()}),         # has queued members
+                self._ctx(session_id="s1"),        # session id but NO members -> not counted
+                self._ctx(soloq={Mock()}),         # has queued members -> counted
+                self._ctx(fullstack={Mock()}),     # has queued members -> counted
             ]
             assert bot.count_active_sessions() == 2
 
