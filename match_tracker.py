@@ -740,19 +740,22 @@ class MatchTracker:
             key=lambda t: (t['kills'] + t['assists']) / max(t['deaths'], 1),
             reverse=True
         )
-        scoreboard = []
+        # Render as three inline fields so Discord lays them out as aligned
+        # columns (Player | K/D/A | KDA) without a code block — inline fields
+        # share one row and line up, avoiding the grey ``ansi`` table background.
+        names, kdas, ratios = [], [], []
         for i, t in enumerate(ranked):
             kda = (t['kills'] + t['assists']) / max(t['deaths'], 1)
             crown = "👑 " if i == 0 and len(ranked) > 1 else ""
-            scoreboard.append(
-                f"{crown}**{t['member'].display_name}** — {t['kills']}/{t['deaths']}/{t['assists']} "
-                f"({kda:.2f} KDA, {t['games']}G)"
-            )
-        embed.add_field(
-            name="🏅 Squad Scoreboard",
-            value="\n".join(scoreboard) or "No player data",
-            inline=False
-        )
+            names.append(f"{crown}**{t['member'].display_name}**")
+            kdas.append(f"{t['kills']}/{t['deaths']}/{t['assists']}")
+            ratios.append(f"{kda:.2f} · {t['games']}G")
+        if names:
+            embed.add_field(name="🏅 Squad Scoreboard", value="\n".join(names), inline=True)
+            embed.add_field(name="K / D / A", value="\n".join(kdas), inline=True)
+            embed.add_field(name="KDA · Games", value="\n".join(ratios), inline=True)
+        else:
+            embed.add_field(name="🏅 Squad Scoreboard", value="No player data", inline=False)
 
         if len(ranked) > 1:
             embed.add_field(
