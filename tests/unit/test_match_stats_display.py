@@ -51,6 +51,19 @@ def test_player_display_stats_falls_back_to_basic_scoreboard():
     assert s['acs'] == 250   # 5000 / 20
     assert s['adr'] == 150   # 3000 / 20
     assert s['kast'] == 0 and s['fk'] == 0
+    # No 'character' in the basic player_data → agent comes back empty.
+    assert s['agent'] == ''
+
+
+def test_player_display_stats_includes_agent():
+    """The agent (Henrik 'character') is surfaced so the recap can show it."""
+    match = {'metadata': {'rounds_played': 20}, 'rounds': [],
+             'players': {'all_players': []}}
+    pdata = {'character': 'Jett',
+             'stats': {'kills': 10, 'deaths': 5, 'assists': 3, 'score': 5000},
+             'damage_made': 3000}
+    s = msd.player_display_stats(match, pdata, puuid=None)
+    assert s['agent'] == 'Jett'
 
 
 # --- advanced scoreboard ----------------------------------------------------

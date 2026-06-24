@@ -65,6 +65,8 @@ def player_display_stats(match: Dict[str, Any], player_data: Dict[str, Any],
         hs = round(stats.get('headshots', 0) / shots * 100) if shots else 0
         kast = first_kills = first_deaths = multikills = 0
 
+    agent = player_data.get('character', '') or ''
+
     return {
         'kills': kills, 'deaths': deaths, 'assists': assists,
         'acs': round(score / rounds) if rounds else 0,
@@ -73,6 +75,7 @@ def player_display_stats(match: Dict[str, Any], player_data: Dict[str, Any],
         'kda': (kills + assists) / deaths if deaths else float(kills + assists),
         'hs': hs, 'kast': kast,
         'fk': first_kills, 'fd': first_deaths, 'mk': multikills,
+        'agent': agent,
     }
 
 
