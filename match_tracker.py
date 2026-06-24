@@ -427,9 +427,13 @@ class MatchTracker:
         member_list = []
         for display_name, s, rank_str, rankup_str in entries:
             kda = f"{s['kills']}/{s['deaths']}/{s['assists']}"
+            # Show the agent each player ran, omitting it when unknown so the
+            # line stays clean for untracked/sparse data.
+            agent = s.get('agent', '')
+            agent_str = f" ({agent})" if agent and agent.lower() != 'unknown' else ""
             # ACS/ADR live in the Advanced Stats popup — the per-player recap
             # line stays lean with just K/D/A and rank to cut the noise.
-            member_list.append(f"• **{display_name}**: {kda}{rank_str}{rankup_str}")
+            member_list.append(f"• **{display_name}**{agent_str}: {kda}{rank_str}{rankup_str}")
 
         # One-line squad roll-up above the per-player lines.
         if entries:
