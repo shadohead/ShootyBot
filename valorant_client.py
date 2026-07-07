@@ -441,6 +441,8 @@ class ValorantClient(BaseAPIClient):
                     'match_id': match_id,
                     'started_at': started,
                     'rr_change': entry.get('mmr_change_to_last_game'),
+                    # Post-game RR for this specific match (used for rank-up detection)
+                    'rr': entry.get('ranking_in_tier'),
                 })
             return normalized
         except Exception as e:

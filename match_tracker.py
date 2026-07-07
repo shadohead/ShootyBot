@@ -391,7 +391,9 @@ class MatchTracker:
         tracked_puuids = set()
 
         # Members who crossed up a full tier this game (shown inline)
-        ranked_up_ids = await self._get_ranked_up_member_ids(discord_members)
+        ranked_up_ids = await self._get_ranked_up_member_ids(
+            discord_members, match_id=match_id or None
+        )
 
         for dm in discord_members:
             member = dm['member']
@@ -571,12 +573,25 @@ class MatchTracker:
 
         return "🏆 GG", "\n".join(lines)
 
-    async def _get_ranked_up_member_ids(self, discord_members: List[Dict]) -> set:
+    @staticmethod
+    def _is_full_tier_promotion(rr: Optional[int], change: Optional[int]) -> bool:
+        """True when a positive RR gain crossed a sub-rank boundary this game."""
+        if rr is None or change is None or change <= 0:
+            return False
+        return (rr - change) < 0
+
+    async def _get_ranked_up_member_ids(
+        self, discord_members: List[Dict], match_id: Optional[str] = None
+    ) -> set:
         """Return the ids of squad members who crossed up a full tier this game.
 
-        A promotion is detected when the last game's RR gain pushed the player
-        past a tier boundary: their pre-game RR-in-tier
-        (``ranking_in_tier - mmr_change``) was below zero.
+        A promotion is detected when the game's RR gain pushed the player past a
+        tier boundary: their pre-game RR-in-tier (``rr - rr_change``) was below
+        zero.
+
+        Prefer the per-match mmr-history row for ``match_id`` (same source used
+        to detect the game) so we don't miss promotions from a stale cached MMR
+        snapshot. Fall back to a fresh MMR fetch when history is unavailable.
 
         Best-effort: silently skips members whose MMR can't be fetched (private
         profile, API down, no key), so the recap still renders without them.
@@ -589,25 +604,41 @@ class MatchTracker:
             if not username or not tag:
                 continue
 
-            try:
-                mmr = await valorant_client.get_mmr(username, tag, puuid=account.get('puuid'))
-            except Exception as e:
-                log_error(f"fetching rank for {username}#{tag}", e)
-                mmr = None
+            rr = None
+            change = None
+            puuid = account.get('puuid')
 
-            if not mmr:
-                continue
+            if match_id:
+                try:
+                    updates = await valorant_client.get_recent_competitive_updates(
+                        username, tag, puuid=puuid, force_refresh=True
+                    )
+                except Exception as e:
+                    log_error(f"fetching mmr-history for {username}#{tag}", e)
+                    updates = None
 
-            rr = mmr.get('rr')
-            change = mmr.get('rr_change')
-            # Genuine promotion: a positive RR change whose pre-game RR-in-tier
-            # was negative means a tier boundary was crossed this game.
-            if rr is None or change is None or change <= 0:
-                continue
-            if (rr - change) >= 0:
-                continue
+                if updates:
+                    for update in updates:
+                        if update.get('match_id') == match_id:
+                            rr = update.get('rr')
+                            change = update.get('rr_change')
+                            break
 
-            ranked_up.add(dm['member'].id)
+            if rr is None or change is None:
+                try:
+                    mmr = await valorant_client.get_mmr(
+                        username, tag, puuid=puuid, force_refresh=True
+                    )
+                except Exception as e:
+                    log_error(f"fetching rank for {username}#{tag}", e)
+                    mmr = None
+
+                if mmr:
+                    rr = mmr.get('rr')
+                    change = mmr.get('rr_change')
+
+            if self._is_full_tier_promotion(rr, change):
+                ranked_up.add(dm['member'].id)
 
         return ranked_up
 
