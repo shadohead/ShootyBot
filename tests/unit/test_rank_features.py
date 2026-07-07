@@ -169,6 +169,29 @@ async def test_match_embed_shows_inline_rank_up(discord_member_factory):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+async def test_ranked_up_detected_from_mmr_history_for_match(discord_member_factory):
+    """Use the per-match mmr-history row so promotions aren't missed by stale MMR cache."""
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+    member = discord_member_factory(user_id=1, name='Player1')
+    discord_members = [{'member': member,
+                        'account': {'puuid': 'p1', 'username': 'Player1', 'tag': 'NA1'}}]
+
+    fake_client = MagicMock()
+    fake_client.get_recent_competitive_updates = AsyncMock(return_value=[
+        {'match_id': 'game-123', 'rr': 5, 'rr_change': 18, 'started_at': None},
+    ])
+    fake_client.get_mmr = AsyncMock()
+    with patch('match_tracker.valorant_client', fake_client):
+        result = await tracker._get_ranked_up_member_ids(
+            discord_members, match_id='game-123'
+        )
+
+    assert result == {1}
+    fake_client.get_mmr.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_ranked_up_detected_on_promotion(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)

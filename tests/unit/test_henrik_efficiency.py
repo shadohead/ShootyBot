@@ -232,8 +232,10 @@ class TestLightweightEndpoints:
     @pytest.mark.asyncio
     async def test_recent_competitive_updates_normalization(self, client):
         payload = {'data': [
-            {'match_id': 'm-new', 'mmr_change_to_last_game': 18, 'date_raw': 1700009999},
-            {'match_id': 'm-old', 'mmr_change_to_last_game': -12, 'date_raw': 1700000000},
+            {'match_id': 'm-new', 'mmr_change_to_last_game': 18, 'ranking_in_tier': 5,
+             'date_raw': 1700009999},
+            {'match_id': 'm-old', 'mmr_change_to_last_game': -12, 'ranking_in_tier': 40,
+             'date_raw': 1700000000},
         ]}
         client.get = AsyncMock(return_value=APIResponse(data=payload, status_code=200))
 
@@ -243,6 +245,7 @@ class TestLightweightEndpoints:
         assert endpoint == 'v1/by-puuid/mmr-history/na/abc'
         assert result[0]['match_id'] == 'm-new'
         assert result[0]['rr_change'] == 18
+        assert result[0]['rr'] == 5
         assert result[0]['started_at'] is not None
 
     @pytest.mark.asyncio
