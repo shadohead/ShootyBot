@@ -46,7 +46,7 @@ class MatchTracker:
         ('bucky', ('bucky',), 3, 56,
          "🤠 **BUCKEROO**: {name} bought a Bucky on purpose and got {kills} kills"),
         ('operator', ('operator',), 5, 56,
-         "🎣 **OP CRUTCH**: {name} leaned on the Operator for {kills} kills"),
+         "🩼 **OP CRUTCH**: {name} leaned on the Operator for {kills} kills"),
         ('shorty', ('shorty',), 2, 54,
          "🩳 **TWO PUMP CHUMP**: {name} got {kills} Shorty kills"),
         ('bulldog', ('bulldog',), 4, 54,
