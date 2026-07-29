@@ -245,6 +245,117 @@ class TestAggregateExtras:
         assert stats['total_matches'] == 2
 
 
+def build_weapon_match(weapon_kills):
+    """Build a minimal match giving each puuid the requested per-weapon kill
+    counts, one kill per round so nothing accidentally reads as a multikill.
+
+    weapon_kills: {puuid: {weapon_name: kills}}
+    """
+    rounds = []
+    for puuid, weapons in weapon_kills.items():
+        for weapon, count in weapons.items():
+            for _ in range(count):
+                rounds.append({
+                    'winning_team': 'Red',
+                    'plant_events': {},
+                    'defuse_events': {},
+                    'player_stats': [{
+                        'player_puuid': puuid,
+                        'kills': 1,
+                        'economy': {},
+                        'kill_events': [{
+                            'victim_puuid': 'ENEMY',
+                            'kill_time_in_round': 5000,
+                            'damage_weapon_name': weapon,
+                            'assistants': [],
+                        }],
+                    }],
+                })
+    return {
+        'metadata': {'matchid': 'weapon-match', 'map': 'Ascent', 'mode': 'Competitive',
+                     'mode_id': 'competitive', 'rounds_played': len(rounds),
+                     'game_start': 1700000000, 'game_length': 1800},
+        'players': {'all_players': [make_player(p, 'Red') for p in weapon_kills]},
+        'teams': {'red': {'has_won': True, 'rounds_won': len(rounds)},
+                  'blue': {'has_won': False, 'rounds_won': 0}},
+        'rounds': rounds,
+    }
+
+
+def weapon_candidates(discord_member_factory, weapon_kills, names=None):
+    """Run the advanced candidate pass over a weapon-only match and return the
+    candidate texts (not the selected highlights, so the per-member cap and
+    unrelated highlights can't hide what we're asserting on)."""
+    tracker = MatchTracker(MagicMock(spec=discord.Client))
+    match_data = build_weapon_match(weapon_kills)
+    names = names or {}
+    discord_members = []
+    for idx, (puuid, player) in enumerate(
+            zip(weapon_kills, match_data['players']['all_players']), start=1):
+        member = discord_member_factory(user_id=idx, name=names.get(puuid, f'Player{idx}'))
+        discord_members.append({'member': member, 'account': {'puuid': puuid},
+                                'player_data': player})
+
+    candidates = []
+    tracker._add_advanced_candidates(candidates, match_data, discord_members)
+    return [c['text'] for c in candidates]
+
+
+class TestWeaponHighlights:
+    def test_table_is_well_formed(self):
+        categories = [entry[0] for entry in MatchTracker.WEAPON_HIGHLIGHTS]
+        assert len(categories) == len(set(categories)), "duplicate weapon category"
+        for category, weapons, min_kills, score, template in MatchTracker.WEAPON_HIGHLIGHTS:
+            assert weapons and all(w == w.lower() for w in weapons), \
+                f"{category}: weapon names must be lowercased for the tally lookup"
+            assert min_kills >= 1
+            # Weapon jokes must never outrank the rare plays (ace/ninja/knife)
+            assert 20 <= score <= 70, f"{category}: score {score} is out of band"
+            rendered = template.format(name='Someone', kills=min_kills)
+            assert 'Someone' in rendered and str(min_kills) in rendered
+
+    def test_stinger_kills_produce_a_highlight(self, discord_member_factory):
+        texts = weapon_candidates(discord_member_factory, {'A1': {'Stinger': 4}},
+                                  names={'A1': 'Alpha'})
+        assert any('STINGER GENIUS' in t and 'Alpha' in t and '4' in t for t in texts)
+
+    def test_stinger_below_threshold_is_silent(self, discord_member_factory):
+        texts = weapon_candidates(discord_member_factory, {'A1': {'Stinger': 3}})
+        assert not any('STINGER GENIUS' in t for t in texts)
+
+    def test_only_the_squad_leader_gets_the_callout(self, discord_member_factory):
+        texts = weapon_candidates(
+            discord_member_factory,
+            {'A1': {'Stinger': 4}, 'A2': {'Stinger': 6}},
+            names={'A1': 'Alpha', 'A2': 'Bravo'})
+        stinger = [t for t in texts if 'STINGER GENIUS' in t]
+        assert len(stinger) == 1
+        assert 'Bravo' in stinger[0] and '6' in stinger[0]
+
+    def test_lmg_entry_sums_odin_and_ares(self, discord_member_factory):
+        texts = weapon_candidates(discord_member_factory, {'A1': {'Odin': 2, 'Ares': 2}})
+        assert any('PRECISE GUNPLAY' in t and '4' in t for t in texts)
+
+    def test_weapon_names_are_matched_case_insensitively(self, discord_member_factory):
+        # Henrik has shipped inconsistent casing before; the tally lowercases
+        texts = weapon_candidates(discord_member_factory, {'A1': {'sTiNgEr': 4}})
+        assert any('STINGER GENIUS' in t for t in texts)
+
+    def test_rifles_do_not_produce_weapon_highlights(self, discord_member_factory):
+        texts = weapon_candidates(discord_member_factory,
+                                  {'A1': {'Vandal': 15, 'Phantom': 10}})
+        titles = [entry[4].split('**')[1] for entry in MatchTracker.WEAPON_HIGHLIGHTS]
+        assert not any(title in t for t in texts for title in titles)
+
+    def test_every_weapon_in_the_table_can_fire(self, discord_member_factory):
+        """Guards against a typo in a weapon name silently disabling an entry."""
+        for category, weapons, min_kills, score, template in MatchTracker.WEAPON_HIGHLIGHTS:
+            title = template.split('**')[1]
+            texts = weapon_candidates(discord_member_factory,
+                                      {'A1': {weapons[0]: min_kills}})
+            assert any(title in t for t in texts), f"{category} never fires"
+
+
 class TestHighlightSelection:
     def test_picks_highest_scores_with_category_dedupe(self):
         candidates = []
@@ -294,7 +405,7 @@ async def test_advanced_highlights_in_recap(discord_member_factory):
     assert 'Alpha' in joined
     # Ninja defuse (94) and knife kill (92) outrank everything else here
     assert 'NINJA DEFUSE' in highlights[0]
-    assert 'HUMILIATION' in highlights[1]
+    assert 'EZIO AUDITORE' in highlights[1]
 
 
 @pytest.mark.asyncio
