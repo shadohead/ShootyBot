@@ -24,7 +24,50 @@ class MatchTracker:
     HEADSHOT_THRESHOLD_PERCENT = 30
     HIGH_DAMAGE_THRESHOLD = 3000
     STACK_INACTIVITY_HOURS = 1.5  # Auto-end stacks after 1.5 hours of no games
-    
+
+    # Weapon-personality recap highlights, as
+    # (category, weapon names, min kills, interest score, message template).
+    # Weapon names are lowercased Henrik `damage_weapon_name` values; grouping
+    # several under one entry sums them (the LMGs share a highlight). Only the
+    # squad's leader for each weapon gets the callout, so one gun can't fill the
+    # whole recap. Scores stay in the filler-to-mid band - the joke is the gun
+    # choice, so these should never outrank an ace or a ninja defuse.
+    # Vandal/Phantom are deliberately absent: nearly everyone gets rifle kills
+    # every match, so a rifle highlight either never fires or never stops.
+    WEAPON_HIGHLIGHTS = (
+        ('sheriff', ('sheriff',), 3, 60,
+         "🇨🇳 **CHINESE VANDAL**: {name} one-tapped {kills} people with the Sheriff"),
+        ('judge', ('judge',), 4, 58,
+         "⚖️ **JUDGE DEMON**: {name} held W into {kills} Judge kills"),
+        ('lmg', ('odin', 'ares'), 4, 58,
+         "🎯 **PRECISE GUNPLAY**: {name} carefully placed {kills} LMG kills"),
+        ('classic', ('classic',), 3, 56,
+         "🇪🇸 **EL CLASSICO**: {name} got {kills} kills with the free pistol"),
+        ('bucky', ('bucky',), 3, 56,
+         "🤠 **BUCKEROO**: {name} bought a Bucky on purpose and got {kills} kills"),
+        ('operator', ('operator',), 5, 56,
+         "🩼 **OP CRUTCH**: {name} leaned on the Operator for {kills} kills"),
+        ('shorty', ('shorty',), 2, 54,
+         "🩳 **TWO PUMP CHUMP**: {name} got {kills} Shorty kills"),
+        ('bulldog', ('bulldog',), 4, 54,
+         "🍜 **BULDAK ENJOYER**: {name} still believes in the Bulldog ({kills} kills)"),
+        ('stinger', ('stinger',), 4, 52,
+         "🐝 **STINGER GENIUS**: {name} out-thought the lobby for {kills} Stinger kills"),
+        ('frenzy', ('frenzy',), 3, 50,
+         "🎰 **KILLING FRENZY**: {name} sprayed down {kills} with the Frenzy"),
+        ('guardian', ('guardian',), 5, 50,
+         "🟢 **HALO 5**: {name} clicked {kills} heads with the Guardian"),
+        ('outlaw', ('outlaw',), 3, 50,
+         "🐎 **RENEGADE**: {name} got {kills} kills with the Outlaw"),
+        ('marshal', ('marshal',), 3, 48,
+         "🔨 **MARSHAL LAW**: {name} laid down the law {kills} times"),
+        ('ghost', ('ghost',), 4, 44,
+         "👻 **GHOST IN THE SHELL**: {name} got {kills} Ghost kills"),
+        ('spectre', ('spectre',), 6, 42,
+         "🎮 **COD PLAYER**: {name} ran and gunned {kills} Spectre kills"),
+    )
+
+
     def __init__(self, bot: discord.Client) -> None:
         self.bot = bot
         # State is now persisted to database - these are kept as memory caches for performance
@@ -1372,32 +1415,32 @@ class MatchTracker:
                 f"🥄 **BUDGET WARRIOR**: {eco_hero[0].display_name} won {eco_wins} rounds on eco buys",
                 eco_hero[0].id)
 
-        # Weapon personality
+        # Weapon personality. Knife kills stay per-member because they're rare
+        # enough that everyone who lands one has earned the callout; every other
+        # weapon is table-driven off WEAPON_HIGHLIGHTS and awarded to the squad's
+        # leader for that gun.
+        weapon_tallies = []
         for member, row in rows:
             weapon_kills = {str(k).lower(): v for k, v in (row.get('weapon_kills') or {}).items()}
+            weapon_tallies.append((member, weapon_kills))
+
             knife_kills = sum(v for k, v in weapon_kills.items() if 'melee' in k or 'knife' in k)
             if knife_kills:
                 plural = 's' if knife_kills > 1 else ''
                 # Knife kills are rare and always worth showing - score them up
                 # there with aces/ninja defuses, and reward stacking them.
                 add(candidates, min(96, 90 + 2 * knife_kills), f'knife:{member.id}',
-                    f"🔪 **HUMILIATION**: {member.display_name} got {knife_kills} knife kill{plural}!",
+                    f"🗡️ **EZIO AUDITORE**: {member.display_name} got {knife_kills} knife kill{plural}!",
                     member.id)
-            sheriff_kills = weapon_kills.get('sheriff', 0)
-            if sheriff_kills >= 3:
-                add(candidates, 60, 'sheriff',
-                    f"🤠 **SHERIFF SHOWDOWN**: {member.display_name} landed {sheriff_kills} Sheriff kills",
-                    member.id)
-            odin_kills = weapon_kills.get('odin', 0) + weapon_kills.get('ares', 0)
-            if odin_kills >= 4:
-                add(candidates, 58, 'odin',
-                    f"🚜 **MACHINE GUN MAIN**: {member.display_name} mowed down {odin_kills} with the LMG",
-                    member.id)
-            operator_kills = weapon_kills.get('operator', 0)
-            if operator_kills >= 5:
-                add(candidates, 56, 'operator',
-                    f"🔭 **OPERATOR MENACE**: {member.display_name} got {operator_kills} Operator kills",
-                    member.id)
+
+        for category, weapons, min_kills, score, template in self.WEAPON_HIGHLIGHTS:
+            leader, kills = max(
+                ((member, sum(wk.get(w, 0) for w in weapons)) for member, wk in weapon_tallies),
+                key=lambda mk: mk[1])
+            if kills >= min_kills:
+                add(candidates, score, category,
+                    template.format(name=leader.display_name, kills=kills),
+                    leader.id)
 
         # Spike plays
         for member, row in rows:

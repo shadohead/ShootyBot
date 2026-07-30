@@ -420,6 +420,15 @@ ShootyBot uses a tiered approach to keep Henrik API usage cheap and fast:
   one per category, max 2 per member). To add a highlight, add a candidate with an
   interest score (rare plays like aces/ninja defuses ~90+, fillers ~20-40) — never
   append directly to the highlights list.
+- **Weapon highlights** are table-driven off `MatchTracker.WEAPON_HIGHLIGHTS`
+  (`category, weapon names, min kills, score, template`) — add a row there rather
+  than writing new branching. Weapon names must be **lowercased** Henrik
+  `damage_weapon_name` values (the tally lowercases before lookup); listing several
+  in one row sums them (Odin+Ares share the LMG highlight). Each entry goes to the
+  squad's *leader* for that weapon, so one gun can't fill the recap. Knife/melee is
+  the exception — it's per-member and scored ~90+ alongside the rare plays. Vandal
+  and Phantom are deliberately excluded: everyone gets rifle kills every match, so
+  the "look at that gun choice" joke doesn't land.
 
 ### Configuration:
 - `HENRIK_API_KEY` (required by Henrik), `HENRIK_REQUESTS_PER_MINUTE` (Basic=30, Advanced=90),
