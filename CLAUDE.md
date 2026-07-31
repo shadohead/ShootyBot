@@ -400,9 +400,16 @@ ShootyBot uses a tiered approach to keep Henrik API usage cheap and fast:
   (one bulk matchlist call if >=3 missing, else per-match), and aggregates rows.
   `calculate_player_stats()` is the pure in-memory equivalent (no API/DB) used by legacy
   paths and tests.
-- **Match tracker polling**: polls `get_recent_competitive_updates()` (few KB) per minute;
-  full match details are fetched at most once per new match id, then stat rows are recorded
-  for every linked player in the match (`record_match_stats_for_players`).
+- **Match tracker polling**: polls `get_recent_competitive_updates()` (few KB) for all
+  stack members **concurrently** with `force_refresh=True` (the poll is the freshness
+  source; the 60s response cache would only delay detection). The interval is adaptive:
+  60s baseline, 30s while any queued member's Discord presence shows Valorant open
+  (presence is gateway data — free). Full match details are fetched at most once per new
+  match id, then stat rows are recorded for every linked player in the match
+  (`record_match_stats_for_players`). The tracker iterates only in-memory contexts with
+  queued members (never `get_context()` per text channel), and persists its state only
+  when it changed (`_state_dirty`) — an idle cycle does zero SQLite writes, with the
+  30-day state cleanup running at most daily.
 - **4xx responses are returned, not retried** - only 429 (after waiting) and 5xx/network
   errors go through retry with backoff. Henrik's `x-ratelimit-remaining`/`x-ratelimit-reset`
   headers are honored before sending requests.
