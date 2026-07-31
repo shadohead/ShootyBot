@@ -410,6 +410,13 @@ ShootyBot uses a tiered approach to keep Henrik API usage cheap and fast:
   queued members (never `get_context()` per text channel), and persists its state only
   when it changed (`_state_dirty`) — an idle cycle does zero SQLite writes, with the
   30-day state cleanup running at most daily.
+- **Sessions end themselves — never rely on `/stend`** (it's almost never used in
+  practice). Once a stack has played and presence has shown members in-game, the
+  tracker auto-ends the session ~20 min after everyone closes Valorant
+  (`STACK_OFFLINE_END_MINUTES`); the 1.5h no-games timer is the fallback for
+  hidden/broken presence (the presence path only arms after presence has actually been
+  seen working for that stack). Both paths post the full session recap to the stack's
+  channel — auto-end does everything `/stend` does, just without the command.
 - **4xx responses are returned, not retried** - only 429 (after waiting) and 5xx/network
   errors go through retry with backoff. Henrik's `x-ratelimit-remaining`/`x-ratelimit-reset`
   headers are honored before sending requests.

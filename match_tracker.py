@@ -29,7 +29,13 @@ class MatchTracker:
     LEG_SHOT_THRESHOLD_PERCENT = 15
     HEADSHOT_THRESHOLD_PERCENT = 30
     HIGH_DAMAGE_THRESHOLD = 3000
-    STACK_INACTIVITY_HOURS = 1.5  # Auto-end stacks after 1.5 hours of no games
+    STACK_INACTIVITY_HOURS = 1.5  # Fallback: auto-end stacks after 1.5 hours of no games
+    # Preferred auto-end: once a stack has played and presence has shown members
+    # in-game, end the session this many minutes after everyone closed Valorant.
+    # Much faster than the 1.5h timer, and self-validating: it only arms after
+    # presence has actually been seen working for this stack, so broken/hidden
+    # presence can never end a session early — it just falls back to the timer.
+    STACK_OFFLINE_END_MINUTES = 20
 
     # Weapon-personality recap highlights, as
     # (category, weapon names, min kills, interest score, message template).
@@ -81,6 +87,10 @@ class MatchTracker:
         self.recent_matches: Dict[int, Dict[str, Dict[str, Any]]] = {}   # {server_id: {match_id: {'timestamp': datetime, 'members': []}}}
         self.stack_last_activity: Dict[int, datetime] = {}  # {channel_id: last_match_timestamp}
         self.stack_has_played: Dict[int, bool] = {}  # {channel_id: has_had_games}
+        # Presence heuristics for ending sessions without /stend (memory-only;
+        # a restart just falls back to the inactivity timer, which is safe)
+        self.stack_seen_playing: Dict[int, bool] = {}  # {channel_id: presence ever showed a member in-game}
+        self.stack_offline_since: Dict[int, datetime] = {}  # {channel_id: when everyone stopped playing}
         self.check_interval: int = self.CHECK_INTERVAL_SECONDS
         self.running: bool = False
         self._state_loaded: bool = False
@@ -1715,13 +1725,22 @@ class MatchTracker:
                 logging.info(f"Updated activity for stack in channel {channel.id} - {len(stack_members_in_match)} members played")
     
     async def _check_inactive_stacks(self) -> None:
-        """Check for stacks that have been inactive and auto-end them.
+        """Auto-end stacks whose session is over, without waiting for /stend.
+
+        Two triggers, both of which post the session recap:
+
+        1. Presence-based (fast path): once the stack has played at least one
+           game and presence has shown members in-game, the session ends
+           STACK_OFFLINE_END_MINUTES after every member closed Valorant.
+        2. Inactivity timer (fallback): no detected games for
+           STACK_INACTIVITY_HOURS — covers members with hidden/broken presence.
 
         Walks only the contexts already in memory instead of every text channel
         in every guild — a channel with a live stack always has a context.
         """
         current_time = datetime.now(timezone.utc)
         inactivity_cutoff = timedelta(hours=self.STACK_INACTIVITY_HOURS)
+        offline_cutoff = timedelta(minutes=self.STACK_OFFLINE_END_MINUTES)
 
         for channel_id, context in list(context_manager.contexts.items()):
             try:
@@ -1734,25 +1753,63 @@ class MatchTracker:
                         self._state_dirty = True
                     if self.stack_has_played.pop(channel_id, None) is not None:
                         self._state_dirty = True
+                    self.stack_seen_playing.pop(channel_id, None)
+                    self.stack_offline_since.pop(channel_id, None)
                     continue
 
                 # Only check stacks that have had gaming activity
                 if not self.stack_has_played.get(channel_id, False):
                     continue
 
-                # Check if stack has been inactive
+                # Presence-based fast path: track when everyone stopped playing
+                anyone_playing = any(
+                    valorant_client.is_playing_valorant(user)
+                    for user in all_stack_users
+                    if not getattr(user, 'bot', False)
+                )
+                if anyone_playing:
+                    self.stack_seen_playing[channel_id] = True
+                    self.stack_offline_since.pop(channel_id, None)
+                elif self.stack_seen_playing.get(channel_id, False):
+                    offline_since = self.stack_offline_since.setdefault(channel_id, current_time)
+                    if (current_time - offline_since) >= offline_cutoff:
+                        channel = self.bot.get_channel(channel_id)
+                        if channel is not None:
+                            await self._auto_end_inactive_stack(
+                                channel, context, current_time - offline_since,
+                                reason="everyone offline")
+                            continue
+
+                # Fallback: no detected games for a long time
                 last_activity = self.stack_last_activity.get(channel_id)
                 if last_activity and (current_time - last_activity) > inactivity_cutoff:
                     channel = self.bot.get_channel(channel_id)
                     if channel is not None:
-                        await self._auto_end_inactive_stack(channel, context, current_time - last_activity)
+                        await self._auto_end_inactive_stack(
+                            channel, context, current_time - last_activity,
+                            reason="inactivity")
 
             except Exception as e:
                 log_error(f"checking inactive stack for channel {channel_id}", e)
     
-    async def _auto_end_inactive_stack(self, channel: discord.TextChannel, context, inactivity_duration: timedelta) -> None:
-        """Automatically end an inactive stack"""
+    async def _auto_end_inactive_stack(self, channel: discord.TextChannel, context,
+                                       inactivity_duration: timedelta,
+                                       reason: str = "inactivity") -> None:
+        """Automatically end an inactive stack and post the session recap.
+
+        /stend is rarely used in practice, so this is the path that actually
+        closes sessions — it must do everything /stend does, including the
+        recap, not just silently clear the stack.
+        """
         try:
+            # Capture before ending — _end_current_session resets the stack
+            session_id = getattr(context, 'current_session_id', None)
+            participants = [
+                user for user in
+                context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
+                if not getattr(user, 'bot', False)
+            ]
+
             # Get the session commands cog to end the session properly
             session_cog = self.bot.get_cog('SessionCommands')
             if session_cog:
@@ -1791,16 +1848,44 @@ class MatchTracker:
                 del self.stack_last_activity[channel.id]
             if channel.id in self.stack_has_played:
                 del self.stack_has_played[channel.id]
+            self.stack_seen_playing.pop(channel.id, None)
+            self.stack_offline_since.pop(channel.id, None)
             self._state_dirty = True
 
-
-            # Silently end the stack and log the action
             logging.info(
-                f"Auto-ended inactive stack in channel {channel.id} after {inactivity_duration}"
+                f"Auto-ended stack in channel {channel.id} ({reason}) after {inactivity_duration}"
             )
-            
+
+            # Post the recap so it never depends on someone running /stend
+            await self._send_auto_end_recap(channel, session_id, participants)
+
         except Exception as e:
             log_error(f"auto-ending stack in channel {channel.id}", e)
+
+    async def _send_auto_end_recap(self, channel: discord.TextChannel,
+                                   session_id: Optional[str],
+                                   participants: List[discord.Member]) -> None:
+        """Build and post the session recap for an auto-ended stack (best-effort)."""
+        if not participants:
+            return
+        try:
+            from data_manager import data_manager, SessionData
+            session = None
+            if session_id:
+                session = data_manager.sessions.get(session_id)
+                if session is None:
+                    session = SessionData(session_id)
+            if session is None:
+                return
+
+            embed = await self.build_session_recap(channel.guild, participants, session)
+            if embed:
+                await channel.send(
+                    content="🌙 Squad's logged off — wrapping up the session!",
+                    embed=embed
+                )
+        except Exception as e:
+            log_error(f"sending auto-end recap for channel {channel.id}", e)
     
     async def manual_check_recent_match(self, guild: discord.Guild, member: discord.Member = None, force_fresh: bool = False) -> Optional[discord.Embed]:
         """Manually check for a recent match and return embed if found"""
