@@ -18,12 +18,24 @@ class MatchTracker:
     
     # Configuration constants
     CHECK_INTERVAL_SECONDS = 60  # 1 minute
+    # Faster cadence while someone in a stack has Valorant open (Discord
+    # presence, free to check) — this is when a match can actually finish, so
+    # it's the only time the extra polling spend buys lower detection latency.
+    FAST_CHECK_INTERVAL_SECONDS = 30
+    # Tracker state barely changes; scrub old rows daily, not every poll cycle
+    STATE_CLEANUP_INTERVAL_HOURS = 24
     MATCH_CUTOFF_HOURS = 2
     MIN_DISCORD_MEMBERS = 2
     LEG_SHOT_THRESHOLD_PERCENT = 15
     HEADSHOT_THRESHOLD_PERCENT = 30
     HIGH_DAMAGE_THRESHOLD = 3000
-    STACK_INACTIVITY_HOURS = 1.5  # Auto-end stacks after 1.5 hours of no games
+    STACK_INACTIVITY_HOURS = 1.5  # Fallback: auto-end stacks after 1.5 hours of no games
+    # Preferred auto-end: once a stack has played and presence has shown members
+    # in-game, end the session this many minutes after everyone closed Valorant.
+    # Much faster than the 1.5h timer, and self-validating: it only arms after
+    # presence has actually been seen working for this stack, so broken/hidden
+    # presence can never end a session early — it just falls back to the timer.
+    STACK_OFFLINE_END_MINUTES = 20
 
     # Weapon-personality recap highlights, as
     # (category, weapon names, min kills, interest score, message template).
@@ -75,9 +87,20 @@ class MatchTracker:
         self.recent_matches: Dict[int, Dict[str, Dict[str, Any]]] = {}   # {server_id: {match_id: {'timestamp': datetime, 'members': []}}}
         self.stack_last_activity: Dict[int, datetime] = {}  # {channel_id: last_match_timestamp}
         self.stack_has_played: Dict[int, bool] = {}  # {channel_id: has_had_games}
+        # Presence heuristics for ending sessions without /stend (memory-only;
+        # a restart just falls back to the inactivity timer, which is safe)
+        self.stack_seen_playing: Dict[int, bool] = {}  # {channel_id: presence ever showed a member in-game}
+        self.stack_offline_since: Dict[int, datetime] = {}  # {channel_id: when everyone stopped playing}
         self.check_interval: int = self.CHECK_INTERVAL_SECONDS
         self.running: bool = False
         self._state_loaded: bool = False
+        # Set each poll cycle: True when any tracked stack member currently has
+        # Valorant open, which switches the loop to the fast interval.
+        self._any_tracked_playing: bool = False
+        # Persist state only when it actually changed (last_match_id / stack
+        # activity), so an idle bot does zero SD-card writes per cycle.
+        self._state_dirty: bool = False
+        self._last_state_cleanup: Optional[datetime] = None
         
     async def start_tracking(self) -> None:
         """Start the background match tracking task"""
@@ -90,60 +113,91 @@ class MatchTracker:
             self._state_loaded = True
         
         self.running = True
-        logging.info("Starting match tracker with 1-minute polling for active shooty stacks...")
-        
+        logging.info(
+            "Starting match tracker: polling active shooty stacks every "
+            f"{self.check_interval}s ({self.FAST_CHECK_INTERVAL_SECONDS}s while members are in-game)..."
+        )
+
         while self.running:
             try:
                 await self._check_all_servers()
                 await self._check_inactive_stacks()
-                # Periodically save state to database
+                # Persist state when it changed this cycle (no-op otherwise)
                 await self._save_state_to_database()
-                await asyncio.sleep(self.check_interval)
+                await asyncio.sleep(self._current_check_interval())
             except Exception as e:
                 log_error("in match tracker", e)
                 await asyncio.sleep(60)  # Wait 1 minute before retrying
+
+    def _current_check_interval(self) -> int:
+        """Poll faster while a tracked stack member has Valorant open.
+
+        Presence comes from the Discord gateway, so checking it is free — the
+        extra API polling only happens in the window where a match can actually
+        finish, and detection latency is roughly halved right when it matters.
+        """
+        if self._any_tracked_playing:
+            return self.FAST_CHECK_INTERVAL_SECONDS
+        return self.check_interval
     
     def stop_tracking(self) -> None:
         """Stop the background match tracking"""
         self.running = False
         # Save final state to database before stopping
-        asyncio.create_task(self._save_state_to_database())
+        asyncio.create_task(self._save_state_to_database(force=True))
         logging.info("Stopped match tracker")
     
     async def _check_all_servers(self) -> None:
         """Check all servers for recently finished matches"""
+        self._any_tracked_playing = False
         for guild in self.bot.guilds:
             try:
                 await self._check_server_matches(guild)
             except Exception as e:
                 log_error(f"checking server {guild.id}", e)
-    
+
+    @staticmethod
+    def _iter_active_stacks(guild: discord.Guild):
+        """Yield (channel, context, stack_users) for this guild's channels with
+        anyone currently queued.
+
+        Iterates only contexts that already exist in memory — any channel with
+        an active stack has one (created by the command/reaction that filled
+        it). The old approach called get_context() on every text channel in the
+        guild, instantiating a context object (plus a database read) per
+        channel per poll cycle.
+        """
+        for channel_id, context in list(context_manager.contexts.items()):
+            stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
+            if not stack_users:
+                continue
+            channel = guild.get_channel(channel_id)
+            if channel is None:
+                continue
+            yield channel, context, stack_users
+
     async def _check_server_matches(self, guild: discord.Guild) -> None:
         """Check a specific server for finished matches by polling members in active shooty stacks"""
         current_time = datetime.now(timezone.utc)
-        members_to_check = []
-        
+        members_to_check = {}
+
         # Find channels with active shooty sessions in this guild
-        for channel in guild.text_channels:
-            context = context_manager.get_context(channel.id)
-            
-            # Get all users in the current stack (soloq + fullstack)
-            all_stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
-            
-            # Skip if no one is in the stack
-            if not all_stack_users:
-                continue
-            
+        for _channel, _context, all_stack_users in self._iter_active_stacks(guild):
             # Convert Discord user objects to member objects and check if they have linked accounts
             for user in all_stack_users:
                 # user is a Discord Member object
                 if user.bot:
                     continue
-                    
+
                 accounts = valorant_client.get_all_linked_accounts(user.id)
                 if not accounts:
                     continue
-                
+
+                # A queued member with the game open means a match could finish
+                # soon — switch the loop to the fast poll interval.
+                if valorant_client.is_playing_valorant(user):
+                    self._any_tracked_playing = True
+
                 # Update last checked time
                 if user.id not in self.tracked_members:
                     self.tracked_members[user.id] = {
@@ -152,14 +206,12 @@ class MatchTracker:
                     }
                 else:
                     self.tracked_members[user.id]['last_checked'] = current_time
-                
-                # Add to check list if not already added
-                if user not in members_to_check:
-                    members_to_check.append(user)
-        
+
+                members_to_check.setdefault(user.id, user)
+
         if members_to_check:
             logging.debug(f"Checking {len(members_to_check)} stack members for new matches in {guild.name}")
-            await self._check_recent_matches(guild, members_to_check)
+            await self._check_recent_matches(guild, list(members_to_check.values()))
         else:
             logging.debug(f"No active stack members with linked Valorant accounts in {guild.name}")
     
@@ -173,18 +225,33 @@ class MatchTracker:
         server_matches = self.recent_matches.setdefault(guild.id, {})
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.MATCH_CUTOFF_HOURS)
 
+        # Resolve accounts first, then poll every member concurrently: cycle
+        # time stays ~one API round-trip instead of stack_size round-trips.
+        # force_refresh bypasses the 60s response cache — the poll itself is
+        # the freshness driver, and a cached hit would only delay detection.
+        polled = []
         for member in members:
-            try:
-                primary_account = valorant_client.get_linked_account(member.id)
-                if not primary_account:
-                    continue
+            primary_account = valorant_client.get_linked_account(member.id)
+            if primary_account:
+                polled.append((member, primary_account))
 
-                # Cheap poll: recent competitive match ids + timestamps only
-                updates = await valorant_client.get_recent_competitive_updates(
-                    primary_account['username'],
-                    primary_account['tag'],
-                    puuid=primary_account.get('puuid')
+        results = await asyncio.gather(
+            *(
+                valorant_client.get_recent_competitive_updates(
+                    account['username'],
+                    account['tag'],
+                    puuid=account.get('puuid'),
+                    force_refresh=True,
                 )
+                for _member, account in polled
+            ),
+            return_exceptions=True,
+        )
+
+        for (member, _account), updates in zip(polled, results):
+            try:
+                if isinstance(updates, BaseException):
+                    raise updates
 
                 if not updates:
                     continue
@@ -200,7 +267,9 @@ class MatchTracker:
 
                 if last_known_match != latest_match_id:
                     # Update the last known match for this member
-                    self.tracked_members[member.id]['last_match_id'] = latest_match_id
+                    entry = self.tracked_members.setdefault(member.id, {'last_checked': None})
+                    entry['last_match_id'] = latest_match_id
+                    self._state_dirty = True
 
                     # Skip if we've already processed this match globally
                     if latest_match_id in server_matches:
@@ -260,26 +329,28 @@ class MatchTracker:
     async def _find_discord_members_in_match(self, guild: discord.Guild, match: dict) -> List[Dict]:
         """Find which Discord members were in a specific match"""
         discord_members = []
-        all_players = match.get('players', {}).get('all_players', [])
-        
+        # Index the match's 10 players once, then a single pass over guild
+        # members' linked accounts — instead of scanning the player list per
+        # account per member.
+        players_by_puuid = {
+            player.get('puuid'): player
+            for player in match.get('players', {}).get('all_players', [])
+            if player.get('puuid')
+        }
+
         for member in guild.members:
             if member.bot:
                 continue
-                
-            accounts = valorant_client.get_all_linked_accounts(member.id)
-            for account in accounts:
-                puuid = account.get('puuid', '')
-                
-                # Find this player in the match
-                for player in all_players:
-                    if player.get('puuid') == puuid:
-                        discord_members.append({
-                            'member': member,
-                            'account': account,
-                            'player_data': player
-                        })
-                        break
-        
+
+            for account in valorant_client.get_all_linked_accounts(member.id):
+                player = players_by_puuid.get(account.get('puuid', ''))
+                if player is not None:
+                    discord_members.append({
+                        'member': member,
+                        'account': account,
+                        'player_data': player
+                    })
+
         return discord_members
     
     async def _send_match_results(self, guild: discord.Guild, match: Dict[str, Any], discord_members: List[Dict[str, Any]], game_number: int = 1) -> None:
@@ -288,12 +359,7 @@ class MatchTracker:
         target_channels = []
 
         # Determine which channels have these members queued
-        for channel in guild.text_channels:
-            context = context_manager.get_context(channel.id)
-            all_stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
-            if not all_stack_users:
-                continue
-
+        for channel, _context, all_stack_users in self._iter_active_stacks(guild):
             participants = [dm for dm in discord_members if dm['member'] in all_stack_users]
             if len(participants) >= self.MIN_DISCORD_MEMBERS:
                 target_channels.append(channel)
@@ -639,13 +705,12 @@ class MatchTracker:
         Best-effort: silently skips members whose MMR can't be fetched (private
         profile, API down, no key), so the recap still renders without them.
         """
-        ranked_up = set()
-        for dm in discord_members:
+        async def check_member(dm) -> Optional[int]:
             account = dm.get('account', {}) or {}
             username = account.get('username')
             tag = account.get('tag')
             if not username or not tag:
-                continue
+                return None
 
             rr = None
             change = None
@@ -681,9 +746,16 @@ class MatchTracker:
                     change = mmr.get('rr_change')
 
             if self._is_full_tier_promotion(rr, change):
-                ranked_up.add(dm['member'].id)
+                return dm['member'].id
+            return None
 
-        return ranked_up
+        # These fetches sit between match detection and the recap being
+        # posted — run them concurrently so the announcement isn't delayed by
+        # squad_size sequential round-trips.
+        results = await asyncio.gather(
+            *(check_member(dm) for dm in discord_members), return_exceptions=True
+        )
+        return {mid for mid in results if isinstance(mid, int)}
 
     async def build_session_recap(self, guild: discord.Guild, participants: List[discord.Member], session) -> discord.Embed:
         """Build an end-of-session recap embed.
@@ -711,36 +783,44 @@ class MatchTracker:
         matches_by_id: Dict[str, Dict[str, Any]] = {}
         member_puuids: Dict[str, discord.Member] = {}
 
+        recap_accounts = []
         for member in participants:
             if getattr(member, 'bot', False):
                 continue
-            accounts = valorant_client.get_all_linked_accounts(member.id)
-            for account in accounts:
+            for account in valorant_client.get_all_linked_accounts(member.id):
                 puuid = account.get('puuid')
                 if puuid:
                     member_puuids[puuid] = member
-                try:
-                    updates = await valorant_client.get_recent_competitive_updates(
-                        account['username'], account['tag'], puuid=puuid
-                    )
-                except Exception as e:
-                    log_error(f"fetching session matches for {account.get('username')}", e)
-                    updates = None
+                recap_accounts.append(account)
 
-                for update in updates or []:
-                    mid = update.get('match_id')
-                    if not mid or mid in matches_by_id:
-                        continue
-                    started = update.get('started_at')
-                    if started is None:
-                        continue
-                    if window_start and started < window_start:
-                        continue
-                    if started > window_end:
-                        continue
-                    match = await valorant_client.get_match_details(mid)
-                    if match:
-                        matches_by_id[mid] = match
+        async def fetch_updates(account):
+            try:
+                return await valorant_client.get_recent_competitive_updates(
+                    account['username'], account['tag'], puuid=account.get('puuid')
+                )
+            except Exception as e:
+                log_error(f"fetching session matches for {account.get('username')}", e)
+                return None
+
+        # Discover every account's recent matches concurrently; detail lookups
+        # below are mostly SQLite cache hits (the tracker stored them live).
+        all_updates = await asyncio.gather(*(fetch_updates(a) for a in recap_accounts))
+
+        for updates in all_updates:
+            for update in updates or []:
+                mid = update.get('match_id')
+                if not mid or mid in matches_by_id:
+                    continue
+                started = update.get('started_at')
+                if started is None:
+                    continue
+                if window_start and started < window_start:
+                    continue
+                if started > window_end:
+                    continue
+                match = await valorant_client.get_match_details(mid)
+                if match:
+                    matches_by_id[mid] = match
 
         # Warm the per-match stat rows for everyone we fetched details for
         for match in matches_by_id.values():
@@ -839,17 +919,23 @@ class MatchTracker:
                 inline=False
             )
 
-        # End-of-night ranks (best-effort)
+        # End-of-night ranks (best-effort), fetched concurrently
         rank_lines = []
+        rank_targets = []
         for member in participants:
             account = valorant_client.get_linked_account(member.id)
-            if not account:
-                continue
+            if account:
+                rank_targets.append((member, account))
+
+        async def fetch_mmr(account):
             try:
-                mmr = await valorant_client.get_mmr(account['username'], account['tag'],
-                                                    puuid=account.get('puuid'))
+                return await valorant_client.get_mmr(account['username'], account['tag'],
+                                                     puuid=account.get('puuid'))
             except Exception:
-                mmr = None
+                return None
+
+        mmrs = await asyncio.gather(*(fetch_mmr(account) for _member, account in rank_targets))
+        for (member, _account), mmr in zip(rank_targets, mmrs):
             if mmr and mmr.get('tier'):
                 rr = mmr.get('rr')
                 rr_str = f" · {rr} RR" if rr is not None else ""
@@ -1624,60 +1710,106 @@ class MatchTracker:
             match_timestamp = datetime.now(timezone.utc)
         
         # Find which channels have these members in their stacks
-        for channel in guild.text_channels:
-            context = context_manager.get_context(channel.id)
-            all_stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
-            
-            if not all_stack_users:
-                continue
-            
+        for channel, _context, all_stack_users in self._iter_active_stacks(guild):
             # Check if any of the match participants are in this channel's stack
             stack_members_in_match = []
             for dm in discord_members_in_match:
                 if dm['member'] in all_stack_users:
                     stack_members_in_match.append(dm['member'])
-            
+
             # If stack members were in this match, update activity
             if len(stack_members_in_match) >= self.MIN_DISCORD_MEMBERS:
                 self.stack_last_activity[channel.id] = match_timestamp
                 self.stack_has_played[channel.id] = True
+                self._state_dirty = True
                 logging.info(f"Updated activity for stack in channel {channel.id} - {len(stack_members_in_match)} members played")
     
     async def _check_inactive_stacks(self) -> None:
-        """Check for stacks that have been inactive and auto-end them"""
+        """Auto-end stacks whose session is over, without waiting for /stend.
+
+        Two triggers, both of which post the session recap:
+
+        1. Presence-based (fast path): once the stack has played at least one
+           game and presence has shown members in-game, the session ends
+           STACK_OFFLINE_END_MINUTES after every member closed Valorant.
+        2. Inactivity timer (fallback): no detected games for
+           STACK_INACTIVITY_HOURS — covers members with hidden/broken presence.
+
+        Walks only the contexts already in memory instead of every text channel
+        in every guild — a channel with a live stack always has a context.
+        """
         current_time = datetime.now(timezone.utc)
         inactivity_cutoff = timedelta(hours=self.STACK_INACTIVITY_HOURS)
-        
-        for guild in self.bot.guilds:
+        offline_cutoff = timedelta(minutes=self.STACK_OFFLINE_END_MINUTES)
+
+        for channel_id, context in list(context_manager.contexts.items()):
             try:
-                for channel in guild.text_channels:
-                    context = context_manager.get_context(channel.id)
-                    all_stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
-                    
-                    # Skip if no one is in the stack
-                    if not all_stack_users:
-                        # Clean up tracking data for empty stacks
-                        if channel.id in self.stack_last_activity:
-                            del self.stack_last_activity[channel.id]
-                        if channel.id in self.stack_has_played:
-                            del self.stack_has_played[channel.id]
-                        continue
-                    
-                    # Only check stacks that have had gaming activity
-                    if not self.stack_has_played.get(channel.id, False):
-                        continue
-                    
-                    # Check if stack has been inactive
-                    last_activity = self.stack_last_activity.get(channel.id)
-                    if last_activity and (current_time - last_activity) > inactivity_cutoff:
-                        await self._auto_end_inactive_stack(channel, context, current_time - last_activity)
-                        
+                all_stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
+
+                # Skip if no one is in the stack
+                if not all_stack_users:
+                    # Clean up tracking data for empty stacks
+                    if self.stack_last_activity.pop(channel_id, None) is not None:
+                        self._state_dirty = True
+                    if self.stack_has_played.pop(channel_id, None) is not None:
+                        self._state_dirty = True
+                    self.stack_seen_playing.pop(channel_id, None)
+                    self.stack_offline_since.pop(channel_id, None)
+                    continue
+
+                # Only check stacks that have had gaming activity
+                if not self.stack_has_played.get(channel_id, False):
+                    continue
+
+                # Presence-based fast path: track when everyone stopped playing
+                anyone_playing = any(
+                    valorant_client.is_playing_valorant(user)
+                    for user in all_stack_users
+                    if not getattr(user, 'bot', False)
+                )
+                if anyone_playing:
+                    self.stack_seen_playing[channel_id] = True
+                    self.stack_offline_since.pop(channel_id, None)
+                elif self.stack_seen_playing.get(channel_id, False):
+                    offline_since = self.stack_offline_since.setdefault(channel_id, current_time)
+                    if (current_time - offline_since) >= offline_cutoff:
+                        channel = self.bot.get_channel(channel_id)
+                        if channel is not None:
+                            await self._auto_end_inactive_stack(
+                                channel, context, current_time - offline_since,
+                                reason="everyone offline")
+                            continue
+
+                # Fallback: no detected games for a long time
+                last_activity = self.stack_last_activity.get(channel_id)
+                if last_activity and (current_time - last_activity) > inactivity_cutoff:
+                    channel = self.bot.get_channel(channel_id)
+                    if channel is not None:
+                        await self._auto_end_inactive_stack(
+                            channel, context, current_time - last_activity,
+                            reason="inactivity")
+
             except Exception as e:
-                log_error(f"checking inactive stacks for {guild.id}", e)
+                log_error(f"checking inactive stack for channel {channel_id}", e)
     
-    async def _auto_end_inactive_stack(self, channel: discord.TextChannel, context, inactivity_duration: timedelta) -> None:
-        """Automatically end an inactive stack"""
+    async def _auto_end_inactive_stack(self, channel: discord.TextChannel, context,
+                                       inactivity_duration: timedelta,
+                                       reason: str = "inactivity") -> None:
+        """Automatically end an inactive stack and post the session recap.
+
+        /stend is rarely used in practice, so this is the path that actually
+        closes sessions — it must do everything /stend does, including the
+        recap, not just silently clear the stack.
+        """
         try:
+            # Capture before ending — _end_current_session resets the stack
+            session_id = getattr(context, 'current_session_id', None)
+            participants = [
+                user for user in
+                context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
+                if not getattr(user, 'bot', False)
+            ]
+
             # Get the session commands cog to end the session properly
             session_cog = self.bot.get_cog('SessionCommands')
             if session_cog:
@@ -1716,14 +1848,44 @@ class MatchTracker:
                 del self.stack_last_activity[channel.id]
             if channel.id in self.stack_has_played:
                 del self.stack_has_played[channel.id]
-            
-            # Silently end the stack and log the action
+            self.stack_seen_playing.pop(channel.id, None)
+            self.stack_offline_since.pop(channel.id, None)
+            self._state_dirty = True
+
             logging.info(
-                f"Auto-ended inactive stack in channel {channel.id} after {inactivity_duration}"
+                f"Auto-ended stack in channel {channel.id} ({reason}) after {inactivity_duration}"
             )
-            
+
+            # Post the recap so it never depends on someone running /stend
+            await self._send_auto_end_recap(channel, session_id, participants)
+
         except Exception as e:
             log_error(f"auto-ending stack in channel {channel.id}", e)
+
+    async def _send_auto_end_recap(self, channel: discord.TextChannel,
+                                   session_id: Optional[str],
+                                   participants: List[discord.Member]) -> None:
+        """Build and post the session recap for an auto-ended stack (best-effort)."""
+        if not participants:
+            return
+        try:
+            from data_manager import data_manager, SessionData
+            session = None
+            if session_id:
+                session = data_manager.sessions.get(session_id)
+                if session is None:
+                    session = SessionData(session_id)
+            if session is None:
+                return
+
+            embed = await self.build_session_recap(channel.guild, participants, session)
+            if embed:
+                await channel.send(
+                    content="🌙 Squad's logged off — wrapping up the session!",
+                    embed=embed
+                )
+        except Exception as e:
+            log_error(f"sending auto-end recap for channel {channel.id}", e)
     
     async def manual_check_recent_match(self, guild: discord.Guild, member: discord.Member = None, force_fresh: bool = False) -> Optional[discord.Embed]:
         """Manually check for a recent match and return embed if found"""
@@ -1818,8 +1980,16 @@ class MatchTracker:
         except Exception as e:
             log_error("loading match tracker state from database", e)
     
-    async def _save_state_to_database(self) -> None:
-        """Save current match tracker state to database"""
+    async def _save_state_to_database(self, force: bool = False) -> None:
+        """Save match tracker state to database when it has changed.
+
+        The poll loop calls this every cycle, but writes only happen after a
+        real state change (new match id, stack activity, auto-end) — an idle
+        cycle costs zero SQLite writes, which matters on the Pi's SD card.
+        ``force=True`` (shutdown path) writes unconditionally.
+        """
+        if not (self._state_dirty or force):
+            return
         try:
             # Save tracked members by server
             servers_processed = set()
@@ -1844,11 +2014,12 @@ class MatchTracker:
             # Save stack states
             for channel_id, has_played in self.stack_has_played.items():
                 last_activity = self.stack_last_activity.get(channel_id)
-                # Get participant count from context if available
-                try:
-                    context = context_manager.get_context(channel_id)
+                # Get participant count from an already-loaded context; don't
+                # instantiate one (plus a DB read) just to report a count
+                context = context_manager.contexts.get(channel_id)
+                if context is not None:
                     participant_count = len(context.bot_soloq_user_set.union(context.bot_fullstack_user_set))
-                except:
+                else:
                     participant_count = 0
                 
                 database_manager.save_stack_state(
@@ -1858,9 +2029,16 @@ class MatchTracker:
                     participant_count=participant_count
                 )
             
-            # Clean up old state data (older than 30 days)
-            database_manager.cleanup_old_tracker_state(days=30)
-            
+            self._state_dirty = False
+
+            # Clean up old state data (older than 30 days), at most once a day
+            # instead of running a DELETE scan every poll cycle
+            now = datetime.now(timezone.utc)
+            if (self._last_state_cleanup is None
+                    or (now - self._last_state_cleanup) > timedelta(hours=self.STATE_CLEANUP_INTERVAL_HOURS)):
+                self._last_state_cleanup = now
+                database_manager.cleanup_old_tracker_state(days=30)
+
         except Exception as e:
             log_error("saving match tracker state to database", e)
     
