@@ -329,6 +329,58 @@ async def test_session_recap_with_games(discord_member_factory):
 
 
 @pytest.mark.asyncio
+async def test_session_recap_includes_unlinked_teammates(discord_member_factory):
+    """Players on the stack's team without a linked account still make the
+    session scoreboard (by riot name); enemies never do."""
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+
+    m1 = discord_member_factory(user_id=1, name='Alice')
+    m1.bot = False
+    guild = MagicMock(spec=discord.Guild)
+
+    match = {
+        'metadata': {'matchid': 'm1', 'game_start': '2024-01-01T00:30:00Z'},
+        'teams': {'red': {'has_won': True}, 'blue': {'has_won': False}},
+        'players': {'all_players': [
+            {'puuid': 'pa', 'name': 'Alice', 'tag': 'NA1', 'team': 'Red',
+             'stats': {'kills': 12, 'deaths': 10, 'assists': 5}},
+            {'puuid': 'pu', 'name': 'UnlinkedBuddy', 'tag': '007', 'team': 'Red',
+             'stats': {'kills': 25, 'deaths': 5, 'assists': 9}},
+            {'puuid': 'pe', 'name': 'EnemyGuy', 'tag': 'KR1', 'team': 'Blue',
+             'stats': {'kills': 30, 'deaths': 12, 'assists': 2}},
+        ]},
+    }
+
+    fake_client = MagicMock()
+    fake_client.get_all_linked_accounts.side_effect = \
+        lambda uid: [{'username': 'Alice', 'tag': 'NA1', 'puuid': 'pa'}] if uid == 1 else []
+    fake_client.get_linked_account.side_effect = \
+        lambda uid: {'username': 'Alice', 'tag': 'NA1', 'puuid': 'pa'} if uid == 1 else None
+    fake_client.get_recent_competitive_updates = AsyncMock(return_value=[
+        {'match_id': 'm1',
+         'started_at': datetime(2024, 1, 1, 0, 30, tzinfo=timezone.utc),
+         'rr_change': 20}
+    ])
+    fake_client.get_match_details = AsyncMock(return_value=match)
+    fake_client.record_match_stats_for_players = MagicMock(return_value=1)
+    fake_client.get_mmr = AsyncMock(return_value=None)
+
+    session = _make_session('2024-01-01T00:00:00+00:00', '2024-01-01T02:00:00+00:00', 120)
+
+    with patch('match_tracker.valorant_client', fake_client):
+        embed = await tracker.build_session_recap(guild, [m1], session)
+
+    scoreboard = next(f for f in embed.fields if 'Scoreboard' in f.name)
+    assert 'Alice' in scoreboard.value
+    assert 'UnlinkedBuddy#007' in scoreboard.value
+    assert 'EnemyGuy' not in scoreboard.value
+    # The unlinked buddy has the best KDA and takes the crown/MVP
+    mvp = next(f for f in embed.fields if 'MVP' in f.name)
+    assert 'UnlinkedBuddy#007' in mvp.value
+
+
+@pytest.mark.asyncio
 async def test_session_recap_no_games(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)

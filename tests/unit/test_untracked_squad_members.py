@@ -109,3 +109,115 @@ async def test_untracked_player_without_tag_falls_back_to_name(discord_member_fa
     squad_field = next(f for f in embed.fields if 'Squad' in f.name)
     assert 'NoTagPlayer' in squad_field.value
     assert 'NoTagPlayer#' not in squad_field.value
+
+
+def _three_stack_match():
+    """One tracked player and two same-team unlinked players, plus an enemy."""
+    return {
+        'metadata': {
+            'map': 'Ascent',
+            'rounds_played': 20,
+            'game_length': 1800,
+            'game_start': '2024-01-01T00:00:00Z',
+            'matchid': 'abc123',
+        },
+        'teams': {
+            'red': {'has_won': True, 'rounds_won': 13},
+            'blue': {'has_won': False, 'rounds_won': 7},
+        },
+        'players': {
+            'all_players': [
+                {'puuid': 'p1', 'name': 'TrackedPlayer', 'tag': 'NA1', 'team': 'Red',
+                 'character': 'Sage',
+                 'stats': {'kills': 10, 'deaths': 12, 'assists': 5, 'headshots': 5,
+                           'bodyshots': 20, 'legshots': 1, 'score': 3000},
+                 'damage_made': 2000, 'damage_received': 2500},
+                {'puuid': 'p2', 'name': 'UnlinkedCarry', 'tag': 'EU1', 'team': 'Red',
+                 'character': 'Jett',
+                 'stats': {'kills': 30, 'deaths': 8, 'assists': 2, 'headshots': 20,
+                           'bodyshots': 30, 'legshots': 0, 'score': 7000},
+                 'damage_made': 5000, 'damage_received': 1500},
+                {'puuid': 'enemy1', 'name': 'Enemy', 'tag': 'KR1', 'team': 'Blue',
+                 'character': 'Omen',
+                 'stats': {'kills': 40, 'deaths': 16, 'assists': 4, 'headshots': 30,
+                           'bodyshots': 10, 'legshots': 0, 'score': 9000},
+                 'damage_made': 8000, 'damage_received': 3000},
+            ],
+        },
+        'rounds': [],
+    }
+
+
+def _tracked_members(match, discord_member_factory):
+    member = discord_member_factory(user_id=1, name='TrackedDisplayName')
+    return [{
+        'member': member,
+        'account': {'puuid': 'p1'},
+        'player_data': match['players']['all_players'][0],
+    }]
+
+
+def test_unlinked_teammates_helper_builds_member_shaped_entries(discord_member_factory):
+    """_unlinked_teammates returns same-team unlinked players in the
+    discord_members dict shape, and never enemies."""
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+    match = _three_stack_match()
+    discord_members = _tracked_members(match, discord_member_factory)
+
+    unlinked = tracker._unlinked_teammates(match, discord_members)
+
+    assert len(unlinked) == 1
+    entry = unlinked[0]
+    assert entry['member'].display_name == 'UnlinkedCarry#EU1'
+    assert entry['member'].id == 'p2'
+    assert entry['account']['puuid'] == 'p2'
+    assert entry['player_data']['puuid'] == 'p2'
+
+
+def test_unlinked_teammates_empty_without_team_info():
+    """Without any linked member team data we can't tell friend from foe."""
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+    match = _three_stack_match()
+
+    assert tracker._unlinked_teammates(match, []) == []
+
+
+def test_fun_stats_include_unlinked_teammates(discord_member_factory):
+    """Highlights can feature unlinked teammates once they're in the roster."""
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+    match = _three_stack_match()
+    discord_members = _tracked_members(match, discord_member_factory)
+    roster = discord_members + tracker._unlinked_teammates(match, discord_members)
+
+    stats = tracker._calculate_fun_match_stats(match, roster)
+    highlights = '\n'.join(stats['highlights'])
+
+    # The unlinked player is the clear top fragger and should be credited
+    assert 'UnlinkedCarry#EU1' in highlights
+    # The enemy team never shows up in highlights
+    assert 'Enemy#KR1' not in highlights
+
+
+@pytest.mark.asyncio
+async def test_match_embed_passes_unlinked_teammates_to_highlights(discord_member_factory):
+    """_create_match_embed computes highlights over linked + unlinked players."""
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+    match = _three_stack_match()
+    discord_members = _tracked_members(match, discord_member_factory)
+
+    with patch('match_tracker.format_time_ago', return_value='just now'), \
+         patch.object(tracker, '_calculate_fun_match_stats',
+                      return_value={'highlights': [], 'top_performers': {}, 'funny_stats': {}}) as fun_mock:
+        embed = await tracker._create_match_embed(match, discord_members)
+
+    roster = fun_mock.call_args.args[1]
+    names = {dm['member'].display_name for dm in roster}
+    assert names == {'TrackedDisplayName', 'UnlinkedCarry#EU1'}
+
+    squad_field = next(f for f in embed.fields if 'Squad' in f.name)
+    assert 'Squad (2)' in squad_field.name
+    assert 'UnlinkedCarry#EU1' in squad_field.value

@@ -13,6 +13,21 @@ from match_stats_display import (
     recap_view,
 )
 
+class UnlinkedPlayer:
+    """Stand-in for a squad teammate who hasn't linked a Discord account.
+
+    Exposes the same ``display_name``/``id`` surface the recap and highlight
+    code reads off ``discord.Member``, so everyone in the game flows through
+    one pipeline. ``id`` is the player's puuid (a string), which can never
+    collide with a real Discord member id (an int).
+    """
+    __slots__ = ('display_name', 'id')
+
+    def __init__(self, name: str, tag: str, puuid: Optional[str]) -> None:
+        self.display_name = f"{name}#{tag}" if tag else name
+        self.id = puuid or self.display_name
+
+
 class MatchTracker:
     """Tracks Discord members' Valorant matches by polling for newly completed games in active shooty stacks"""
     
@@ -352,7 +367,40 @@ class MatchTracker:
                     })
 
         return discord_members
-    
+
+    @staticmethod
+    def _unlinked_teammates(match: dict, discord_members: List[Dict]) -> List[Dict]:
+        """Same-team players who aren't linked via /shootylink, in the same
+        dict shape as ``discord_members`` entries (member/account/player_data)
+        so recaps and highlights treat everyone in the game uniformly. The
+        squad's team comes from the linked members' player data."""
+        tracked_puuids = set()
+        team_color = None
+        for dm in discord_members:
+            puuid = dm.get('account', {}).get('puuid') or (dm.get('player_data') or {}).get('puuid')
+            if puuid:
+                tracked_puuids.add(puuid)
+            if not team_color:
+                team_color = ((dm.get('player_data') or {}).get('team') or '').lower()
+
+        if not team_color:
+            return []
+
+        unlinked = []
+        for player in match.get('players', {}).get('all_players', []):
+            if (player.get('team') or '').lower() != team_color:
+                continue
+            if player.get('puuid') in tracked_puuids:
+                continue
+            shim = UnlinkedPlayer(player.get('name', 'Unknown'), player.get('tag', ''),
+                                  player.get('puuid'))
+            unlinked.append({
+                'member': shim,
+                'account': {'puuid': player.get('puuid')},
+                'player_data': player
+            })
+        return unlinked
+
     async def _send_match_results(self, guild: discord.Guild, match: Dict[str, Any], discord_members: List[Dict[str, Any]], game_number: int = 1) -> None:
         """Send match results to relevant stack channels"""
 
@@ -428,8 +476,13 @@ class MatchTracker:
         if match_id:
             tracker_link = f"[📊 View on Tracker.gg](https://tracker.gg/valorant/match/{match_id})"
 
-        # Calculate fun stats
-        fun_stats = self._calculate_fun_match_stats(match, discord_members)
+        # Unlinked teammates (same team, no /shootylink) join the linked
+        # members everywhere below — squad list, roll-up and highlights — so
+        # the recap covers everyone who actually played with the stack.
+        unlinked_members = self._unlinked_teammates(match, discord_members)
+
+        # Calculate fun stats across the whole squad, not just linked members
+        fun_stats = self._calculate_fun_match_stats(match, discord_members + unlinked_members)
 
         # Figure out which side the stack played on (all squad members are
         # together) so the whole recap can be framed from their perspective.
@@ -497,43 +550,24 @@ class MatchTracker:
         # most useful per-round numbers (ACS, ADR); the top ACS in the squad
         # gets a 👑, and a one-line summary rolls the squad up.
         entries = []  # (display_name, stats, rank_str, rankup_str)
-        tracked_puuids = set()
 
         # Members who crossed up a full tier this game (shown inline)
         ranked_up_ids = await self._get_ranked_up_member_ids(
             discord_members, match_id=match_id or None
         )
 
-        for dm in discord_members:
+        # Linked members first (by Discord name), then unlinked teammates
+        # (by in-game name#tag) — everyone gets the same stat line.
+        for dm in discord_members + unlinked_members:
             member = dm['member']
             player_data = dm['player_data']
             puuid = dm.get('account', {}).get('puuid') or player_data.get('puuid')
-            if puuid:
-                tracked_puuids.add(puuid)
 
             pstats = player_display_stats(match, player_data, puuid)
             rank = get_player_rank(player_data)
             rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
             rankup_str = " ⬆️ **Rank Up!**" if member.id in ranked_up_ids else ""
             entries.append((member.display_name, pstats, rank_str, rankup_str))
-
-        # Add untracked teammates (players on the same team who aren't linked via shootylink)
-        all_players = match.get('players', {}).get('all_players', [])
-        untracked_count = 0
-        if team_color:
-            for player in all_players:
-                if player.get('team', '').lower() != team_color:
-                    continue
-                if player.get('puuid') in tracked_puuids:
-                    continue
-                name = player.get('name', 'Unknown')
-                tag = player.get('tag', '')
-                display_name = f"{name}#{tag}" if tag else name
-                pstats = player_display_stats(match, player, player.get('puuid'))
-                rank = get_player_rank(player)
-                rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
-                entries.append((display_name, pstats, rank_str, ""))
-                untracked_count += 1
 
         member_list = []
         for display_name, s, rank_str, rankup_str in entries:
@@ -561,7 +595,7 @@ class MatchTracker:
                 summary += f" · {tot_fk} FK / {tot_fd} FD"
             member_list.insert(0, summary)
 
-        squad_size = len(discord_members) + untracked_count
+        squad_size = len(discord_members) + len(unlinked_members)
 
         embed.add_field(
             name=f"👥 Squad ({squad_size})",
@@ -826,27 +860,41 @@ class MatchTracker:
         for match in matches_by_id.values():
             valorant_client.record_match_stats_for_players(match, list(member_puuids.keys()))
 
-        # Aggregate per-player stats and W/L across in-window matches
-        player_totals: Dict[int, Dict[str, Any]] = {}
+        # Aggregate per-player stats and W/L across in-window matches.
+        # Unlinked players on the stack's team count too — friends without
+        # /shootylink still show up, keyed by puuid and named by riot id.
+        player_totals: Dict[Any, Dict[str, Any]] = {}
         wins = losses = 0
         for match in matches_by_id.values():
             all_players = match.get('players', {}).get('all_players', [])
             teams = match.get('teams', {})
             stack_team = None
             for player in all_players:
-                if player.get('puuid') not in member_puuids:
-                    continue
-                member = member_puuids[player['puuid']]
+                if player.get('puuid') in member_puuids:
+                    stack_team = (player.get('team') or '').lower()
+                    break
+            for player in all_players:
+                puuid = player.get('puuid')
+                member = member_puuids.get(puuid)
+                if member is not None:
+                    key = member.id
+                    name = member.display_name
+                else:
+                    # Unlinked: only teammates, identified by in-game name#tag
+                    if not stack_team or (player.get('team') or '').lower() != stack_team:
+                        continue
+                    riot_name = player.get('name', 'Unknown')
+                    tag = player.get('tag', '')
+                    name = f"{riot_name}#{tag}" if tag else riot_name
+                    key = puuid or name
                 pstats = player.get('stats', {})
-                totals = player_totals.setdefault(member.id, {
-                    'member': member, 'kills': 0, 'deaths': 0, 'assists': 0, 'games': 0
+                totals = player_totals.setdefault(key, {
+                    'name': name, 'kills': 0, 'deaths': 0, 'assists': 0, 'games': 0
                 })
                 totals['kills'] += pstats.get('kills', 0)
                 totals['deaths'] += pstats.get('deaths', 0)
                 totals['assists'] += pstats.get('assists', 0)
                 totals['games'] += 1
-                if stack_team is None:
-                    stack_team = player.get('team', '').lower()
             if stack_team and stack_team in teams:
                 if teams[stack_team].get('has_won', False):
                     wins += 1
@@ -903,7 +951,7 @@ class MatchTracker:
             kda = (t['kills'] + t['assists']) / max(t['deaths'], 1)
             crown = "👑 " if i == 0 and len(ranked) > 1 else ""
             scoreboard.append(
-                f"{crown}**{t['member'].display_name}** — {t['kills']}/{t['deaths']}/{t['assists']} "
+                f"{crown}**{t['name']}** — {t['kills']}/{t['deaths']}/{t['assists']} "
                 f"({kda:.2f} KDA, {t['games']}G)"
             )
         embed.add_field(
@@ -915,7 +963,7 @@ class MatchTracker:
         if len(ranked) > 1:
             embed.add_field(
                 name="🌟 MVP of the Night",
-                value=f"**{ranked[0]['member'].display_name}** carried the squad! 🔥",
+                value=f"**{ranked[0]['name']}** carried the squad! 🔥",
                 inline=False
             )
 
