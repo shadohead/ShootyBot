@@ -1,5 +1,6 @@
 """Tests for rank/RR integration, head-to-head comparison, and session recap."""
 
+import asyncio
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -95,12 +96,8 @@ async def test_get_mmr_returns_none_on_exception():
 # Rank shown in the match recap embed
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_match_embed_shows_player_rank(discord_member_factory):
-    bot = MagicMock(spec=discord.Client)
-    tracker = MatchTracker(bot)
-
-    match = {
+def _rank_match():
+    return {
         'metadata': {
             'map': 'Ascent', 'rounds_played': 13, 'game_length': 1800,
             'game_start': '2024-01-01T00:00:00Z', 'matchid': 'abc123',
@@ -109,160 +106,236 @@ async def test_match_embed_shows_player_rank(discord_member_factory):
                   'blue': {'has_won': False, 'rounds_won': 8}},
         'players': {'all_players': [
             {'puuid': 'p1', 'name': 'Tracked', 'tag': 'NA1', 'team': 'Red',
-             'currenttier_patched': 'Diamond 1', 'currenttier': 18,
+             'currenttier_patched': 'Platinum 3', 'currenttier': 17,
              'stats': {'kills': 20, 'deaths': 10, 'assists': 5}},
         ]},
     }
+
+
+@pytest.mark.asyncio
+async def test_match_embed_shows_player_rank(discord_member_factory):
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+    match = _rank_match()
     member = discord_member_factory(user_id=1, name='TrackedName')
     discord_members = [{'member': member, 'account': {'puuid': 'p1'},
                         'player_data': match['players']['all_players'][0]}]
 
     with patch('match_tracker.format_time_ago', return_value='just now'), \
          patch.object(tracker, '_calculate_fun_match_stats',
-                      return_value={'highlights': [], 'top_performers': {}, 'funny_stats': {}}), \
-         patch.object(tracker, '_get_ranked_up_member_ids', AsyncMock(return_value=set())):
-        embed = await tracker._create_match_embed(match, discord_members)
+                      return_value={'highlights': [], 'top_performers': {}, 'funny_stats': {}}):
+        embed = await tracker._create_match_embed(match, discord_members, rank_ups={})
 
     squad_field = next(f for f in embed.fields if 'Squad' in f.name)
-    assert 'Diamond 1' in squad_field.value
+    assert 'Platinum 3' in squad_field.value
     # No rank-up marker when the member didn't get promoted
     assert 'Rank Up!' not in squad_field.value
 
 
 @pytest.mark.asyncio
-async def test_match_embed_shows_inline_rank_up(discord_member_factory):
-    """A promoted member is flagged inline in the squad list (no separate field)."""
+async def test_match_embed_shows_inline_rank_up_with_new_tier(discord_member_factory):
+    """A promoted member is flagged inline with the rank they landed on (match
+    data only knows the pre-game rank)."""
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
-
-    match = {
-        'metadata': {
-            'map': 'Ascent', 'rounds_played': 13, 'game_length': 1800,
-            'game_start': '2024-01-01T00:00:00Z', 'matchid': 'abc123',
-        },
-        'teams': {'red': {'has_won': True, 'rounds_won': 13},
-                  'blue': {'has_won': False, 'rounds_won': 8}},
-        'players': {'all_players': [
-            {'puuid': 'p1', 'name': 'Tracked', 'tag': 'NA1', 'team': 'Red',
-             'currenttier_patched': 'Diamond 1', 'currenttier': 18,
-             'stats': {'kills': 20, 'deaths': 10, 'assists': 5}},
-        ]},
-    }
+    match = _rank_match()
     member = discord_member_factory(user_id=1, name='TrackedName')
     discord_members = [{'member': member, 'account': {'puuid': 'p1'},
                         'player_data': match['players']['all_players'][0]}]
 
     with patch('match_tracker.format_time_ago', return_value='just now'), \
          patch.object(tracker, '_calculate_fun_match_stats',
-                      return_value={'highlights': [], 'top_performers': {}, 'funny_stats': {}}), \
-         patch.object(tracker, '_get_ranked_up_member_ids', AsyncMock(return_value={1})):
-        embed = await tracker._create_match_embed(match, discord_members)
+                      return_value={'highlights': [], 'top_performers': {}, 'funny_stats': {}}):
+        embed = await tracker._create_match_embed(
+            match, discord_members, rank_ups={1: 'Diamond 1'})
 
     squad_field = next(f for f in embed.fields if 'Squad' in f.name)
-    assert 'Rank Up!' in squad_field.value
+    assert '💎 Diamond 1 ⬆️ **Rank Up!**' in squad_field.value
+    assert 'Platinum 3' not in squad_field.value
     # The promotion is inline, not a separate field
     assert not any('Rank Up' in f.name for f in embed.fields)
 
 
 # ---------------------------------------------------------------------------
-# _get_ranked_up_member_ids (inline marker only on a full-tier promotion)
+# Rank-up detection (only this match's own mmr-history row is trusted)
+#
+# Rows below are real Henrik v1 mmr-history data from 2026-09-25 (most recent
+# first), normalized the way get_recent_competitive_updates returns them.
 # ---------------------------------------------------------------------------
 
+def _row(match_id, tier, rr, change):
+    from valorant_client import tier_name as _tier_name
+    return {'match_id': match_id, 'started_at': None, 'rr': rr, 'rr_change': change,
+            'tier': tier, 'tier_name': _tier_name(tier)}
+
+
+# Seleção: Platinum 3 (88 RR) -> Diamond 1 (10 RR) on a +22 win
+SELECAO_HISTORY = [
+    _row('a1bfd35f', 18, 10, 22),
+    _row('5fba633e', 17, 88, 22),
+    _row('b115447d', 17, 66, -15),
+]
+# spooky meme slam: promoted G3 -> P1 on 9d688a97, then a normal +33 win
+SPOOKY_HISTORY = [
+    _row('a1bfd35f', 15, 66, 21),
+    _row('5fba633e', 15, 45, 33),
+    _row('9d688a97', 15, 12, 25),
+    _row('ac86b4d7', 14, 87, -13),
+]
+
+
+def test_promotion_detected_from_tier_change():
+    assert MatchTracker._rank_up_from_history(SELECAO_HISTORY, 'a1bfd35f') == (True, 'Diamond 1')
+    assert MatchTracker._rank_up_from_history(SPOOKY_HISTORY, '9d688a97') == (True, 'Platinum 1')
+
+
+def test_ordinary_win_is_not_a_promotion():
+    assert MatchTracker._rank_up_from_history(SELECAO_HISTORY, '5fba633e') == (False, 'Platinum 3')
+    assert MatchTracker._rank_up_from_history(SPOOKY_HISTORY, '5fba633e') == (False, 'Platinum 1')
+
+
+def test_missing_match_row_is_unknown_not_a_promotion():
+    """Regression: the recap for 5fba633e posted before Henrik had spooky's
+    row for it. His latest row was the previous game's promotion, which the old
+    fallback re-reported as a rank up for this game."""
+    history_before_row_landed = SPOOKY_HISTORY[2:]
+    assert MatchTracker._rank_up_from_history(history_before_row_landed, '5fba633e') is None
+
+
+def test_rr_loss_is_never_a_promotion():
+    assert MatchTracker._is_promotion(_row('m', 18, 5, -16), _row('p', 17, 21, 10)) is False
+
+
+def test_leaving_placements_is_not_a_promotion():
+    assert MatchTracker._is_promotion(_row('m', 15, 10, 20), _row('p', 0, 0, 0)) is False
+
+
+def test_rr_arithmetic_fallback_when_tiers_unknown():
+    promoted = {'match_id': 'm', 'rr': 5, 'rr_change': 18}
+    not_promoted = {'match_id': 'm', 'rr': 45, 'rr_change': 18}
+    assert MatchTracker._is_promotion(promoted, None) is True
+    assert MatchTracker._is_promotion(not_promoted, None) is False
+
+
 @pytest.mark.asyncio
-async def test_ranked_up_detected_from_mmr_history_for_match(discord_member_factory):
-    """Use the per-match mmr-history row so promotions aren't missed by stale MMR cache."""
+async def test_check_rank_ups_splits_promoted_and_pending(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
-    member = discord_member_factory(user_id=1, name='Player1')
-    discord_members = [{'member': member,
-                        'account': {'puuid': 'p1', 'username': 'Player1', 'tag': 'NA1'}}]
+    selecao = discord_member_factory(user_id=1, name='Ming')
+    spooky = discord_member_factory(user_id=2, name='dabid')
+    squad = [
+        {'member': selecao, 'account': {'puuid': 'p-sel', 'username': 'Seleção', 'tag': 'NA1'}},
+        {'member': spooky, 'account': {'puuid': 'p-spk', 'username': 'spooky meme slam', 'tag': 'kewk'}},
+    ]
+    histories = {'p-sel': SELECAO_HISTORY, 'p-spk': SPOOKY_HISTORY[2:]}
 
     fake_client = MagicMock()
-    fake_client.get_recent_competitive_updates = AsyncMock(return_value=[
-        {'match_id': 'game-123', 'rr': 5, 'rr_change': 18, 'started_at': None},
-    ])
+    fake_client.get_recent_competitive_updates = AsyncMock(
+        side_effect=lambda u, t, puuid=None, force_refresh=False: histories[puuid])
     fake_client.get_mmr = AsyncMock()
     with patch('match_tracker.valorant_client', fake_client):
-        result = await tracker._get_ranked_up_member_ids(
-            discord_members, match_id='game-123'
-        )
+        rank_ups, pending = await tracker._check_rank_ups(squad, 'a1bfd35f')
 
-    assert result == {1}
+    assert rank_ups == {1: 'Diamond 1'}
+    assert [dm['member'].id for dm in pending] == [2]
+    # Current-MMR snapshots can describe an earlier game - never consulted
     fake_client.get_mmr.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_ranked_up_detected_on_promotion(discord_member_factory):
+async def test_check_rank_ups_covers_unlinked_and_skips_unidentifiable(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
-    member = discord_member_factory(user_id=1, name='Player1')
-    discord_members = [{'member': member,
-                        'account': {'puuid': 'p1', 'username': 'Player1', 'tag': 'NA1'}}]
+    unlinked = discord_member_factory(user_id='p-sel', name='Seleção#NA1')
+    anonymous = discord_member_factory(user_id=3, name='Nobody')
+    squad = [
+        {'member': unlinked, 'account': {'puuid': 'p-sel'}},  # puuid only
+        {'member': anonymous, 'account': {}},
+    ]
 
-    # rr=5, change=+18 -> pre-game RR-in-tier was -13 -> crossed a tier boundary
     fake_client = MagicMock()
-    fake_client.get_mmr = AsyncMock(return_value={
-        'tier': 'Diamond 1', 'rr': 5, 'rr_change': 18, 'emoji': '💎', 'peak': 'Diamond 1',
-    })
+    fake_client.get_recent_competitive_updates = AsyncMock(return_value=SELECAO_HISTORY)
     with patch('match_tracker.valorant_client', fake_client):
-        result = await tracker._get_ranked_up_member_ids(discord_members)
+        rank_ups, pending = await tracker._check_rank_ups(squad, 'a1bfd35f')
 
-    assert result == {1}
+    assert rank_ups == {'p-sel': 'Diamond 1'}
+    assert pending == []
+    fake_client.get_recent_competitive_updates.assert_awaited_once_with(
+        None, None, puuid='p-sel', force_refresh=True)
 
 
 @pytest.mark.asyncio
-async def test_ranked_up_empty_without_promotion(discord_member_factory):
+async def test_check_rank_ups_failed_fetch_is_pending(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
-    member = discord_member_factory(user_id=1, name='Player1')
-    discord_members = [{'member': member,
-                        'account': {'puuid': 'p1', 'username': 'Player1', 'tag': 'NA1'}}]
+    member = discord_member_factory(user_id=1, name='Ming')
+    squad = [{'member': member, 'account': {'puuid': 'p1'}}]
 
-    # rr=45, change=+18 -> pre-game RR was 27, no boundary crossed
     fake_client = MagicMock()
-    fake_client.get_mmr = AsyncMock(return_value={
-        'tier': 'Diamond 1', 'rr': 45, 'rr_change': 18, 'emoji': '💎', 'peak': 'Diamond 2',
-    })
+    fake_client.get_recent_competitive_updates = AsyncMock(return_value=None)
     with patch('match_tracker.valorant_client', fake_client):
-        result = await tracker._get_ranked_up_member_ids(discord_members)
+        rank_ups, pending = await tracker._check_rank_ups(squad, 'a1bfd35f')
 
-    assert result == set()
+    assert rank_ups == {}
+    assert pending == squad
 
 
 @pytest.mark.asyncio
-async def test_ranked_up_empty_on_rr_loss(discord_member_factory):
+async def test_follow_up_edits_recap_when_late_row_shows_rank_up(discord_member_factory):
+    """A member whose row lands after the recap posted gets the marker added
+    by editing only the squad field of the posted message."""
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
-    member = discord_member_factory(user_id=1, name='Player1')
-    discord_members = [{'member': member,
-                        'account': {'puuid': 'p1', 'username': 'Player1', 'tag': 'NA1'}}]
+    tracker.RANK_UP_RETRY_INTERVAL_SECONDS = 0
+    match = _rank_match()
+    member = discord_member_factory(user_id=1, name='Ming')
+    discord_members = [{'member': member, 'account': {'puuid': 'p1'},
+                        'player_data': match['players']['all_players'][0]}]
 
-    # Negative RR change is never a rank up, even at low RR
+    embed = discord.Embed(title="🎯 Match Results")
+    name, value = tracker._build_squad_field(match, discord_members, {})
+    embed.add_field(name=name, value=value, inline=False)
+    embed.add_field(name="🎆 Match Highlights", value="untouched", inline=False)
+    message = MagicMock()
+    message.embeds = [embed]
+    message.edit = AsyncMock()
+
     fake_client = MagicMock()
-    fake_client.get_mmr = AsyncMock(return_value={
-        'tier': 'Diamond 1', 'rr': 5, 'rr_change': -16, 'emoji': '💎', 'peak': 'Diamond 2',
-    })
+    # First retry: row still missing; second retry: promotion row is there
+    fake_client.get_recent_competitive_updates = AsyncMock(
+        side_effect=[SELECAO_HISTORY[1:], SELECAO_HISTORY])
     with patch('match_tracker.valorant_client', fake_client):
-        result = await tracker._get_ranked_up_member_ids(discord_members)
+        await tracker._follow_up_rank_ups(
+            [message], match, discord_members, 'a1bfd35f', {}, discord_members)
 
-    assert result == set()
+    assert fake_client.get_recent_competitive_updates.await_count == 2
+    message.edit.assert_awaited_once()
+    edited = message.edit.await_args.kwargs['embed']
+    assert 'Diamond 1 ⬆️ **Rank Up!**' in edited.fields[0].value
+    assert edited.fields[1].value == "untouched"
 
 
 @pytest.mark.asyncio
-async def test_ranked_up_skips_accounts_without_credentials(discord_member_factory):
+async def test_follow_up_gives_up_without_editing(discord_member_factory):
     bot = MagicMock(spec=discord.Client)
     tracker = MatchTracker(bot)
-    member = discord_member_factory(user_id=1, name='Player1')
-    # No username/tag -> should not trigger an API call
-    discord_members = [{'member': member, 'account': {'puuid': 'p1'}}]
+    tracker.RANK_UP_RETRY_INTERVAL_SECONDS = 0
+    tracker.RANK_UP_RETRY_ATTEMPTS = 3
+    match = _rank_match()
+    member = discord_member_factory(user_id=1, name='Ming')
+    discord_members = [{'member': member, 'account': {'puuid': 'p1'},
+                        'player_data': match['players']['all_players'][0]}]
+    message = MagicMock()
+    message.edit = AsyncMock()
 
     fake_client = MagicMock()
-    fake_client.get_mmr = AsyncMock()
+    fake_client.get_recent_competitive_updates = AsyncMock(return_value=SELECAO_HISTORY[1:])
     with patch('match_tracker.valorant_client', fake_client):
-        result = await tracker._get_ranked_up_member_ids(discord_members)
+        await tracker._follow_up_rank_ups(
+            [message], match, discord_members, 'a1bfd35f', {}, discord_members)
 
-    assert result == set()
-    fake_client.get_mmr.assert_not_called()
+    assert fake_client.get_recent_competitive_updates.await_count == 3
+    message.edit.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -432,3 +505,29 @@ async def test_session_recap_excludes_out_of_window_matches(discord_member_facto
     assert any('No tracked games' in f.name for f in embed.fields)
     # Out-of-window matches must not trigger a (heavy) details fetch
     fake_client.get_match_details.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_send_match_results_schedules_follow_up_only_when_pending(discord_member_factory):
+    bot = MagicMock(spec=discord.Client)
+    tracker = MatchTracker(bot)
+    match = _rank_match()
+    member = discord_member_factory(user_id=1, name='Ming')
+    discord_members = [{'member': member, 'account': {'puuid': 'p1'},
+                        'player_data': match['players']['all_players'][0]}]
+    channel = MagicMock()
+    channel.name = 'shooty'
+    channel.send = AsyncMock(return_value=MagicMock())
+    guild = MagicMock()
+    guild.text_channels = [channel]
+
+    for pending, expect_follow_up in (([], False), (discord_members, True)):
+        follow_up = AsyncMock()
+        with patch.object(tracker, '_check_rank_ups', AsyncMock(return_value=({}, pending))), \
+             patch.object(tracker, '_create_match_embed', AsyncMock(return_value=discord.Embed())), \
+             patch.object(tracker, '_follow_up_rank_ups', follow_up), \
+             patch.object(MatchTracker, '_iter_active_stacks', return_value=iter(())), \
+             patch('match_tracker.recap_view', return_value=None):
+            await tracker._send_match_results(guild, match, discord_members)
+            await asyncio.gather(*tracker._background_tasks)
+
+        assert follow_up.await_count == (1 if expect_follow_up else 0)

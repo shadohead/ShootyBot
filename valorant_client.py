@@ -157,7 +157,7 @@ class ValorantClient(BaseAPIClient):
                 logging.warning(f"Valorant account not found: {username}#{tag}")
                 return None
             else:
-                log_error(f"Valorant API request", Exception(f"Status {response.status_code}"))
+                log_error("Valorant API request", Exception(f"Status {response.status_code}"))
                 return None
                 
         except Exception as e:
@@ -412,7 +412,12 @@ class ValorantClient(BaseAPIClient):
 
         Returns a normalized list (most recent first)::
 
-            [{'match_id', 'started_at' (datetime or None), 'rr_change'}, ...]
+            [{'match_id', 'started_at' (datetime or None), 'rr_change',
+              'rr', 'tier', 'tier_name'}, ...]
+
+        ``rr``/``tier``/``tier_name`` are the player's standing *after* that
+        match, so comparing a row's tier with the next (older) row's tier tells
+        whether that specific game promoted them.
         """
         try:
             usable_puuid = self._usable_puuid(puuid)
@@ -437,12 +442,16 @@ class ValorantClient(BaseAPIClient):
                     started = parse_henrik_timestamp(entry.get('date_raw'))
                 if started is None:
                     started = parse_henrik_timestamp(entry.get('date'))
+                tier = entry.get('currenttier')
                 normalized.append({
                     'match_id': match_id,
                     'started_at': started,
                     'rr_change': entry.get('mmr_change_to_last_game'),
-                    # Post-game RR for this specific match (used for rank-up detection)
+                    # Post-game standing for this specific match (used for rank-up detection)
                     'rr': entry.get('ranking_in_tier'),
+                    'tier': tier,
+                    'tier_name': entry.get('currenttierpatched') or (
+                        tier_name(tier) if tier is not None else None),
                 })
             return normalized
         except Exception as e:
@@ -1547,8 +1556,7 @@ class ValorantClient(BaseAPIClient):
         """Get storage usage statistics"""
         try:
             henrik_stats = database_manager.get_henrik_storage_stats()
-            db_stats = database_manager.get_database_stats()
-            
+
             return {
                 'stored_matches': henrik_stats.get('stored_matches', 0),
                 'stored_player_stats': henrik_stats.get('stored_player_stats', 0),

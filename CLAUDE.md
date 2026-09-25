@@ -428,6 +428,13 @@ ShootyBot uses a tiered approach to keep Henrik API usage cheap and fast:
   (from the `behavior` block), total ability casts (None = data missing), fastest kill
   (ms) and longest kill distance (game units, ~100/meter). Clutch attempts/wins
   (`1v1`-`1v5`) are detected per round and fill the `clutches_*` columns.
+- **Rank-up detection** (`_check_rank_ups` in `match_tracker.py`): only trust the
+  mmr-history row whose `match_id` is this match, and compare its `tier` with the
+  previous row's. Never fall back to `v2 mmr` `current_data` or the latest row -
+  Henrik publishes each player's row independently (minutes apart), so at recap
+  time those can still describe the *previous* game and re-report an old promotion.
+  Players whose row hasn't landed are re-checked by `_follow_up_rank_ups`, which
+  edits the posted recap's squad field in place.
 - **Post-game recap highlights**: `_calculate_fun_match_stats()` in `match_tracker.py`
   generates scored highlight candidates from every stat source, then
   `_select_highlights()` picks the most interesting post-game (highest score first,

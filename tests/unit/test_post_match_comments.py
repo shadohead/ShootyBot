@@ -73,7 +73,7 @@ async def test_recap_shows_result_once_in_headline(discord_member_factory):
     with patch('match_tracker.format_time_ago', return_value='just now'), \
          patch.object(tracker, '_calculate_fun_match_stats',
                       return_value={'highlights': [], 'top_performers': {}, 'funny_stats': {}}), \
-         patch.object(tracker, '_get_ranked_up_member_ids', AsyncMock(return_value=set())):
+         patch.object(tracker, '_check_rank_ups', AsyncMock(return_value=({}, []))):
         embed = await tracker._create_match_embed(match, discord_members)
 
     # Headline carries the outcome + scoreline once.

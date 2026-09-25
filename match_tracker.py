@@ -51,6 +51,16 @@ class MatchTracker:
     # presence has actually been seen working for this stack, so broken/hidden
     # presence can never end a session early — it just falls back to the timer.
     STACK_OFFLINE_END_MINUTES = 20
+    # Henrik publishes each player's mmr-history row for a match independently,
+    # often minutes apart, and the recap posts as soon as the FIRST squad
+    # member's row appears. Members whose row hasn't landed yet are re-checked
+    # on this cadence and the recap is edited in place if they ranked up.
+    RANK_UP_RETRY_INTERVAL_SECONDS = 60
+    RANK_UP_RETRY_ATTEMPTS = 15
+    # Lowest ranked tier (Iron 1); anything below is Unrated/placements.
+    FIRST_RANKED_TIER = 3
+    # Name prefix of the recap's squad field (located again to edit it in place)
+    SQUAD_FIELD_PREFIX = "👥 Squad"
 
     # Weapon-personality recap highlights, as
     # (category, weapon names, min kills, interest score, message template).
@@ -116,7 +126,10 @@ class MatchTracker:
         # activity), so an idle bot does zero SD-card writes per cycle.
         self._state_dirty: bool = False
         self._last_state_cleanup: Optional[datetime] = None
-        
+        # Strong refs to fire-and-forget tasks (rank-up follow-ups) so they
+        # aren't garbage-collected mid-flight.
+        self._background_tasks: set = set()
+
     async def start_tracking(self) -> None:
         """Start the background match tracking task"""
         if self.running:
@@ -426,17 +439,38 @@ class MatchTracker:
             return
 
         try:
-            embed = await self._create_match_embed(match, discord_members, game_number)
             match_id = match.get('metadata', {}).get('matchid')
+            squad = discord_members + self._unlinked_teammates(match, discord_members)
+            rank_ups, pending = await self._check_rank_ups(squad, match_id)
+            logging.info(
+                f"Posting recap for match {match_id}: rank-ups="
+                f"{[dm['member'].display_name for dm in squad if dm['member'].id in rank_ups]}, "
+                f"awaiting mmr-history={[dm['member'].display_name for dm in pending]}")
+
+            embed = await self._create_match_embed(
+                match, discord_members, game_number, rank_ups=rank_ups)
+            messages = []
             for ch in target_channels:
                 # A fresh view per send avoids reusing one View across messages.
-                await ch.send(embed=embed, view=recap_view(match_id))
+                messages.append(await ch.send(embed=embed, view=recap_view(match_id)))
+
+            if pending and messages and match_id:
+                task = asyncio.create_task(self._follow_up_rank_ups(
+                    messages, match, discord_members, match_id, rank_ups, pending))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
 
         except Exception as e:
             log_error("sending match results", e)
     
-    async def _create_match_embed(self, match: dict, discord_members: List[Dict], game_number: int = 1) -> discord.Embed:
-        """Create a fun match results embed"""
+    async def _create_match_embed(self, match: dict, discord_members: List[Dict], game_number: int = 1,
+                                  rank_ups: Optional[Dict[Any, Optional[str]]] = None) -> discord.Embed:
+        """Create a fun match results embed.
+
+        ``rank_ups`` ({member id: new tier name}) comes from
+        ``_check_rank_ups``; when omitted it is computed here, without the
+        follow-up for members whose mmr-history row hasn't landed yet.
+        """
         metadata = match.get('metadata', {})
         map_name = metadata.get('map', 'Unknown')
         rounds_played = metadata.get('rounds_played', 0)
@@ -546,62 +580,14 @@ class MatchTracker:
         # The round-by-round flow now lives in the Advanced Stats popup so the
         # overview stays focused on the result and the squad.
 
-        # Add Discord members who played. Each line carries K/D/A plus the two
-        # most useful per-round numbers (ACS, ADR); the top ACS in the squad
-        # gets a 👑, and a one-line summary rolls the squad up.
-        entries = []  # (display_name, stats, rank_str, rankup_str)
-
         # Members who crossed up a full tier this game (shown inline)
-        ranked_up_ids = await self._get_ranked_up_member_ids(
-            discord_members, match_id=match_id or None
-        )
+        if rank_ups is None:
+            rank_ups, _pending = await self._check_rank_ups(
+                discord_members + unlinked_members, match_id or None)
 
-        # Linked members first (by Discord name), then unlinked teammates
-        # (by in-game name#tag) — everyone gets the same stat line.
-        for dm in discord_members + unlinked_members:
-            member = dm['member']
-            player_data = dm['player_data']
-            puuid = dm.get('account', {}).get('puuid') or player_data.get('puuid')
-
-            pstats = player_display_stats(match, player_data, puuid)
-            rank = get_player_rank(player_data)
-            rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
-            rankup_str = " ⬆️ **Rank Up!**" if member.id in ranked_up_ids else ""
-            entries.append((member.display_name, pstats, rank_str, rankup_str))
-
-        member_list = []
-        for display_name, s, rank_str, rankup_str in entries:
-            kda = f"{s['kills']}/{s['deaths']}/{s['assists']}"
-            # Show the agent each player ran, omitting it when unknown so the
-            # line stays clean for untracked/sparse data.
-            agent = s.get('agent', '')
-            agent_str = f" ({agent})" if agent and agent.lower() != 'unknown' else ""
-            # ACS/ADR live in the Advanced Stats popup — the per-player recap
-            # line stays lean with just K/D/A and rank to cut the noise.
-            member_list.append(f"• **{display_name}**{agent_str}: {kda}{rank_str}{rankup_str}")
-
-        # One-line squad roll-up above the per-player lines.
-        if entries:
-            tot_k = sum(s['kills'] for _, s, _, _ in entries)
-            tot_d = sum(s['deaths'] for _, s, _, _ in entries)
-            tot_a = sum(s['assists'] for _, s, _, _ in entries)
-            avg_acs = round(sum(s['acs'] for _, s, _, _ in entries) / len(entries))
-            tot_fk = sum(s['fk'] for _, s, _, _ in entries)
-            tot_fd = sum(s['fd'] for _, s, _, _ in entries)
-            summary = f"**Squad:** {tot_k}/{tot_d}/{tot_a}"
-            if avg_acs:
-                summary += f" · {avg_acs} avg ACS"
-            if tot_fk or tot_fd:
-                summary += f" · {tot_fk} FK / {tot_fd} FD"
-            member_list.insert(0, summary)
-
-        squad_size = len(discord_members) + len(unlinked_members)
-
-        embed.add_field(
-            name=f"👥 Squad ({squad_size})",
-            value="\n".join(member_list) if member_list else "No squad members found",
-            inline=False
-        )
+        squad_name, squad_value = self._build_squad_field(
+            match, discord_members + unlinked_members, rank_ups)
+        embed.add_field(name=squad_name, value=squad_value, inline=False)
 
         # Add enhanced fun highlights
         if fun_stats['highlights']:
@@ -627,6 +613,62 @@ class MatchTracker:
 
         embed.set_footer(text="Use /shootylink to show up in post-match recaps!")
         return embed
+
+    @classmethod
+    def _build_squad_field(cls, match: dict, squad: List[Dict],
+                           rank_ups: Dict[Any, Optional[str]]) -> tuple:
+        """Render the squad field as ``(name, value)``.
+
+        ``squad`` is linked members first (by Discord name), then unlinked
+        teammates (by in-game name#tag) — everyone gets the same stat line.
+        Kept separate from the rest of the embed (and free of random flavor
+        text) so a late rank-up can re-render just this field in place.
+        """
+        entries = []  # (display_name, stats, rank_str)
+        for dm in squad:
+            member = dm['member']
+            player_data = dm['player_data']
+            puuid = dm.get('account', {}).get('puuid') or player_data.get('puuid')
+
+            pstats = player_display_stats(match, player_data, puuid)
+            if member.id in rank_ups:
+                # Match data carries the rank from before the game; a promoted
+                # player's line shows where they landed instead.
+                rank = rank_ups[member.id] or get_player_rank(player_data)
+                rank_str = f" • {rank_emoji(rank)} {rank} ⬆️ **Rank Up!**" if rank else " ⬆️ **Rank Up!**"
+            else:
+                rank = get_player_rank(player_data)
+                rank_str = f" • {rank_emoji(rank)} {rank}" if rank else ""
+            entries.append((member.display_name, pstats, rank_str))
+
+        member_list = []
+        for display_name, s, rank_str in entries:
+            kda = f"{s['kills']}/{s['deaths']}/{s['assists']}"
+            # Show the agent each player ran, omitting it when unknown so the
+            # line stays clean for untracked/sparse data.
+            agent = s.get('agent', '')
+            agent_str = f" ({agent})" if agent and agent.lower() != 'unknown' else ""
+            # ACS/ADR live in the Advanced Stats popup — the per-player recap
+            # line stays lean with just K/D/A and rank to cut the noise.
+            member_list.append(f"• **{display_name}**{agent_str}: {kda}{rank_str}")
+
+        # One-line squad roll-up above the per-player lines.
+        if entries:
+            tot_k = sum(s['kills'] for _, s, _ in entries)
+            tot_d = sum(s['deaths'] for _, s, _ in entries)
+            tot_a = sum(s['assists'] for _, s, _ in entries)
+            avg_acs = round(sum(s['acs'] for _, s, _ in entries) / len(entries))
+            tot_fk = sum(s['fk'] for _, s, _ in entries)
+            tot_fd = sum(s['fd'] for _, s, _ in entries)
+            summary = f"**Squad:** {tot_k}/{tot_d}/{tot_a}"
+            if avg_acs:
+                summary += f" · {avg_acs} avg ACS"
+            if tot_fk or tot_fd:
+                summary += f" · {tot_fk} FK / {tot_fd} FD"
+            member_list.insert(0, summary)
+
+        return (f"{cls.SQUAD_FIELD_PREFIX} ({len(squad)})",
+                "\n".join(member_list) if member_list else "No squad members found")
 
     @staticmethod
     def _build_loss_comment(my_rounds: int, opponent_rounds: int, game_number: int) -> tuple:
@@ -716,80 +758,131 @@ class MatchTracker:
 
         return "🏆 GG", "\n".join(lines)
 
-    @staticmethod
-    def _is_full_tier_promotion(rr: Optional[int], change: Optional[int]) -> bool:
-        """True when a positive RR gain crossed a sub-rank boundary this game."""
-        if rr is None or change is None or change <= 0:
-            return False
-        return (rr - change) < 0
+    @classmethod
+    def _is_promotion(cls, row: Dict[str, Any], prev_row: Optional[Dict[str, Any]]) -> bool:
+        """True when the game behind this mmr-history row promoted the player.
 
-    async def _get_ranked_up_member_ids(
-        self, discord_members: List[Dict], match_id: Optional[str] = None
-    ) -> set:
-        """Return the ids of squad members who crossed up a full tier this game.
-
-        A promotion is detected when the game's RR gain pushed the player past a
-        tier boundary: their pre-game RR-in-tier (``rr - rr_change``) was below
-        zero.
-
-        Prefer the per-match mmr-history row for ``match_id`` (same source used
-        to detect the game) so we don't miss promotions from a stale cached MMR
-        snapshot. Fall back to a fresh MMR fetch when history is unavailable.
-
-        Best-effort: silently skips members whose MMR can't be fetched (private
-        profile, API down, no key), so the recap still renders without them.
+        Tiers are authoritative: a win that lands the player in a higher tier
+        than their previous game. Coming out of placements (previous tier
+        Unrated) isn't a promotion. When either tier is unknown, fall back to
+        RR arithmetic: a positive gain whose pre-game RR-in-tier
+        (``rr - rr_change``) was negative crossed a tier boundary.
         """
-        async def check_member(dm) -> Optional[int]:
+        change = row.get('rr_change')
+        if change is None or change <= 0:
+            return False
+
+        tier = row.get('tier')
+        prev_tier = (prev_row or {}).get('tier')
+        if isinstance(tier, int) and isinstance(prev_tier, int):
+            return prev_tier >= cls.FIRST_RANKED_TIER and tier > prev_tier
+
+        rr = row.get('rr')
+        return rr is not None and (rr - change) < 0
+
+    @classmethod
+    def _rank_up_from_history(cls, updates: List[Dict[str, Any]], match_id: str) -> Optional[tuple]:
+        """Look up ``match_id`` in a player's mmr-history (most recent first).
+
+        Returns ``None`` when the match isn't in the history yet, otherwise
+        ``(promoted, new_tier_name)``. Only this match's own row is trusted —
+        the player's latest row or current MMR can describe an earlier game
+        (e.g. last game's promotion) and would be re-reported.
+        """
+        for i, row in enumerate(updates):
+            if row.get('match_id') != match_id:
+                continue
+            prev_row = updates[i + 1] if i + 1 < len(updates) else None
+            return cls._is_promotion(row, prev_row), row.get('tier_name')
+        return None
+
+    async def _check_rank_ups(self, squad: List[Dict], match_id: Optional[str]) -> tuple:
+        """Find squad members promoted by ``match_id``.
+
+        Returns ``(rank_ups, pending)``: ``rank_ups`` maps member id -> new tier
+        name (``None`` if unknown) for promoted players; ``pending`` lists the
+        squad entries whose mmr-history doesn't show this match yet (Henrik
+        lag, or a failed fetch) so the caller can re-check them later.
+
+        Unlinked teammates are checked too — by-puuid lookups need no
+        Riot ID. Entries with neither a puuid nor a Riot ID are skipped.
+        """
+        rank_ups: Dict[Any, Optional[str]] = {}
+        pending: List[Dict] = []
+        if not match_id:
+            return rank_ups, pending
+
+        def can_look_up(dm) -> bool:
             account = dm.get('account', {}) or {}
-            username = account.get('username')
-            tag = account.get('tag')
-            if not username or not tag:
+            return bool(account.get('puuid') or (account.get('username') and account.get('tag')))
+
+        async def fetch_history(dm):
+            account = dm.get('account', {}) or {}
+            try:
+                return await valorant_client.get_recent_competitive_updates(
+                    account.get('username'), account.get('tag'),
+                    puuid=account.get('puuid'), force_refresh=True
+                )
+            except Exception as e:
+                log_error(f"fetching mmr-history for {dm['member'].display_name}", e)
                 return None
-
-            rr = None
-            change = None
-            puuid = account.get('puuid')
-
-            if match_id:
-                try:
-                    updates = await valorant_client.get_recent_competitive_updates(
-                        username, tag, puuid=puuid, force_refresh=True
-                    )
-                except Exception as e:
-                    log_error(f"fetching mmr-history for {username}#{tag}", e)
-                    updates = None
-
-                if updates:
-                    for update in updates:
-                        if update.get('match_id') == match_id:
-                            rr = update.get('rr')
-                            change = update.get('rr_change')
-                            break
-
-            if rr is None or change is None:
-                try:
-                    mmr = await valorant_client.get_mmr(
-                        username, tag, puuid=puuid, force_refresh=True
-                    )
-                except Exception as e:
-                    log_error(f"fetching rank for {username}#{tag}", e)
-                    mmr = None
-
-                if mmr:
-                    rr = mmr.get('rr')
-                    change = mmr.get('rr_change')
-
-            if self._is_full_tier_promotion(rr, change):
-                return dm['member'].id
-            return None
 
         # These fetches sit between match detection and the recap being
         # posted — run them concurrently so the announcement isn't delayed by
         # squad_size sequential round-trips.
-        results = await asyncio.gather(
-            *(check_member(dm) for dm in discord_members), return_exceptions=True
-        )
-        return {mid for mid in results if isinstance(mid, int)}
+        checkable = [dm for dm in squad if can_look_up(dm)]
+        histories = await asyncio.gather(*(fetch_history(dm) for dm in checkable))
+        for dm, updates in zip(checkable, histories):
+            result = self._rank_up_from_history(updates or [], match_id)
+            if result is None:
+                pending.append(dm)
+                continue
+            promoted, new_tier = result
+            if promoted:
+                rank_ups[dm['member'].id] = new_tier
+
+        return rank_ups, pending
+
+    async def _follow_up_rank_ups(self, messages: List[discord.Message], match: dict,
+                                  discord_members: List[Dict], match_id: str,
+                                  rank_ups: Dict[Any, Optional[str]],
+                                  pending: List[Dict]) -> None:
+        """Re-check squad members whose mmr-history row for ``match_id`` wasn't
+        published when the recap posted, and edit the recap's squad field in
+        place when one of them turns out to have ranked up."""
+        rank_ups = dict(rank_ups)
+        squad = discord_members + self._unlinked_teammates(match, discord_members)
+        try:
+            for _attempt in range(self.RANK_UP_RETRY_ATTEMPTS):
+                await asyncio.sleep(self.RANK_UP_RETRY_INTERVAL_SECONDS)
+                found, pending = await self._check_rank_ups(pending, match_id)
+                if found:
+                    rank_ups.update(found)
+                    name, value = self._build_squad_field(match, squad, rank_ups)
+                    for message in messages:
+                        await self._replace_squad_field(message, name, value)
+                    logging.info(
+                        f"Late rank-up for match {match_id}: "
+                        + ", ".join(dm['member'].display_name for dm in squad
+                                    if dm['member'].id in found))
+                if not pending:
+                    return
+            logging.info(
+                f"Gave up on rank-up check for match {match_id}: no mmr-history row for "
+                + ", ".join(dm['member'].display_name for dm in pending))
+        except Exception as e:
+            log_error(f"following up rank-ups for match {match_id}", e)
+
+    async def _replace_squad_field(self, message: discord.Message, name: str, value: str) -> None:
+        """Swap the squad field of a posted recap, leaving the rest untouched."""
+        if not message.embeds:
+            return
+        embed = message.embeds[0]
+        for i, field in enumerate(embed.fields):
+            if field.name.startswith(self.SQUAD_FIELD_PREFIX):
+                embed.set_field_at(i, name=name, value=value, inline=False)
+                await message.edit(embed=embed)
+                return
 
     async def build_session_recap(self, guild: discord.Guild, participants: List[discord.Member], session) -> discord.Embed:
         """Build an end-of-session recap embed.
