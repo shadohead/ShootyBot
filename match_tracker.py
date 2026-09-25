@@ -52,7 +52,7 @@ class MatchTracker:
     # presence can never end a session early — it just falls back to the timer.
     STACK_OFFLINE_END_MINUTES = 20
     # A stack that gathered but never got a game in (and nobody queued has
-    # Valorant open) is closed this long after its /st message — otherwise it
+    # Valorant open) is closed this long after its /st message - otherwise it
     # stays "active" indefinitely and wedges the auto-update session guard.
     STACK_UNPLAYED_END_HOURS = 3
     # Henrik publishes each player's mmr-history row for a match independently,
@@ -133,6 +133,9 @@ class MatchTracker:
         # Strong refs to fire-and-forget tasks (rank-up follow-ups) so they
         # aren't garbage-collected mid-flight.
         self._background_tasks: set = set()
+        # Channels whose persisted stack_state row must be deleted on the next
+        # save - the save loop only upserts channels still in memory.
+        self._stack_states_to_delete: set = set()
 
     async def start_tracking(self) -> None:
         """Start the background match tracking task"""
@@ -624,7 +627,7 @@ class MatchTracker:
         """Render the squad field as ``(name, value)``.
 
         ``squad`` is linked members first (by Discord name), then unlinked
-        teammates (by in-game name#tag) — everyone gets the same stat line.
+        teammates (by in-game name#tag) - everyone gets the same stat line.
         Kept separate from the rest of the embed (and free of random flavor
         text) so a late rank-up can re-render just this field in place.
         """
@@ -652,7 +655,7 @@ class MatchTracker:
             # line stays clean for untracked/sparse data.
             agent = s.get('agent', '')
             agent_str = f" ({agent})" if agent and agent.lower() != 'unknown' else ""
-            # ACS/ADR live in the Advanced Stats popup — the per-player recap
+            # ACS/ADR live in the Advanced Stats popup - the per-player recap
             # line stays lean with just K/D/A and rank to cut the noise.
             member_list.append(f"• **{display_name}**{agent_str}: {kda}{rank_str}")
 
@@ -789,7 +792,7 @@ class MatchTracker:
         """Look up ``match_id`` in a player's mmr-history (most recent first).
 
         Returns ``None`` when the match isn't in the history yet, otherwise
-        ``(promoted, new_tier_name)``. Only this match's own row is trusted —
+        ``(promoted, new_tier_name)``. Only this match's own row is trusted -
         the player's latest row or current MMR can describe an earlier game
         (e.g. last game's promotion) and would be re-reported.
         """
@@ -808,7 +811,7 @@ class MatchTracker:
         squad entries whose mmr-history doesn't show this match yet (Henrik
         lag, or a failed fetch) so the caller can re-check them later.
 
-        Unlinked teammates are checked too — by-puuid lookups need no
+        Unlinked teammates are checked too - by-puuid lookups need no
         Riot ID. Entries with neither a puuid nor a Riot ID are skipped.
         """
         rank_ups: Dict[Any, Optional[str]] = {}
@@ -1894,12 +1897,8 @@ class MatchTracker:
                 # Skip if no one is in the stack
                 if not all_stack_users:
                     # Clean up tracking data for empty stacks
-                    if self.stack_last_activity.pop(channel_id, None) is not None:
-                        self._state_dirty = True
-                    if self.stack_has_played.pop(channel_id, None) is not None:
-                        self._state_dirty = True
-                    self.stack_seen_playing.pop(channel_id, None)
-                    self.stack_offline_since.pop(channel_id, None)
+                    if channel_id in self.stack_has_played or channel_id in self.stack_last_activity:
+                        self.reset_stack_tracking(channel_id)
                     continue
 
                 # Stacks that never got a game in only expire by age
@@ -1953,13 +1952,29 @@ class MatchTracker:
             if not getattr(user, 'bot', False)
         )
 
+    def reset_stack_tracking(self, channel_id: int) -> None:
+        """Forget a channel's per-session tracking state, in memory and in the
+        database.
+
+        Called when a new session starts and when a stack ends or empties.
+        Activity from an earlier session must never carry over: a leftover
+        ``has_played``/``last_activity`` from last night made the inactivity
+        fallback end a brand-new /st 44 seconds after it was posted.
+        """
+        self.stack_last_activity.pop(channel_id, None)
+        self.stack_has_played.pop(channel_id, None)
+        self.stack_seen_playing.pop(channel_id, None)
+        self.stack_offline_since.pop(channel_id, None)
+        self._stack_states_to_delete.add(channel_id)
+        self._state_dirty = True
+
     def is_stack_in_progress(self, channel_id: int, stack_users) -> bool:
         """Whether a queued stack is actually mid-session (worth not restarting).
 
         True while someone queued has Valorant open, or a game was detected
         within STACK_INACTIVITY_HOURS (covers the gap between games and hidden
         presence). A stack that is only gathering, or was abandoned without
-        playing, is not in progress — a restart rebuilds it from reactions.
+        playing, is not in progress - a restart rebuilds it from reactions.
         """
         if not stack_users:
             return False
@@ -1975,7 +1990,7 @@ class MatchTracker:
                                      current_time: datetime) -> None:
         """Close a stack that never got a game in once it's clearly abandoned.
 
-        Ends the session quietly — there are no games to recap.
+        Ends the session quietly - there are no games to recap.
         """
         started_at = self._stack_started_at(context)
         if started_at is None:
@@ -2044,14 +2059,8 @@ class MatchTracker:
             # Clear users from the stack
             context.reset_users()
             
-            # Clean up tracking data
-            if channel.id in self.stack_last_activity:
-                del self.stack_last_activity[channel.id]
-            if channel.id in self.stack_has_played:
-                del self.stack_has_played[channel.id]
-            self.stack_seen_playing.pop(channel.id, None)
-            self.stack_offline_since.pop(channel.id, None)
-            self._state_dirty = True
+            # Clean up tracking data (memory and the persisted row)
+            self.reset_stack_tracking(channel.id)
 
             logging.info(
                 f"Auto-ended stack in channel {channel.id} ({reason}) after {inactivity_duration}"
@@ -2170,9 +2179,17 @@ class MatchTracker:
                     
                     self.tracked_members[user_id] = tracking_data
             
-            # Load stack states
+            # Load stack states. Only a stack that is live again after the
+            # restart (rebuilt from its session message's reactions) can still
+            # own its activity; any other row is from a finished session and
+            # would otherwise be applied to the channel's next /st.
             stack_states = database_manager.get_all_stack_states()
             for channel_id, state_data in stack_states.items():
+                context = context_manager.contexts.get(channel_id)
+                if context is None or not (context.bot_soloq_user_set or context.bot_fullstack_user_set):
+                    self._stack_states_to_delete.add(channel_id)
+                    self._state_dirty = True
+                    continue
                 self.stack_has_played[channel_id] = state_data['has_played']
                 if state_data['last_activity']:
                     self.stack_last_activity[channel_id] = state_data['last_activity']
@@ -2213,6 +2230,12 @@ class MatchTracker:
                         
                         database_manager.save_match_tracker_state(user_id, server_id, tracking_data_copy)
             
+            # Drop rows for stacks that ended/reset (unless re-created since)
+            for channel_id in list(self._stack_states_to_delete):
+                if channel_id not in self.stack_has_played:
+                    database_manager.remove_stack_state(channel_id)
+                self._stack_states_to_delete.discard(channel_id)
+
             # Save stack states
             for channel_id, has_played in self.stack_has_played.items():
                 last_activity = self.stack_last_activity.get(channel_id)

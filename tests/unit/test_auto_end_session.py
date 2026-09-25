@@ -235,7 +235,7 @@ class TestAutoEndPostsRecap:
 
 
 class TestUnplayedStackExpiry:
-    """A stack that gathered but never played must not linger forever — it held
+    """A stack that gathered but never played must not linger forever - it held
     the auto-update guard for 12+ hours on 2026-09-25."""
 
     async def _run(self, tracker, context, playing=False):
@@ -330,3 +330,103 @@ class TestIsStackInProgress:
         with patch('match_tracker.valorant_client') as mock_client:
             mock_client.is_playing_valorant.return_value = False
             assert tracker.is_stack_in_progress(123, {make_member()}) is False
+
+
+class TestStackStateDoesNotLeakAcrossSessions:
+    """Regression for 2026-09-25 14:27: a new /st was auto-ended 44s after it
+    was posted ("inactivity after 17:18:43") because last night's has_played /
+    last_activity row for the channel survived restarts in stack_state."""
+
+    def _db(self, tmp_path):
+        from database import DatabaseManager
+        return DatabaseManager(db_path=str(tmp_path / "shooty_bot.db"))
+
+    @pytest.mark.asyncio
+    async def test_ended_stack_row_is_deleted_from_database(self, tmp_path):
+        db = self._db(tmp_path)
+        tracker = make_tracker()
+        member = make_member()
+        context = make_context([member], started_hours_ago=5)
+        tracker.stack_has_played[123] = True
+        tracker.stack_last_activity[123] = datetime.now(timezone.utc) - timedelta(hours=4)
+        tracker._state_dirty = True
+        channel = MagicMock()
+        channel.id = 123
+        tracker.bot.get_cog.return_value._end_current_session = AsyncMock()
+        tracker._send_auto_end_recap = AsyncMock()
+
+        mock_cm = MagicMock()
+        mock_cm.contexts = {123: context}
+        with patch('match_tracker.database_manager', db), \
+                patch('match_tracker.context_manager', mock_cm):
+            await tracker._save_state_to_database()
+            assert 123 in db.get_all_stack_states()
+
+            await tracker._auto_end_inactive_stack(channel, context, timedelta(hours=4))
+            await tracker._save_state_to_database()
+
+        assert 123 not in db.get_all_stack_states()
+
+    @pytest.mark.asyncio
+    async def test_leftover_row_is_not_loaded_and_new_stack_survives(self, tmp_path):
+        db = self._db(tmp_path)
+        # Last night's row, left behind by the old save loop
+        db.save_stack_state(channel_id=123, has_played=True,
+                            last_activity=datetime.now(timezone.utc) - timedelta(hours=17),
+                            participant_count=0)
+
+        tracker = make_tracker()
+        mock_cm = MagicMock()
+        mock_cm.contexts = {}  # restart: nothing restored for the channel
+        with patch('match_tracker.database_manager', db), \
+                patch('match_tracker.context_manager', mock_cm):
+            await tracker._load_state_from_database()
+            assert 123 not in tracker.stack_has_played
+            await tracker._save_state_to_database()
+        assert 123 not in db.get_all_stack_states()
+
+        # Someone runs /st in that channel a few hours later
+        context = make_context([make_member()], started_hours_ago=0)
+        tracker._auto_end_inactive_stack = AsyncMock()
+        mock_cm.contexts = {123: context}
+        with patch('match_tracker.context_manager', mock_cm), \
+                patch('match_tracker.valorant_client') as mock_client:
+            mock_client.is_playing_valorant.return_value = False
+            await tracker._check_inactive_stacks()
+        tracker._auto_end_inactive_stack.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_row_of_restored_live_stack_is_kept(self, tmp_path):
+        """A stack rebuilt from reactions after a mid-session restart keeps its
+        activity, so auto-end timers carry on where they left off."""
+        db = self._db(tmp_path)
+        last = datetime.now(timezone.utc) - timedelta(minutes=20)
+        db.save_stack_state(channel_id=123, has_played=True, last_activity=last,
+                            participant_count=3)
+
+        tracker = make_tracker()
+        mock_cm = MagicMock()
+        mock_cm.contexts = {123: make_context([make_member()], started_hours_ago=1)}
+        with patch('match_tracker.database_manager', db), \
+                patch('match_tracker.context_manager', mock_cm):
+            await tracker._load_state_from_database()
+
+        assert tracker.stack_has_played[123] is True
+        assert tracker.stack_last_activity[123] is not None
+
+    def test_reset_stack_tracking_clears_everything(self):
+        tracker = make_tracker()
+        now = datetime.now(timezone.utc)
+        tracker.stack_has_played[123] = True
+        tracker.stack_last_activity[123] = now
+        tracker.stack_seen_playing[123] = True
+        tracker.stack_offline_since[123] = now
+
+        tracker.reset_stack_tracking(123)
+
+        assert 123 not in tracker.stack_has_played
+        assert 123 not in tracker.stack_last_activity
+        assert 123 not in tracker.stack_seen_playing
+        assert 123 not in tracker.stack_offline_since
+        assert 123 in tracker._stack_states_to_delete
+        assert tracker._state_dirty is True
