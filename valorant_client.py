@@ -239,7 +239,8 @@ class ValorantClient(BaseAPIClient):
     
     def is_playing_valorant(self, member: discord.Member) -> bool:
         """Check if a Discord member is currently playing Valorant"""
-        if not member.activities:
+        # Reaction users can be plain discord.User objects (no presence data)
+        if not getattr(member, 'activities', None):
             return False
         
         for activity in member.activities:

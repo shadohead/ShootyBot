@@ -41,17 +41,22 @@ class ShootyBot(commands.Bot):
         self.active_session_file = ".active_session"
 
     def count_active_sessions(self) -> int:
-        """Count channels with players currently queued.
+        """Count channels whose stack is actually mid-session.
 
-        Used to decide whether an auto-update may restart now. We count a
-        channel only when it has queued members — a lingering ``current_session_id``
-        with nobody in the party (e.g. a session that was never explicitly
-        ended) is NOT something worth deferring an update for, and counting it
-        would wedge the update guard indefinitely.
+        Used to decide whether an auto-update may restart now. Only stacks that
+        are playing count (see ``MatchTracker.is_stack_in_progress``): a queue
+        that is just gathering, or was abandoned without playing, loses nothing
+        on a restart (party state is rebuilt from reactions), and counting it
+        would wedge the update guard for as long as the queue lingers. Without a
+        running match tracker, fall back to counting any queued channel.
         """
         active = 0
-        for context in context_manager.contexts.values():
-            if context.bot_soloq_user_set or context.bot_fullstack_user_set:
+        for channel_id, context in context_manager.contexts.items():
+            stack_users = context.bot_soloq_user_set | context.bot_fullstack_user_set
+            if not stack_users:
+                continue
+            if self.match_tracker is None or self.match_tracker.is_stack_in_progress(
+                    channel_id, stack_users):
                 active += 1
         return active
 
@@ -383,7 +388,6 @@ async def main() -> None:
     """Main bot startup function."""
     # Check for existing bot instances
     import psutil
-    import os
     current_pid = os.getpid()
     
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):

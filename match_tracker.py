@@ -51,6 +51,10 @@ class MatchTracker:
     # presence has actually been seen working for this stack, so broken/hidden
     # presence can never end a session early — it just falls back to the timer.
     STACK_OFFLINE_END_MINUTES = 20
+    # A stack that gathered but never got a game in (and nobody queued has
+    # Valorant open) is closed this long after its /st message — otherwise it
+    # stays "active" indefinitely and wedges the auto-update session guard.
+    STACK_UNPLAYED_END_HOURS = 3
     # Henrik publishes each player's mmr-history row for a match independently,
     # often minutes apart, and the recap posts as soon as the FIRST squad
     # member's row appears. Members whose row hasn't landed yet are re-checked
@@ -1898,16 +1902,14 @@ class MatchTracker:
                     self.stack_offline_since.pop(channel_id, None)
                     continue
 
-                # Only check stacks that have had gaming activity
+                # Stacks that never got a game in only expire by age
                 if not self.stack_has_played.get(channel_id, False):
+                    await self._expire_unplayed_stack(
+                        channel_id, context, all_stack_users, current_time)
                     continue
 
                 # Presence-based fast path: track when everyone stopped playing
-                anyone_playing = any(
-                    valorant_client.is_playing_valorant(user)
-                    for user in all_stack_users
-                    if not getattr(user, 'bot', False)
-                )
+                anyone_playing = self._anyone_playing(all_stack_users)
                 if anyone_playing:
                     self.stack_seen_playing[channel_id] = True
                     self.stack_offline_since.pop(channel_id, None)
@@ -1933,14 +1935,72 @@ class MatchTracker:
             except Exception as e:
                 log_error(f"checking inactive stack for channel {channel_id}", e)
     
+    @staticmethod
+    def _stack_started_at(context) -> Optional[datetime]:
+        """When the stack's current /st message was posted (snowflake time)."""
+        message_id = getattr(context, 'current_st_message_id', None)
+        if not message_id:
+            return None
+        try:
+            return discord.utils.snowflake_time(int(message_id))
+        except (TypeError, ValueError):
+            return None
+
+    def _anyone_playing(self, stack_users) -> bool:
+        return any(
+            valorant_client.is_playing_valorant(user)
+            for user in stack_users
+            if not getattr(user, 'bot', False)
+        )
+
+    def is_stack_in_progress(self, channel_id: int, stack_users) -> bool:
+        """Whether a queued stack is actually mid-session (worth not restarting).
+
+        True while someone queued has Valorant open, or a game was detected
+        within STACK_INACTIVITY_HOURS (covers the gap between games and hidden
+        presence). A stack that is only gathering, or was abandoned without
+        playing, is not in progress — a restart rebuilds it from reactions.
+        """
+        if not stack_users:
+            return False
+        if self._anyone_playing(stack_users):
+            return True
+        last_activity = self.stack_last_activity.get(channel_id)
+        if last_activity is None:
+            return False
+        return (datetime.now(timezone.utc) - last_activity) <= timedelta(
+            hours=self.STACK_INACTIVITY_HOURS)
+
+    async def _expire_unplayed_stack(self, channel_id: int, context, stack_users,
+                                     current_time: datetime) -> None:
+        """Close a stack that never got a game in once it's clearly abandoned.
+
+        Ends the session quietly — there are no games to recap.
+        """
+        started_at = self._stack_started_at(context)
+        if started_at is None:
+            return
+        age = current_time - started_at
+        if age < timedelta(hours=self.STACK_UNPLAYED_END_HOURS):
+            return
+        if self._anyone_playing(stack_users):
+            return
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            return
+        await self._auto_end_inactive_stack(
+            channel, context, age, reason="never played", post_recap=False)
+
     async def _auto_end_inactive_stack(self, channel: discord.TextChannel, context,
                                        inactivity_duration: timedelta,
-                                       reason: str = "inactivity") -> None:
+                                       reason: str = "inactivity",
+                                       post_recap: bool = True) -> None:
         """Automatically end an inactive stack and post the session recap.
 
         /stend is rarely used in practice, so this is the path that actually
         closes sessions — it must do everything /stend does, including the
-        recap, not just silently clear the stack.
+        recap, not just silently clear the stack. ``post_recap=False`` skips
+        the recap for stacks that never played a game.
         """
         try:
             # Capture before ending — _end_current_session resets the stack
@@ -1998,7 +2058,8 @@ class MatchTracker:
             )
 
             # Post the recap so it never depends on someone running /stend
-            await self._send_auto_end_recap(channel, session_id, participants)
+            if post_recap:
+                await self._send_auto_end_recap(channel, session_id, participants)
 
         except Exception as e:
             log_error(f"auto-ending stack in channel {channel.id}", e)

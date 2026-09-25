@@ -170,6 +170,12 @@ in-progress session. Two cooperating mechanisms:
   updater first pulls it). **Bootstrap:** to activate a *new cadence* instantly
   (instead of waiting for the next self-heal run), run once: `sudo ./setup_systemd.sh`.
   Reinstalling units does NOT restart the bot, so it's safe mid-session.
+- **What counts as "in progress"** (`MatchTracker.is_stack_in_progress`): a queued
+  stack where someone has Valorant open, or a game was detected within
+  `STACK_INACTIVITY_HOURS`. A queue that is only gathering, or was abandoned
+  without playing, does NOT defer updates (a restart rebuilds it from reactions).
+  Abandoned never-played stacks are closed quietly `STACK_UNPLAYED_END_HOURS`
+  after their `/st` message.
 - Privilege: the update service runs as the bot user; `sudo -n` is used
   best-effort. Without passwordless sudo it logs the one command to run by hand;
   the process-signal restart fallback needs no sudo.
@@ -181,6 +187,9 @@ in-progress session. Two cooperating mechanisms:
   reactions for every channel with a saved `current_st_message_id` and rebuilds
   the soloq/fullstack/ready sets, then re-links the still-open session via
   `database.get_open_session_for_channel()` so `/stend` and the recap still work.
+  Ending a session leaves `current_st_message_id` and its reactions in place, so
+  restore only runs when the channel has an open session started within
+  `RESTORE_MAX_AGE_HOURS` - otherwise ended parties would come back on restart.
 - **Reactions use *raw* events** (`on_raw_reaction_add/remove`), NOT the
   cache-backed `on_reaction_add/remove`. The cached variants only fire when the
   reacted message is in the bot's in-memory cache, which is empty after a restart
