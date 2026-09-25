@@ -176,6 +176,11 @@ in-progress session. Two cooperating mechanisms:
   without playing, does NOT defer updates (a restart rebuilds it from reactions).
   Abandoned never-played stacks are closed quietly `STACK_UNPLAYED_END_HOURS`
   after their `/st` message.
+- **Tracker state is per session**: `MatchTracker.reset_stack_tracking()` wipes a
+  channel's `has_played`/`last_activity` (memory + `stack_state` row) on every new
+  `/st` and whenever a stack ends. On startup, `stack_state` rows are only loaded
+  for stacks rebuilt from reactions. A leftover row once auto-ended a fresh `/st`
+  44s after it was posted ("inactivity after 17h").
 - Privilege: the update service runs as the bot user; `sudo -n` is used
   best-effort. Without passwordless sudo it logs the one command to run by hand;
   the process-signal restart fallback needs no sudo.

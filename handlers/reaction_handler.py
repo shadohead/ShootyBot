@@ -61,14 +61,14 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
 
         # Ending a session leaves current_st_message_id (and the reactions) in
         # place, so only rebuild when the channel still has a recent open
-        # session — otherwise an ended party would come back on every restart,
+        # session - otherwise an ended party would come back on every restart,
         # or get re-linked to an ancient never-ended session.
         open_session = database_manager.get_open_session_for_channel(channel_id)
         session_start = parse_henrik_timestamp((open_session or {}).get("start_time"))
         if session_start is None or (
                 discord.utils.utcnow() - session_start > timedelta(hours=RESTORE_MAX_AGE_HOURS)):
             logging.info(
-                f"Restore: no recent open session in channel {channel_id} — skipping"
+                f"Restore: no recent open session in channel {channel_id} - skipping"
             )
             continue
 

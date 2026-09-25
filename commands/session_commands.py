@@ -1,7 +1,5 @@
-import logging
 import asyncio
 from datetime import datetime
-from typing import Optional
 import pytz
 from dateutil import parser
 from discord.ext import commands
@@ -46,6 +44,12 @@ class SessionCommands(BaseCommandCog):
 
             # Store session reference in context
             shooty_context.current_session_id = session.session_id
+
+            # A new session starts with a clean slate in the match tracker -
+            # activity from an earlier session must not auto-end this one
+            match_tracker = getattr(self.bot, 'match_tracker', None)
+            if match_tracker is not None:
+                match_tracker.reset_stack_tracking(channel_id)
 
             # Backup current state for restore functionality
             shooty_context.backup_state()
@@ -186,7 +190,7 @@ class SessionCommands(BaseCommandCog):
                 await self.send_error_embed(ctx, "Too Far in Future", MESSAGES["TOO_FAR_FUTURE"])
                 return
             
-            message = await ctx.send(f"Shooty at {format_time_for_display(scheduled_time)}?")
+            await ctx.send(f"Shooty at {format_time_for_display(scheduled_time)}?")
             await self.start_session(ctx)
             await asyncio.sleep(seconds_to_wait)
 
