@@ -1,13 +1,11 @@
 """Tests for bot.py main bot functionality"""
 import pytest
 import asyncio
-import os
-from unittest.mock import Mock, MagicMock, patch, AsyncMock, call, PropertyMock
-import discord
+from unittest.mock import Mock, MagicMock, patch, AsyncMock, PropertyMock
 from discord.ext import commands
 
 # Import bot components
-from bot import ShootyBot, main, check_requirements
+from bot import ShootyBot, check_requirements
 
 
 class TestShootyBotInit:
@@ -73,21 +71,36 @@ class TestCountActiveSessions:
         c.bot_fullstack_user_set = fullstack if fullstack is not None else set()
         return c
 
-    def test_counts_only_channels_with_members(self):
+    def test_without_tracker_counts_channels_with_members(self):
         bot = ShootyBot()
         with patch('bot.context_manager') as mock_cm:
-            mock_cm.contexts.values.return_value = [
-                self._ctx(),                       # idle -> not counted
-                self._ctx(session_id="s1"),        # session id but NO members -> not counted
-                self._ctx(soloq={Mock()}),         # has queued members -> counted
-                self._ctx(fullstack={Mock()}),     # has queued members -> counted
+            mock_cm.contexts.items.return_value = [
+                (1, self._ctx()),                       # idle -> not counted
+                (2, self._ctx(session_id="s1")),        # session id but NO members -> not counted
+                (3, self._ctx(soloq={Mock()})),         # has queued members -> counted
+                (4, self._ctx(fullstack={Mock()})),     # has queued members -> counted
             ]
             assert bot.count_active_sessions() == 2
+
+    def test_with_tracker_counts_only_stacks_in_progress(self):
+        """A queue that never started playing must not wedge the update guard."""
+        bot = ShootyBot()
+        bot.match_tracker = Mock()
+        bot.match_tracker.is_stack_in_progress.side_effect = lambda cid, users: cid == 3
+        with patch('bot.context_manager') as mock_cm:
+            mock_cm.contexts.items.return_value = [
+                (1, self._ctx()),                       # idle -> never asked
+                (2, self._ctx(soloq={Mock()})),         # queued, abandoned -> not counted
+                (3, self._ctx(fullstack={Mock()})),     # queued and playing -> counted
+            ]
+            assert bot.count_active_sessions() == 1
+        asked = [c.args[0] for c in bot.match_tracker.is_stack_in_progress.call_args_list]
+        assert asked == [2, 3]
 
     def test_zero_when_all_idle(self):
         bot = ShootyBot()
         with patch('bot.context_manager') as mock_cm:
-            mock_cm.contexts.values.return_value = [self._ctx(), self._ctx()]
+            mock_cm.contexts.items.return_value = [(1, self._ctx()), (2, self._ctx())]
             assert bot.count_active_sessions() == 0
 
 

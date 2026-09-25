@@ -8,6 +8,7 @@ from handlers.message_formatter import party_status_message
 from data_manager import data_manager
 from database import database_manager
 from config import EMOJI, MESSAGES
+from utils import parse_henrik_timestamp
 
 # Emojis that join the party and therefore define membership when we rebuild
 # state from a message's reactions after a restart.
@@ -58,6 +59,19 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
             )
             continue
 
+        # Ending a session leaves current_st_message_id (and the reactions) in
+        # place, so only rebuild when the channel still has a recent open
+        # session — otherwise an ended party would come back on every restart,
+        # or get re-linked to an ancient never-ended session.
+        open_session = database_manager.get_open_session_for_channel(channel_id)
+        session_start = parse_henrik_timestamp((open_session or {}).get("start_time"))
+        if session_start is None or (
+                discord.utils.utcnow() - session_start > timedelta(hours=RESTORE_MAX_AGE_HOURS)):
+            logging.info(
+                f"Restore: no recent open session in channel {channel_id} — skipping"
+            )
+            continue
+
         channel = bot.get_channel(channel_id)
         if channel is None:
             try:
@@ -91,9 +105,7 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
             continue
 
         # Re-link the still-open session (end_time IS NULL) so /stend & recap work
-        open_session = database_manager.get_open_session_for_channel(channel_id)
-        if open_session:
-            shooty_context.current_session_id = open_session["session_id"]
+        shooty_context.current_session_id = open_session["session_id"]
 
         member_count = len(
             shooty_context.bot_soloq_user_set | shooty_context.bot_fullstack_user_set
@@ -334,9 +346,6 @@ class ReactionHandler(commands.Cog):
 
     async def _refresh_status(self, message):
         """Refresh the party status message"""
-        channel_id = message.channel.id
-        shooty_context = context_manager.get_context(channel_id)
-
         # Create a fake context for the session status command
         ctx = await self.bot.get_context(message)
 

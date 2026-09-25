@@ -1,3 +1,4 @@
+from datetime import timedelta
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 import discord
@@ -454,6 +455,10 @@ class TestRestorePartyState:
         reaction.users = Mock(return_value=_AsyncIter(users))
         return reaction
 
+    def _open_session(self, hours_ago=1):
+        start = discord.utils.utcnow() - timedelta(hours=hours_ago)
+        return {"session_id": "sess-1", "start_time": start.isoformat()}
+
     def _recent_msg_id(self):
         """A snowflake whose embedded timestamp is 'now' (passes recency gate)."""
         return discord.utils.time_snowflake(discord.utils.utcnow())
@@ -468,7 +473,7 @@ class TestRestorePartyState:
         mock_db.get_all_channel_settings.return_value = [
             {"channel_id": 555, "current_st_message_id": msg_id}
         ]
-        mock_db.get_open_session_for_channel.return_value = {"session_id": "sess-1"}
+        mock_db.get_open_session_for_channel.return_value = self._open_session()
 
         player = Mock(id=111, name="Player", bot=False)
         bot_user = Mock(id=999999999, name="Bot", bot=True)
@@ -529,6 +534,7 @@ class TestRestorePartyState:
         mock_db.get_all_channel_settings.return_value = [
             {"channel_id": 555, "current_st_message_id": msg_id}
         ]
+        mock_db.get_open_session_for_channel.return_value = self._open_session()
         channel = Mock()
         channel.fetch_message = AsyncMock(side_effect=discord.NotFound(Mock(), "gone"))
         bot.get_channel = Mock(return_value=channel)
@@ -536,6 +542,28 @@ class TestRestorePartyState:
         with patch('handlers.reaction_handler.context_manager'):
             restored = await restore_party_state_from_reactions(bot)
         assert restored == 0
+        channel.fetch_message.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("open_session", [
+        None,                                   # session was ended (/stend or auto-end)
+        "ancient",                              # only an old never-ended session remains
+    ])
+    @patch('handlers.reaction_handler.database_manager')
+    async def test_restore_skips_without_recent_open_session(self, mock_db, open_session):
+        """Ending a session leaves the message + reactions behind; a restart
+        must not resurrect that party."""
+        bot = self._bot()
+        mock_db.get_all_channel_settings.return_value = [
+            {"channel_id": 555, "current_st_message_id": self._recent_msg_id()}
+        ]
+        mock_db.get_open_session_for_channel.return_value = (
+            self._open_session(hours_ago=24 * 30) if open_session else None)
+        bot.get_channel = Mock()
+
+        restored = await restore_party_state_from_reactions(bot)
+        assert restored == 0
+        bot.get_channel.assert_not_called()
 
 
 @pytest.mark.asyncio

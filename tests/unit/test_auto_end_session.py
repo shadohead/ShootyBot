@@ -29,11 +29,15 @@ def make_member(user_id=1, name='Player'):
     return member
 
 
-def make_context(stack_users, session_id='sess-1'):
+def make_context(stack_users, session_id='sess-1', started_hours_ago=None):
     context = MagicMock()
     context.bot_soloq_user_set = set(stack_users)
     context.bot_fullstack_user_set = set()
     context.current_session_id = session_id
+    context.current_st_message_id = (
+        discord.utils.time_snowflake(
+            datetime.now(timezone.utc) - timedelta(hours=started_hours_ago))
+        if started_hours_ago is not None else None)
     return context
 
 
@@ -228,3 +232,101 @@ class TestAutoEndPostsRecap:
         await tracker._send_auto_end_recap(channel, 'sess-1', [])
 
         channel.send.assert_not_awaited()
+
+
+class TestUnplayedStackExpiry:
+    """A stack that gathered but never played must not linger forever — it held
+    the auto-update guard for 12+ hours on 2026-09-25."""
+
+    async def _run(self, tracker, context, playing=False):
+        mock_cm = MagicMock()
+        mock_cm.contexts = {123: context}
+        channel = MagicMock()
+        channel.id = 123
+        tracker.bot.get_channel.return_value = channel
+        tracker._auto_end_inactive_stack = AsyncMock()
+        with patch('match_tracker.context_manager', mock_cm), \
+                patch('match_tracker.valorant_client') as mock_client:
+            mock_client.is_playing_valorant.return_value = playing
+            await tracker._check_inactive_stacks()
+        return tracker._auto_end_inactive_stack
+
+    @pytest.mark.asyncio
+    async def test_abandoned_unplayed_stack_ends_without_recap(self):
+        tracker = make_tracker()
+        context = make_context([make_member()], started_hours_ago=12)
+        auto_end = await self._run(tracker, context)
+        auto_end.assert_awaited_once()
+        assert auto_end.await_args.kwargs == {'reason': 'never played', 'post_recap': False}
+
+    @pytest.mark.asyncio
+    async def test_recent_gathering_stack_is_left_alone(self):
+        tracker = make_tracker()
+        context = make_context(
+            [make_member()], started_hours_ago=MatchTracker.STACK_UNPLAYED_END_HOURS - 1)
+        auto_end = await self._run(tracker, context)
+        auto_end.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_old_stack_with_someone_in_game_is_left_alone(self):
+        tracker = make_tracker()
+        context = make_context([make_member()], started_hours_ago=12)
+        auto_end = await self._run(tracker, context, playing=True)
+        auto_end.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stack_without_session_message_is_left_alone(self):
+        tracker = make_tracker()
+        context = make_context([make_member()])
+        auto_end = await self._run(tracker, context)
+        auto_end.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_recap_skipped_when_post_recap_false(self):
+        tracker = make_tracker()
+        member = make_member()
+        context = make_context([member], started_hours_ago=12)
+        channel = MagicMock()
+        channel.id = 123
+        tracker.bot.get_cog.return_value.\
+            _end_current_session = AsyncMock()
+        tracker._send_auto_end_recap = AsyncMock()
+
+        await tracker._auto_end_inactive_stack(
+            channel, context, timedelta(hours=12), reason='never played', post_recap=False)
+
+        tracker.bot.get_cog.return_value._end_current_session.assert_awaited_once_with(context)
+        context.reset_users.assert_called_once()
+        tracker._send_auto_end_recap.assert_not_awaited()
+
+
+class TestIsStackInProgress:
+    def test_empty_stack_is_not_in_progress(self):
+        assert make_tracker().is_stack_in_progress(123, set()) is False
+
+    def test_someone_in_game_is_in_progress(self):
+        tracker = make_tracker()
+        with patch('match_tracker.valorant_client') as mock_client:
+            mock_client.is_playing_valorant.return_value = True
+            assert tracker.is_stack_in_progress(123, {make_member()}) is True
+
+    def test_recent_game_counts_between_matches(self):
+        tracker = make_tracker()
+        tracker.stack_last_activity[123] = datetime.now(timezone.utc) - timedelta(minutes=30)
+        with patch('match_tracker.valorant_client') as mock_client:
+            mock_client.is_playing_valorant.return_value = False
+            assert tracker.is_stack_in_progress(123, {make_member()}) is True
+
+    def test_queued_but_never_played_is_not_in_progress(self):
+        tracker = make_tracker()
+        with patch('match_tracker.valorant_client') as mock_client:
+            mock_client.is_playing_valorant.return_value = False
+            assert tracker.is_stack_in_progress(123, {make_member()}) is False
+
+    def test_long_idle_after_games_is_not_in_progress(self):
+        tracker = make_tracker()
+        tracker.stack_last_activity[123] = datetime.now(timezone.utc) - timedelta(
+            hours=MatchTracker.STACK_INACTIVITY_HOURS + 1)
+        with patch('match_tracker.valorant_client') as mock_client:
+            mock_client.is_playing_valorant.return_value = False
+            assert tracker.is_stack_in_progress(123, {make_member()}) is False
