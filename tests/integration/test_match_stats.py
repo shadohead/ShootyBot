@@ -39,7 +39,8 @@ class TestMatchStatsAccuracy(unittest.TestCase):
             cls.match_data = get_match_data(cls.match_id, cls.api_key)
             cls.calculated_stats = calculate_stats(cls.match_data)
         except Exception as e:
-            cls.skipTest(f"Failed to load match data: {e}")
+            # skipTest() is an instance method; setUpClass must raise instead.
+            raise unittest.SkipTest(f"Failed to load match data: {e}")
     
     def test_first_kills_exact_match(self):
         """Test that First Kills (FK) match tracker.gg exactly"""
