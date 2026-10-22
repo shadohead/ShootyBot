@@ -198,6 +198,9 @@ in-progress session. Two cooperating mechanisms:
   survive even when old reactions remain. Legacy installations without a snapshot
   fall back to rebuilding from reactions. Failed reads preserve existing state;
   the next party event retries before it may overwrite the saved queue.
+  A deleted post (404) restores its matching saved snapshot without creating a
+  replacement, so an explicit new `/st` remains available. A legacy deleted post
+  with no snapshot also permits `/st`; permission/network errors remain pending.
 - **Concurrency:** queue commands, raw reactions and auto-end share a per-channel
   lock. Message edits also serialize and render the latest state after acquiring
   their lock. The 🔄 control reposts the queue below newer chat with reaction
