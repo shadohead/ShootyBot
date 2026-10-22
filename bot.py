@@ -9,8 +9,7 @@ import asyncio
 
 from config import BOT_TOKEN, COMMAND_PREFIX, LOG_LEVEL, MESSAGES, APP_VERSION, DB_MATCH_STORAGE_WARN_MB, DB_PLAYER_STATS_WARN_MB
 from context_manager import context_manager
-from handlers.message_formatter import DEFAULT_MSG
-from handlers.reaction_handler import add_react_options, restore_party_state_from_reactions
+from handlers.reaction_handler import restore_party_state_from_reactions
 from match_tracker import get_match_tracker
 from match_stats_display import AdvancedStatsButton
 from economy_chart import warm_up as warm_up_economy_chart
@@ -35,6 +34,10 @@ class ShootyBot(commands.Bot):
 
         self.match_tracker: Optional[object] = None
         self._cogs_loaded: bool = False
+        self._party_state_restored: bool = False
+        # Create asyncio primitives on the running loop (Pi uses Python 3.9).
+        self._ready_lock = None
+        self._party_state_ready = None
         self.health_check_file = ".bot_health"
         # Marker read by the auto-updater (run_python_script.sh) so it can defer
         # a restart while a session is in progress and not interrupt players.
@@ -135,6 +138,8 @@ class ShootyBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         """Called when bot is setting up."""
+        self._ready_lock = asyncio.Lock()
+        self._party_state_ready = asyncio.Event()
         await self.load_cogs()
         # Persistent recap button: lets "📊 Advanced Stats" keep working across
         # restarts by reloading the match from the cache via its custom id.
@@ -146,6 +151,16 @@ class ShootyBot(commands.Bot):
         self.loop.run_in_executor(None, warm_up_economy_chart)
 
     async def on_ready(self) -> None:
+        # READY can recur after a gateway reconnect. Never rebuild live state
+        # or start a second tracker on an already initialized bot.
+        if self._ready_lock is None:
+            self._ready_lock = asyncio.Lock()
+        if self._party_state_ready is None:
+            self._party_state_ready = asyncio.Event()
+        async with self._ready_lock:
+            await self._initialize_ready()
+
+    async def _initialize_ready(self) -> None:
         """Called when bot is ready."""
         logging.info(f"Bot logged in as {self.user} (ID: {self.user.id})")
         logging.info(f"Connected to {len(self.guilds)} guilds")
@@ -159,17 +174,21 @@ class ShootyBot(commands.Bot):
         # Sync commands
         await self.sync_commands()
 
-        # Rebuild any in-progress party state from Discord. Membership lives in
-        # the session message's reactions (not the DB), so after a restart we
-        # re-read those reactions instead of losing the active session.
+        # Recover durable queue state once, reconciling offline reactions.
+        # Reconnects must preserve already-live state and tracker tasks.
         try:
-            await restore_party_state_from_reactions(self)
+            if not self._party_state_restored:
+                await restore_party_state_from_reactions(self)
+                self._party_state_restored = True
             await self.update_status_with_queue_count()
         except Exception as e:
             log_error("restoring party state on startup", e)
+        finally:
+            self._party_state_ready.set()
 
         # Start match tracker
-        await self.start_match_tracker()
+        if self.match_tracker is None:
+            await self.start_match_tracker()
 
         # Start health check task
         if not self.health_check_task.is_running():
@@ -269,19 +288,8 @@ class ShootyBot(commands.Bot):
         # Process commands first
         await self.process_commands(message)
 
-        # Handle special case for bot's own shooty messages (backward compatibility)
-        if message.author == self.user and message.content.startswith(DEFAULT_MSG):
-            await self.handle_shooty_message(message)
-
-    async def handle_shooty_message(self, message: discord.Message) -> None:
-        """Handle bot's own shooty messages for reaction setup."""
-        try:
-            channel_id = message.channel.id
-            shooty_context = context_manager.get_context(channel_id)
-            shooty_context.current_st_message_id = message.id
-            await add_react_options(message)
-        except Exception as e:
-            log_error("handling shooty message", e)
+        # Only /st assigns the active message and installs reaction controls.
+        # Status/refresh replies share DEFAULT_MSG and must never become /st.
 
     async def on_command_error(
         self, ctx: commands.Context, error: commands.CommandError

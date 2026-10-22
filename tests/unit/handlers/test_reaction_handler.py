@@ -1,6 +1,6 @@
 from datetime import timedelta
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, AsyncMock, patch, MagicMock, ANY
 import discord
 from handlers.reaction_handler import (
     ReactionHandler,
@@ -130,9 +130,10 @@ class TestReactionHandler:
         ctx.current_st_message_id = 555
         ctx.current_session_id = None  # short-circuit participation tracking
         ctx.is_soloq_user.return_value = False
+        ctx.reaction_users = {}
         mock_context_manager.get_context.return_value = ctx
 
-        message = Mock()
+        message = Mock(id=555)
         message.edit = AsyncMock()
         channel = Mock()
         channel.fetch_message = AsyncMock(return_value=message)
@@ -145,7 +146,7 @@ class TestReactionHandler:
         await handler.on_raw_reaction_add(payload)
 
         ctx.add_soloq_user.assert_called_once_with(member)
-        message.edit.assert_awaited_once_with(content="updated")
+        message.edit.assert_awaited_once_with(content="updated", allowed_mentions=ANY)
         handler.bot.update_status_with_queue_count.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -158,9 +159,13 @@ class TestReactionHandler:
         ctx = Mock()
         ctx.current_st_message_id = 555
         ctx.is_soloq_user.return_value = True
+        ctx.reaction_users = {}
+        ctx.bot_soloq_user_set = set()
+        ctx.bot_fullstack_user_set = set()
+        ctx.bot_ready_user_set = set()
         mock_context_manager.get_context.return_value = ctx
 
-        message = Mock()
+        message = Mock(id=555)
         message.edit = AsyncMock()
         guild = Mock()
         member = Mock(id=111, name="Player", bot=False)
@@ -179,7 +184,7 @@ class TestReactionHandler:
         guild.get_member.assert_called_once_with(111)
         ctx.remove_soloq_user.assert_called_once_with(member)
         ctx.remove_plus_ones.assert_called_once_with(member)
-        message.edit.assert_awaited_once_with(content="updated")
+        message.edit.assert_awaited_once_with(content="updated", allowed_mentions=ANY)
 
 
     @pytest.mark.asyncio
@@ -231,25 +236,15 @@ class TestReactionHandler:
         mock_data_manager.sessions.get.assert_not_called()
     
     @pytest.mark.asyncio
-    async def test_refresh_status(self, handler, mock_discord_message):
-        """Test refresh status functionality"""
-        # Setup
-        message = mock_discord_message
-        message.channel.id = 111222333
-        
-        mock_ctx = AsyncMock()
-        handler.bot.get_context = AsyncMock(return_value=mock_ctx)
-        
-        mock_session_cog = AsyncMock()
-        handler.bot.get_cog = Mock(return_value=mock_session_cog)
-        
-        # Call the method
-        await handler._refresh_status(message)
-        
-        # Verify
-        handler.bot.get_context.assert_called_once_with(message)
-        handler.bot.get_cog.assert_called_once_with('SessionCommands')
-        mock_session_cog.session_status.assert_called_once_with(mock_ctx)
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_refresh_status(self, mock_cm, handler, mock_discord_message):
+        """Refresh edits the existing post rather than creating a status reply."""
+        handler._update_party_message = AsyncMock()
+        handler.bot.update_status_with_queue_count = AsyncMock()
+        await handler._refresh_status(mock_discord_message)
+        handler._update_party_message.assert_awaited_once_with(
+            mock_discord_message, mock_cm.get_context.return_value)
+        handler.bot.get_context.assert_not_called()
 
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.context_manager')
@@ -265,18 +260,16 @@ class TestReactionHandler:
             await handler._refresh_status(message)
 
     @pytest.mark.asyncio
-    async def test_refresh_status_missing_cog(self, handler):
-        """Gracefully handle missing SessionCommands cog"""
+    @patch('handlers.reaction_handler.context_manager')
+    async def test_refresh_status_without_session_cog(self, mock_cm, handler):
+        """Refreshing the post does not depend on a command cog."""
+        handler._update_party_message = AsyncMock()
+        handler.bot.update_status_with_queue_count = AsyncMock()
         message = Mock()
-        message.channel = Mock(id=456)
-
-        handler.bot.get_context = AsyncMock(return_value=AsyncMock())
-        handler.bot.get_cog = Mock(return_value=None)
-
         await handler._refresh_status(message)
-        handler.bot.get_context.assert_called_once_with(message)
-        handler.bot.get_cog.assert_called_once_with('SessionCommands')
-    
+        handler._update_party_message.assert_awaited_once()
+        handler.bot.get_cog.assert_not_called()
+
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.context_manager')
     async def test_mention_party_no_members(self, mock_context_manager, handler, mock_discord_message):
@@ -400,6 +393,7 @@ class TestVoiceStateUpdate:
         mock_context_manager.contexts = {555: context}
 
         message = AsyncMock()
+        message.id = 777
         channel = AsyncMock()
         channel.guild = guild
         channel.fetch_message.return_value = message
@@ -412,7 +406,7 @@ class TestVoiceStateUpdate:
         )
 
         channel.fetch_message.assert_awaited_once_with(777)
-        message.edit.assert_awaited_once_with(content="updated")
+        message.edit.assert_awaited_once_with(content="updated", allowed_mentions=ANY)
         assert context.channel == channel
         handler.bot.update_status_with_queue_count.assert_awaited_once()
 

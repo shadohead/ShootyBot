@@ -186,19 +186,33 @@ in-progress session. Two cooperating mechanisms:
   the process-signal restart fallback needs no sudo.
 
 ### Session persistence (restart-safe)
-- Party membership (who reacted 👍/5️⃣/✅) is **never stored in the DB** — the
-  reactions on the bot's session message ARE the source of truth. On startup
-  `restore_party_state_from_reactions()` (called from `on_ready`) re-reads those
-  reactions for every channel with a saved `current_st_message_id` and rebuilds
-  the soloq/fullstack/ready sets, then re-links the still-open session via
-  `database.get_open_session_for_channel()` so `/stend` and the recap still work.
-  Ending a session leaves `current_st_message_id` and its reactions in place, so
-  restore only runs when the channel has an open session started within
-  `RESTORE_MAX_AGE_HOURS` - otherwise ended parties would come back on restart.
-- **Reactions use *raw* events** (`on_raw_reaction_add/remove`), NOT the
-  cache-backed `on_reaction_add/remove`. The cached variants only fire when the
-  reacted message is in the bot's in-memory cache, which is empty after a restart
-  — that was why reactions silently stopped updating the party post-restart.
+- **The `/st` command owns the active message ID.** Status and refresh replies
+  share an invisible prefix with session posts; never infer ownership from that
+  prefix in `on_message`. Doing so redirects reactions away from the real queue.
+- **Queue snapshots:** `party_state` stores player IDs, ready state, guests,
+  session/message IDs, and the last processed reaction membership. Context
+  settings and the snapshot commit in one SQLite transaction before message edits.
+  This includes the auto-added session starter, who need not react to join.
+- **Recovery:** restore matching snapshots for recent open sessions and reconcile
+  only reaction deltas since the snapshot. Manual kicks, clears, and restores
+  survive even when old reactions remain. Legacy installations without a snapshot
+  fall back to rebuilding from reactions. Failed reads preserve existing state;
+  the next party event retries before it may overwrite the saved queue.
+- **Concurrency:** queue commands, raw reactions and auto-end share a per-channel
+  lock. Message edits also serialize and render the latest state after acquiring
+  their lock. Refresh edits the existing post, with mentions disabled. Repeated
+  READY events neither rebuild live party state nor start another match tracker.
+- **End/restore:** ending retires the active message ID; later reactions cannot
+  revive it. Restore copies the backup sets/dict so later mutations do not erase
+  the backup. Only an explicit new `/st` resets the reaction baseline.
+- **Rollout:** the additive `party_state` table is created on startup. Before the
+  first production upgrade, back up SQLite using its backup API (include WAL
+  contents), and wait until existing queues end. The old running version has no
+  durable record of the auto-added starter, guests or command overrides, so a
+  restart during an existing queue cannot recover those from reactions alone.
+  No dependency installation or systemd/security changes are required.
+- **Reactions use raw events** (`on_raw_reaction_add/remove`) so existing session
+  messages still work when the in-memory Discord message cache is empty.
 
 ## MCP (Model Context Protocol) Servers
 

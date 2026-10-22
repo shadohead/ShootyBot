@@ -25,6 +25,8 @@ class ShootyContext:
 
         # Message tracking
         self.current_st_message_id: Optional[int] = None
+        self.current_session_id: Optional[str] = None
+        self.reaction_users: Dict[str, Set[int]] = {}
 
         # Channel settings
         self.role_code: str = DEFAULT_SHOOTY_ROLE_CODE
@@ -54,10 +56,10 @@ class ShootyContext:
         otherwise.
         """
         if self._backup:
-            self.bot_soloq_user_set = self._backup['soloq']
-            self.bot_fullstack_user_set = self._backup['fullstack']
-            self.bot_ready_user_set = self._backup['ready']
-            self.plus_ones = self._backup.get('plus_ones', {})
+            self.bot_soloq_user_set = set(self._backup['soloq'])
+            self.bot_fullstack_user_set = set(self._backup['fullstack'])
+            self.bot_ready_user_set = set(self._backup['ready'])
+            self.plus_ones = dict(self._backup.get('plus_ones', {}))
             logging.info(f"Restored state for channel {self.channel_id}")
             return True
         else:
@@ -157,6 +159,7 @@ class ShootyContext:
                     self.bot_soloq_user_set.remove(user)
                     # Also remove plus ones when user is kicked
                     self.remove_plus_ones(user)
+                    self.bot_ready_user_set.discard(user)
                     kicked_usernames_list.append(user.name)
 
             # Check fullstack users
@@ -165,6 +168,7 @@ class ShootyContext:
                     self.bot_fullstack_user_set.remove(user)
                     # Also remove plus ones when user is kicked
                     self.remove_plus_ones(user)
+                    self.bot_ready_user_set.discard(user)
                     kicked_usernames_list.append(user.name)
 
         return kicked_usernames_list
@@ -260,6 +264,18 @@ class ShootyContext:
         return result_string
     
     # Persistence methods
+    def party_snapshot(self) -> Dict[str, Any]:
+        """Serializable queue state, distinct from historical participants."""
+        return {
+            'message_id': self.current_st_message_id,
+            'session_id': self.current_session_id,
+            'soloq': sorted(user.id for user in self.bot_soloq_user_set),
+            'fullstack': sorted(user.id for user in self.bot_fullstack_user_set),
+            'ready': sorted(user.id for user in self.bot_ready_user_set),
+            'plus_ones': dict(self.plus_ones),
+            'reaction_users': {emoji: sorted(ids) for emoji, ids in self.reaction_users.items()},
+        }
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert persistent data to dictionary for JSON storage"""
         return {
@@ -334,14 +350,17 @@ class ContextManager:
                     context.game_name,
                     context.party_max_size,
                     context.voice_channel_id,
-                    context.current_st_message_id
+                    context.current_st_message_id,
+                    party_state=context.party_snapshot()
                 )
                 if success:
                     logging.info(f"Saved context for channel {channel_id} to database")
                 else:
                     logging.error(f"Failed to save context for channel {channel_id}")
+                return success
         except Exception as e:
             log_error(f"saving context for {channel_id}", e)
+        return False
     
     def save_all_contexts(self) -> None:
         """Save all active contexts to database."""
