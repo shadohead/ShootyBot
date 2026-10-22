@@ -91,13 +91,13 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
             message = await channel.fetch_message(message_id)
         except discord.NotFound:
             logging.info(f"Restore: session message {message_id} gone in {channel_id}")
-            continue
+            message = None
         except discord.HTTPException as e:
             logging.warning(f"Restore: failed to fetch message in {channel_id}: {e}")
             continue
 
         # Only restore from our own session messages
-        if message.author.id != bot.user.id:
+        if message is not None and message.author.id != bot.user.id:
             continue
 
         shooty_context = context_manager.get_context(channel_id)
@@ -116,9 +116,16 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
                         snapshot["message_id"] == message_id and
                         snapshot["session_id"] == open_session["session_id"]):
                     await _restore_snapshot(staged, snapshot, bot)
-                    await _reconcile_reactions(message, staged)
-                else:
+                    if message is not None:
+                        await _reconcile_reactions(message, staged)
+                elif message is not None:
                     await _rebuild_users_from_reactions(message, staged, bot)
+                else:
+                    # A permanent 404 cannot recover legacy reactions, but
+                    # must not permanently prevent an explicit new /st.
+                    shooty_context.__dict__["_party_recovery_pending"] = False
+                    logging.warning("Restore: deleted message has no matching snapshot in %s; a new /st is allowed", channel_id)
+                    continue
             except Exception as e:
                 logging.warning("Restore: preserving queue in channel %s: %s", channel_id, e)
                 continue
@@ -131,10 +138,14 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
             shooty_context.current_session_id = open_session["session_id"]
             shooty_context.__dict__["_party_recovery_pending"] = False
             shooty_context.__dict__["_party_recovery_complete"] = True
-            try:
-                await update_party_message(message, shooty_context)
-            except discord.HTTPException:
-                logging.warning("Restore: queue recovered but message refresh failed in %s", channel_id)
+            if message is None:
+                context_manager.save_context(channel_id)
+                logging.info("Restore: recovered saved queue in %s without its deleted post; no message created", channel_id)
+            else:
+                try:
+                    await update_party_message(message, shooty_context)
+                except discord.HTTPException:
+                    logging.warning("Restore: queue recovered but message refresh failed in %s", channel_id)
 
         # Re-link the still-open session (end_time IS NULL) so /stend & recap work
         shooty_context.current_session_id = open_session["session_id"]

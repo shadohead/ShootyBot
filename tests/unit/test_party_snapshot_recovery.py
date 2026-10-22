@@ -333,3 +333,53 @@ async def test_new_session_immediately_displays_and_persists_starter(world, monk
     assert w.db.get_party_state(123)['soloq'] == [1]
     assert 'Player1' in new_message.edit.call_args.kwargs['content']
     assert new_message.add_reaction.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_deleted_post_recovers_snapshot_without_posting_and_unblocks_commands(world):
+    w = world
+    w.context.add_soloq_user(w.people[1])
+    w.context.set_plus_ones(w.people[1], 2)
+    assert w.cm.save_context(123)
+    w.cm.contexts.clear()
+    w.channel.fetch_message.side_effect = discord.NotFound(
+        SimpleNamespace(status=404, reason='Not Found'), 'deleted post')
+    assert await reactions.restore_party_state_from_reactions(w.bot) == 1
+    recovered = w.cm.get_context(123)
+    assert recovered.bot_soloq_user_set == {w.people[1]}
+    assert recovered.get_plus_ones(w.people[1]) == 2
+    assert recovered.current_session_id == 'live'
+    assert recovered.current_st_message_id == w.message.id
+    assert recovered.__dict__['_party_recovery_pending'] is False
+    await reactions.ensure_party_recovered(w.bot, recovered)
+    assert w.db.get_party_state(123)['soloq'] == [1]
+    w.message.edit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deleted_legacy_post_without_snapshot_allows_new_session(world):
+    w = world
+    assert w.db.save_channel_settings(123, current_st_message_id=w.message.id)
+    w.cm.contexts.clear()
+    w.channel.fetch_message.side_effect = discord.NotFound(
+        SimpleNamespace(status=404, reason='Not Found'), 'deleted post')
+    assert await reactions.restore_party_state_from_reactions(w.bot) == 0
+    recovered = w.cm.get_context(123)
+    assert recovered.__dict__['_party_recovery_pending'] is False
+    await reactions.ensure_party_recovered(w.bot, recovered)
+    assert w.db.get_party_state(123) is None
+    w.message.edit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_forbidden_post_preserves_snapshot_and_keeps_recovery_pending(world):
+    w = world
+    w.context.add_soloq_user(w.people[1])
+    assert w.cm.save_context(123)
+    before = w.db.get_party_state(123)
+    w.cm.contexts.clear()
+    w.channel.fetch_message.side_effect = discord.Forbidden(
+        SimpleNamespace(status=403, reason='Forbidden'), 'test permissions')
+    assert await reactions.restore_party_state_from_reactions(w.bot) == 0
+    assert w.cm.get_context(123).__dict__['_party_recovery_pending'] is True
+    assert w.db.get_party_state(123) == before
