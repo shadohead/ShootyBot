@@ -1936,8 +1936,10 @@ class MatchTracker:
     
     @staticmethod
     def _stack_started_at(context) -> Optional[datetime]:
-        """When the stack's current /st message was posted (snowflake time)."""
-        message_id = getattr(context, 'current_st_message_id', None)
+        """When /st started the stack, unchanged by later refresh reposts."""
+        message_id = getattr(context, 'party_started_message_id', None)
+        if not isinstance(message_id, int):
+            message_id = getattr(context, 'current_st_message_id', None)
         if not message_id:
             return None
         try:

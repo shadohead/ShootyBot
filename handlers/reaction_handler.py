@@ -126,7 +126,7 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
             shooty_context.channel = channel
             shooty_context.current_st_message_id = message_id
             for attr in ("bot_soloq_user_set", "bot_fullstack_user_set", "bot_ready_user_set",
-                         "plus_ones", "reaction_users"):
+                         "plus_ones", "reaction_users", "party_started_message_id"):
                 setattr(shooty_context, attr, getattr(staged, attr))
             shooty_context.current_session_id = open_session["session_id"]
             shooty_context.__dict__["_party_recovery_pending"] = False
@@ -211,6 +211,41 @@ async def refresh_party_message(channel, context):
             logging.warning("Party message no longer exists in channel %s", context.channel_id)
 
 
+async def repost_party_message(message, context):
+    """Move the queue to a new controlled post without starting a new session."""
+    async with party_lock(context):
+        if message.id != context.current_st_message_id:
+            return
+        previous_id = context.current_st_message_id
+        previous_start_id = context.party_started_message_id
+        previous_reactions = context.reaction_users
+        replacement = None
+        try:
+            replacement = await message.reply(
+                party_status_message(False, context),
+                allowed_mentions=discord.AllowedMentions.none())
+            await add_react_options(replacement)
+            context.current_st_message_id = replacement.id
+            context.party_started_message_id = previous_start_id or previous_id
+            # Membership remains in the snapshot. Reactions on this new post
+            # start empty, so recovery must not treat old reactions as removed.
+            context.reaction_users = {}
+            if not context_manager.save_context(context.channel_id):
+                raise RuntimeError("Could not persist reposted party message")
+        except Exception:
+            context.current_st_message_id = previous_id
+            context.party_started_message_id = previous_start_id
+            context.reaction_users = previous_reactions
+            if replacement is not None:
+                try:
+                    await replacement.delete()
+                except discord.HTTPException:
+                    logging.warning("Could not remove failed party repost in channel %s", context.channel_id)
+            raise
+        logging.info("Reposted party in channel %s from message %s to %s",
+                     context.channel_id, previous_id, replacement.id)
+
+
 async def retire_party_message(channel, context):
     """Show the ended queue, then stop accepting reactions on that message."""
     try:
@@ -220,6 +255,7 @@ async def retire_party_message(channel, context):
         logging.warning("Could not refresh ended party in channel %s", context.channel_id)
     finally:
         context.current_st_message_id = None
+        context.party_started_message_id = None
         context.reaction_users = {}
         context_manager.save_context(context.channel_id)
 
@@ -294,6 +330,7 @@ async def _restore_snapshot(context, snapshot, bot):
         setattr(context, attr, {users[user_id] for user_id in snapshot[field]})
     context.plus_ones = {int(uid): count for uid, count in snapshot["plus_ones"].items()}
     context.reaction_users = {emoji: set(ids) for emoji, ids in snapshot["reaction_users"].items()}
+    context.party_started_message_id = snapshot.get('party_started_message_id') or snapshot['message_id']
 
 
 async def _reconcile_reactions(message, context):
@@ -497,9 +534,9 @@ class ReactionHandler(commands.Cog):
             await self.bot.update_status_with_queue_count()
 
     async def _refresh_status(self, message):
-        """Refresh the party status message"""
+        """Repost current status with controls, preserving the existing queue."""
         context = context_manager.get_context(message.channel.id)
-        await self._update_party_message(message, context)
+        await repost_party_message(message, context)
         await self.bot.update_status_with_queue_count()
 
     async def _mention_party(self, message):

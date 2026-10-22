@@ -237,12 +237,12 @@ class TestReactionHandler:
     
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.context_manager')
-    async def test_refresh_status(self, mock_cm, handler, mock_discord_message):
-        """Refresh edits the existing post rather than creating a status reply."""
-        handler._update_party_message = AsyncMock()
+    @patch('handlers.reaction_handler.repost_party_message', new_callable=AsyncMock)
+    async def test_refresh_status(self, repost, mock_cm, handler, mock_discord_message):
+        """Refresh explicitly reposts the queue with reaction controls."""
         handler.bot.update_status_with_queue_count = AsyncMock()
         await handler._refresh_status(mock_discord_message)
-        handler._update_party_message.assert_awaited_once_with(
+        repost.assert_awaited_once_with(
             mock_discord_message, mock_cm.get_context.return_value)
         handler.bot.get_context.assert_not_called()
 
@@ -261,13 +261,13 @@ class TestReactionHandler:
 
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.context_manager')
-    async def test_refresh_status_without_session_cog(self, mock_cm, handler):
+    @patch('handlers.reaction_handler.repost_party_message', new_callable=AsyncMock)
+    async def test_refresh_status_without_session_cog(self, repost, mock_cm, handler):
         """Refreshing the post does not depend on a command cog."""
-        handler._update_party_message = AsyncMock()
         handler.bot.update_status_with_queue_count = AsyncMock()
         message = Mock()
         await handler._refresh_status(message)
-        handler._update_party_message.assert_awaited_once()
+        repost.assert_awaited_once()
         handler.bot.get_cog.assert_not_called()
 
     @pytest.mark.asyncio

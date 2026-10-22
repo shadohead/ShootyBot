@@ -186,7 +186,7 @@ in-progress session. Two cooperating mechanisms:
   the process-signal restart fallback needs no sudo.
 
 ### Session persistence (restart-safe)
-- **The `/st` command owns the active message ID.** Status and refresh replies
+- **`/st` and explicit refresh reposts own the active message ID.** Status replies
   share an invisible prefix with session posts; never infer ownership from that
   prefix in `on_message`. Doing so redirects reactions away from the real queue.
 - **Queue snapshots:** `party_state` stores player IDs, ready state, guests,
@@ -200,8 +200,12 @@ in-progress session. Two cooperating mechanisms:
   the next party event retries before it may overwrite the saved queue.
 - **Concurrency:** queue commands, raw reactions and auto-end share a per-channel
   lock. Message edits also serialize and render the latest state after acquiring
-  their lock. Refresh edits the existing post, with mentions disabled. Repeated
-  READY events neither rebuild live party state nor start another match tracker.
+  their lock. The 🔄 control reposts the queue below newer chat with reaction
+  controls and mentions disabled. It explicitly transfers the active message ID
+  while retaining members, guests, readiness and session identity. Its fresh
+  reaction baseline prevents a restart from treating old reactions as removals;
+  `party_started_message_id` keeps the original expiry clock across reposts.
+  Repeated READY events neither rebuild live party state nor start another match tracker.
 - **End/restore:** ending retires the active message ID; later reactions cannot
   revive it. Restore copies the backup sets/dict so later mutations do not erase
   the backup. Only an explicit new `/st` resets the reaction baseline.

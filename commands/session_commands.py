@@ -71,6 +71,7 @@ class SessionCommands(BaseCommandCog):
 
             # Track the message for reactions
             shooty_context.current_st_message_id = message.id
+            shooty_context.party_started_message_id = message.id
 
             # Save context to persist the message ID
             context_manager.save_context(ctx.channel.id)
