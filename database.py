@@ -29,6 +29,17 @@ class DatabaseManager:
         """Ensure data directory exists"""
         if not os.path.exists(DATA_DIR):
             os.makedirs(DATA_DIR)
+
+    def get_party_state(self, channel_id: int) -> Optional[Dict[str, Any]]:
+        """None means absent; read/corruption errors must not silently erase state."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute("SELECT state_json FROM party_state WHERE channel_id = ?",
+                                   (channel_id,)).fetchone()
+                return json.loads(row['state_json']) if row else None
+            finally:
+                conn.close()
     
     def _get_connection(self) -> sqlite3.Connection:
         """Get database connection with optimizations for Raspberry Pi"""
@@ -122,6 +133,13 @@ class DatabaseManager:
                     )
                 """)
                 
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS party_state (
+                        channel_id INTEGER PRIMARY KEY,
+                        state_json TEXT NOT NULL
+                    )
+                """)
+
                 # Match tracker state persistence tables
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS match_tracker_state (
@@ -690,8 +708,9 @@ class DatabaseManager:
     
     def save_channel_settings(self, channel_id: int, role_code: str = None, 
                              game_name: str = None, party_max_size: int = 5, voice_channel_id: int = None,
-                             current_st_message_id: int = None) -> bool:
-        """Save channel settings"""
+                             current_st_message_id: int = None,
+                             party_state: Optional[Dict[str, Any]] = None) -> bool:
+        """Save settings and, when supplied, the queue in one transaction."""
         with self._lock:
             conn = self._get_connection()
             try:
@@ -709,7 +728,15 @@ class DatabaseManager:
                         last_updated = ?
                 """, (channel_id, role_code, game_name, party_max_size, voice_channel_id, current_st_message_id, now,
                       role_code, game_name, party_max_size, voice_channel_id, current_st_message_id, now))
-                
+                if party_state is not None:
+                    # A complete context save can explicitly retire the message;
+                    # partial configuration writes retain COALESCE semantics.
+                    conn.execute("UPDATE channel_settings SET current_st_message_id = ? WHERE channel_id = ?",
+                                 (current_st_message_id, channel_id))
+                    conn.execute("""
+                        INSERT INTO party_state (channel_id, state_json) VALUES (?, ?)
+                        ON CONFLICT(channel_id) DO UPDATE SET state_json = excluded.state_json
+                    """, (channel_id, json.dumps(party_state)))
                 conn.commit()
                 return True
             

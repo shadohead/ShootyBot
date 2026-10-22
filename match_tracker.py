@@ -2017,6 +2017,16 @@ class MatchTracker:
         recap, not just silently clear the stack. ``post_recap=False`` skips
         the recap for stacks that never played a game.
         """
+        from handlers.reaction_handler import party_lock
+        expected_session = getattr(context, 'current_session_id', None)
+        async with party_lock(context):
+            if getattr(context, 'current_session_id', None) != expected_session:
+                return
+            await self._auto_end_inactive_stack_locked(
+                channel, context, inactivity_duration, reason, post_recap)
+
+    async def _auto_end_inactive_stack_locked(self, channel, context, inactivity_duration,
+                                             reason, post_recap):
         try:
             # Capture before ending — _end_current_session resets the stack
             session_id = getattr(context, 'current_session_id', None)
@@ -2056,9 +2066,13 @@ class MatchTracker:
                     # Clear session reference
                     context.current_session_id = None
             
-            # Clear users from the stack
+            # Clear users from the stack; the fallback must retire the message
+            # and persist just like the normal SessionCommands path.
             context.reset_users()
-            
+            if not session_cog:
+                from handlers.reaction_handler import retire_party_message
+                await retire_party_message(channel, context)
+
             # Clean up tracking data (memory and the persisted row)
             self.reset_stack_tracking(channel.id)
 

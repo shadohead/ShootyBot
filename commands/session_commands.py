@@ -7,7 +7,8 @@ import discord
 from base_commands import BaseCommandCog
 from context_manager import context_manager
 from handlers.message_formatter import get_ping_shooty_message, party_status_message
-from handlers.reaction_handler import add_react_options
+from handlers.reaction_handler import (add_react_options, refresh_party_message,
+                                       party_lock, serialized_party_command, retire_party_message)
 from data_manager import data_manager
 from match_tracker import get_match_tracker
 from config import MESSAGES, MAX_SCHEDULED_HOURS
@@ -20,6 +21,7 @@ class SessionCommands(BaseCommandCog):
         name="st",
         description="Starts a Fresh Shooty Session (FSS™)"
     )
+    @serialized_party_command
     async def start_session(self, ctx: commands.Context) -> None:
         try:
             await self.defer_if_slash(ctx)
@@ -29,6 +31,11 @@ class SessionCommands(BaseCommandCog):
             shooty_context = context_manager.get_context(channel_id)
             # Keep a live channel reference so voice-channel presence can be resolved
             shooty_context.channel = ctx.channel
+
+            # A failed send must leave the old queue and session intact.
+            response_string = get_ping_shooty_message(shooty_context.role_code)
+            message = await ctx.send(response_string)
+            shooty_context.backup_state()
 
             # End previous session if one exists
             if hasattr(shooty_context, 'current_session_id') and shooty_context.current_session_id:
@@ -51,10 +58,9 @@ class SessionCommands(BaseCommandCog):
             if match_tracker is not None:
                 match_tracker.reset_stack_tracking(channel_id)
 
-            # Backup current state for restore functionality
-            shooty_context.backup_state()
-
-            # Reset users
+            # The replacement message owns a fresh reaction baseline.
+            shooty_context.current_st_message_id = None
+            shooty_context.reaction_users = {}
             shooty_context.reset_users()
 
             # Auto-add the session initiator to the solo queue
@@ -62,10 +68,6 @@ class SessionCommands(BaseCommandCog):
 
             # Update bot status after resetting users
             await self.bot.update_status_with_queue_count()
-
-            # Send ping message
-            response_string = get_ping_shooty_message(shooty_context.role_code)
-            message = await ctx.send(response_string)
 
             # Track the message for reactions
             shooty_context.current_st_message_id = message.id
@@ -75,6 +77,7 @@ class SessionCommands(BaseCommandCog):
 
             # Add reaction options
             await add_react_options(message)
+            await refresh_party_message(ctx.channel, shooty_context)
 
             # Save the context and session
             context_manager.save_context(channel_id)
@@ -134,6 +137,7 @@ class SessionCommands(BaseCommandCog):
         name="shootyrestore",
         description="Restores party to the previous state before it got reset"
     )
+    @serialized_party_command
     async def restore_session(self, ctx: commands.Context) -> None:
         try:
             channel_id = ctx.channel.id
@@ -150,6 +154,8 @@ class SessionCommands(BaseCommandCog):
                 "Restoring shooty_context: " +
                 str([user.name for user in shooty_context.bot_soloq_user_set.union(shooty_context.bot_fullstack_user_set)])
             )
+
+            await refresh_party_message(ctx.channel, shooty_context)
 
             # Update bot status after restoring users
             await self.bot.update_status_with_queue_count()
@@ -498,6 +504,7 @@ class SessionCommands(BaseCommandCog):
         name="stend",
         description="End the current session"
     )
+    @serialized_party_command
     async def end_session(self, ctx: commands.Context) -> None:
         """End the current session"""
         try:
@@ -547,6 +554,10 @@ class SessionCommands(BaseCommandCog):
         return False
     
     async def _end_current_session(self, shooty_context) -> None:
+        async with party_lock(shooty_context):
+            await self._end_current_session_locked(shooty_context)
+
+    async def _end_current_session_locked(self, shooty_context) -> None:
         """Helper method to end the current session"""
         if not hasattr(shooty_context, 'current_session_id') or not shooty_context.current_session_id:
             return
@@ -577,11 +588,13 @@ class SessionCommands(BaseCommandCog):
         # Clear session reference and reset users
         shooty_context.current_session_id = None
         shooty_context.reset_users()
+        await retire_party_message(shooty_context.channel, shooty_context)
 
     @commands.hybrid_command(
         name="stplus",
         description="Add plus ones to indicate you're bringing extra people"
     )
+    @serialized_party_command
     async def set_plus_ones(self, ctx: commands.Context, count: int) -> None:
         """Set the number of plus ones (guests) you're bringing"""
         try:
@@ -614,14 +627,8 @@ class SessionCommands(BaseCommandCog):
             # Set plus ones
             shooty_context.set_plus_ones(ctx.author, count)
 
-            # Update the party message if it exists
-            if shooty_context.current_st_message_id:
-                try:
-                    message = await ctx.channel.fetch_message(shooty_context.current_st_message_id)
-                    new_message = party_status_message(True, shooty_context)
-                    await message.edit(content=new_message)
-                except discord.NotFound:
-                    self.logger.warning("Could not find party message to update")
+            await refresh_party_message(ctx.channel, shooty_context)
+            await self.bot.update_status_with_queue_count()
 
             # Send confirmation
             if count == 0:

@@ -29,6 +29,7 @@ def mock_context_manager():
     """Mock context manager"""
     with patch('commands.party_commands.context_manager') as mock_cm:
         mock_context = MagicMock()
+        mock_context.current_st_message_id = None
         mock_context.bot_soloq_user_set = set()
         mock_context.bot_fullstack_user_set = set()
         mock_context.get_party_max_size.return_value = 5

@@ -2,6 +2,7 @@ from typing import List
 from discord.ext import commands
 from context_manager import context_manager
 from handlers.message_formatter import get_kicked_user_message, get_max_party_size_message
+from handlers.reaction_handler import refresh_party_message, serialized_party_command
 from config import MESSAGES
 from base_commands import BaseCommandCog
 
@@ -13,6 +14,7 @@ class PartyCommands(BaseCommandCog):
         name="shootykick", 
         description="Kick user from party by username prefix"
     )
+    @serialized_party_command
     async def kick_user(self, ctx: commands.Context, username: str) -> None:
         """Kick a user from the party by username prefix."""
         try:
@@ -23,6 +25,7 @@ class PartyCommands(BaseCommandCog):
             kicked_usernames_list = shooty_context.remove_user_from_everything(potential_user_names_list)
             
             if kicked_usernames_list:
+                await refresh_party_message(ctx.channel, shooty_context)
                 message = get_kicked_user_message(kicked_usernames_list)
                 await ctx.reply(message)
                 self.logger.info(f"Kicked users {kicked_usernames_list} from channel {channel_id}")
@@ -46,6 +49,7 @@ class PartyCommands(BaseCommandCog):
         name="shootysize", 
         description="Set maximum party size (1-20 players)"
     )
+    @serialized_party_command
     async def set_session_size(self, ctx: commands.Context, size: str) -> None:
         """Set the maximum party size for sessions."""
         try:
@@ -73,6 +77,7 @@ class PartyCommands(BaseCommandCog):
             
             old_size = shooty_context.get_party_max_size()
             shooty_context.set_party_max_size(new_party_max_size)
+            await refresh_party_message(ctx.channel, shooty_context)
             
             # Save the context after modification
             context_manager.save_context(channel_id)
@@ -96,6 +101,7 @@ class PartyCommands(BaseCommandCog):
         name="shootyclear",
         description="Clear all users from the current session"
     )
+    @serialized_party_command
     async def clear_session(self, ctx: commands.Context) -> None:
         """Clear all users from the current session with backup."""
         try:
@@ -119,6 +125,8 @@ class PartyCommands(BaseCommandCog):
             self.logger.info(f"Clearing user sets: {user_names} from channel {channel_id}")
             
             shooty_context.reset_users()
+            await refresh_party_message(ctx.channel, shooty_context)
+            await self.bot.update_status_with_queue_count()
             
             # Save the context after modification
             context_manager.save_context(channel_id)

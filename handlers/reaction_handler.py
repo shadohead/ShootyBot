@@ -1,4 +1,8 @@
 import logging
+import asyncio
+import copy
+from contextlib import asynccontextmanager
+from functools import wraps
 from datetime import timedelta
 from typing import Optional, Union
 import discord
@@ -33,12 +37,11 @@ async def add_react_options(message: discord.Message) -> None:
 async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
     """Rebuild in-memory party state from Discord after a restart.
 
-    Party membership (who reacted 👍 / 5️⃣ / ✅) is never stored in the
-    database — the reactions on the bot's session message *are* the source of
-    truth. On startup the bot's message cache is empty, so we walk every
-    channel that has a saved ``current_st_message_id``, re-read its reactions,
-    and repopulate the soloq / fullstack / ready sets. We also re-link the
-    channel's still-open session so ``/stend`` keeps working.
+    Restore a matching SQLite snapshot, including the initiator, guests and
+    manual edits; replay only reaction changes since that snapshot. Older
+    installations without snapshots fall back to an atomic reaction rebuild.
+    An ended or stale session is never revived. All reads finish before live
+    state changes, so a failed recovery preserves memory and the saved queue.
 
     Returns the number of channels whose state was restored.
     """
@@ -72,6 +75,10 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
             )
             continue
 
+        shooty_context = context_manager.get_context(channel_id)
+        if shooty_context.__dict__.get("_party_recovery_complete"):
+            continue
+        shooty_context.__dict__["_party_recovery_pending"] = True
         channel = bot.get_channel(channel_id)
         if channel is None:
             try:
@@ -94,15 +101,40 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
             continue
 
         shooty_context = context_manager.get_context(channel_id)
-        shooty_context.channel = channel
-        shooty_context.current_st_message_id = message_id
-        shooty_context.reset_users()
+        async with party_lock(shooty_context):
+            if shooty_context.__dict__.get("_party_recovery_complete"):
+                continue
+            # Stage all network reads. A failed/partial reaction fetch must not
+            # clear an existing queue or overwrite its durable snapshot.
+            staged = copy.copy(shooty_context)
+            staged.channel = channel
+            staged.current_st_message_id = message_id
+            staged.current_session_id = open_session["session_id"]
+            try:
+                snapshot = database_manager.get_party_state(channel_id)
+                if snapshot is not None and (
+                        snapshot["message_id"] == message_id and
+                        snapshot["session_id"] == open_session["session_id"]):
+                    await _restore_snapshot(staged, snapshot, bot)
+                    await _reconcile_reactions(message, staged)
+                else:
+                    await _rebuild_users_from_reactions(message, staged, bot)
+            except Exception as e:
+                logging.warning("Restore: preserving queue in channel %s: %s", channel_id, e)
+                continue
 
-        try:
-            await _rebuild_users_from_reactions(message, shooty_context, bot)
-        except discord.HTTPException as e:
-            logging.warning(f"Restore: failed reading reactions in {channel_id}: {e}")
-            continue
+            shooty_context.channel = channel
+            shooty_context.current_st_message_id = message_id
+            for attr in ("bot_soloq_user_set", "bot_fullstack_user_set", "bot_ready_user_set",
+                         "plus_ones", "reaction_users"):
+                setattr(shooty_context, attr, getattr(staged, attr))
+            shooty_context.current_session_id = open_session["session_id"]
+            shooty_context.__dict__["_party_recovery_pending"] = False
+            shooty_context.__dict__["_party_recovery_complete"] = True
+            try:
+                await update_party_message(message, shooty_context)
+            except discord.HTTPException:
+                logging.warning("Restore: queue recovered but message refresh failed in %s", channel_id)
 
         # Re-link the still-open session (end_time IS NULL) so /stend & recap work
         shooty_context.current_session_id = open_session["session_id"]
@@ -122,28 +154,163 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
     return restored
 
 
-async def _rebuild_users_from_reactions(message, shooty_context, bot) -> None:
-    """Repopulate a context's user sets from the reactions on ``message``."""
+@asynccontextmanager
+async def party_lock(context):
+    """Serialize state changes; allow /st to call the locked end helper."""
+    task = asyncio.current_task()
+    if context.__dict__.get("_party_lock_owner") is task:
+        yield
+        return
+    lock = context.__dict__.setdefault("_party_event_lock", asyncio.Lock())
+    async with lock:
+        context.__dict__["_party_lock_owner"] = task
+        try:
+            yield
+        finally:
+            context.__dict__.pop("_party_lock_owner", None)
+
+
+async def ensure_party_recovered(bot, context):
+    if context.__dict__.get("_party_recovery_pending"):
+        await restore_party_state_from_reactions(bot)
+        if context.__dict__.get("_party_recovery_pending"):
+            raise RuntimeError("Party recovery incomplete; preserving the saved queue")
+
+
+def serialized_party_command(callback):
+    @wraps(callback)
+    async def wrapped(self, ctx, *args, **kwargs):
+        ready = getattr(self.bot, "_party_state_ready", None)
+        if isinstance(ready, asyncio.Event):
+            await ready.wait()
+        context = context_manager.get_context(ctx.channel.id)
+        await ensure_party_recovered(self.bot, context)
+        async with party_lock(context):
+            return await callback(self, ctx, *args, **kwargs)
+    return wrapped
+
+
+async def update_party_message(message, context):
+    """Persist first; serialize edits and render current state inside the lock."""
+    context_manager.save_context(context.channel_id)
+    async with context.__dict__.setdefault("_party_message_lock", asyncio.Lock()):
+        if message.id != context.current_st_message_id:
+            return
+        await message.edit(content=party_status_message(True, context),
+                           allowed_mentions=discord.AllowedMentions.none())
+
+
+async def refresh_party_message(channel, context):
+    """Common path for queue commands as well as reactions/voice changes."""
+    context_manager.save_context(context.channel_id)
+    if context.current_st_message_id:
+        try:
+            message = await channel.fetch_message(context.current_st_message_id)
+            await update_party_message(message, context)
+        except discord.NotFound:
+            logging.warning("Party message no longer exists in channel %s", context.channel_id)
+
+
+async def retire_party_message(channel, context):
+    """Show the ended queue, then stop accepting reactions on that message."""
+    try:
+        if channel:
+            await refresh_party_message(channel, context)
+    except discord.HTTPException:
+        logging.warning("Could not refresh ended party in channel %s", context.channel_id)
+    finally:
+        context.current_st_message_id = None
+        context.reaction_users = {}
+        context_manager.save_context(context.channel_id)
+
+
+async def _reaction_members(message):
+    members = {emoji: {} for emoji in _PARTY_EMOJIS}
     for reaction in message.reactions:
         emoji = str(reaction.emoji)
         if emoji not in _PARTY_EMOJIS:
             continue
-
         async for user in reaction.users():
             if user.bot:
                 continue
-            # Prefer the richer guild Member object for voice-presence checks
-            member = user
             guild = getattr(message.channel, "guild", None)
-            if guild is not None:
-                member = guild.get_member(user.id) or user
+            members[emoji][user.id] = (guild.get_member(user.id) or user) if guild else user
+    return members
 
-            if emoji == EMOJI["THUMBS_UP"]:
-                shooty_context.add_soloq_user(member)
-            elif emoji == EMOJI["FULL_STACK"]:
-                shooty_context.add_fullstack_user(member)
-            elif emoji == EMOJI["READY"]:
-                shooty_context.bot_ready_user_set.add(member)
+
+def apply_party_reaction(context, user, emoji, added):
+    """Apply one delta; remember both reactions when soloq takes precedence."""
+    ids = context.reaction_users.setdefault(emoji, set())
+    if added:
+        ids.add(user.id)
+    else:
+        ids.discard(user.id)
+    if emoji == EMOJI["READY"]:
+        if added:
+            context.bot_ready_user_set.add(user)
+        else:
+            context.bot_ready_user_set.discard(user)
+    elif added:
+        if emoji == EMOJI["THUMBS_UP"]:
+            context.add_soloq_user(user)
+        else:
+            context.add_fullstack_user(user)
+    else:
+        if emoji == EMOJI["THUMBS_UP"]:
+            context.remove_soloq_user(user)
+            if user.id in context.reaction_users.get(EMOJI["FULL_STACK"], set()):
+                context.add_fullstack_user(user)
+        else:
+            context.remove_fullstack_user(user)
+        if user not in context.bot_soloq_user_set | context.bot_fullstack_user_set:
+            context.remove_plus_ones(user)
+            context.bot_ready_user_set.discard(user)
+
+
+async def _rebuild_users_from_reactions(message, shooty_context, bot) -> None:
+    """Legacy recovery: publish the new sets only after every read succeeds."""
+    members = await _reaction_members(message)
+    soloq = set(members[EMOJI["THUMBS_UP"]].values())
+    fullstack = set(members[EMOJI["FULL_STACK"]].values()) - soloq
+    shooty_context.bot_soloq_user_set = soloq
+    shooty_context.bot_fullstack_user_set = fullstack
+    shooty_context.bot_ready_user_set = set(members[EMOJI["READY"]].values())
+    shooty_context.plus_ones = {}
+    shooty_context.reaction_users = {emoji: set(users) for emoji, users in members.items()}
+
+
+async def _restore_snapshot(context, snapshot, bot):
+    """Resolve saved IDs before publishing any state; preserve guests and starter."""
+    fields = ("soloq", "fullstack", "ready")
+    ids = set().union(*(snapshot[field] for field in fields))
+    guild = getattr(context.channel, "guild", None)
+    users = {}
+    for user_id in ids:
+        user = guild.get_member(user_id) if guild else None
+        if user is None:
+            user = await bot.fetch_user(user_id)
+        users[user_id] = user
+    for field, attr in zip(fields, ("bot_soloq_user_set", "bot_fullstack_user_set", "bot_ready_user_set")):
+        setattr(context, attr, {users[user_id] for user_id in snapshot[field]})
+    context.plus_ones = {int(uid): count for uid, count in snapshot["plus_ones"].items()}
+    context.reaction_users = {emoji: set(ids) for emoji, ids in snapshot["reaction_users"].items()}
+
+
+async def _reconcile_reactions(message, context):
+    """Replay only changes since the snapshot, retaining manual queue edits."""
+    members = await _reaction_members(message)
+    known = {user.id: user for user in context.bot_soloq_user_set |
+             context.bot_fullstack_user_set | context.bot_ready_user_set}
+    known.update({uid: user for users in members.values() for uid, user in users.items()})
+    # Removals before additions handles switching from one queue to another.
+    for emoji, users in members.items():
+        for uid in context.reaction_users.get(emoji, set()) - set(users):
+            # A kicked user may exist only in the reaction baseline.
+            user = known.get(uid) or discord.Object(id=uid)
+            apply_party_reaction(context, user, emoji, False)
+    for emoji, users in members.items():
+        for uid in set(users) - context.reaction_users.get(emoji, set()):
+            apply_party_reaction(context, users[uid], emoji, True)
 
 
 class ReactionHandler(commands.Cog):
@@ -162,8 +329,7 @@ class ReactionHandler(commands.Cog):
 
     async def _update_party_message(self, message: discord.Message, shooty_context) -> None:
         """Helper method to update party status message"""
-        new_message = party_status_message(True, shooty_context)
-        await message.edit(content=new_message)
+        await update_party_message(message, shooty_context)
 
     async def _resolve_reaction(
         self, payload: discord.RawReactionActionEvent
@@ -216,12 +382,24 @@ class ReactionHandler(commands.Cog):
         except discord.HTTPException:
             return None
 
+        # A new /st may have started while fetch_message was in flight.
+        if payload.message_id != shooty_context.current_st_message_id:
+            return None
         # Keep a live channel reference so voice-channel presence can be resolved
         shooty_context.channel = channel
         return message, member, shooty_context
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
+        ready = getattr(self.bot, "_party_state_ready", None)
+        if isinstance(ready, asyncio.Event):
+            await ready.wait()
+        context = context_manager.get_context(payload.channel_id)
+        await ensure_party_recovered(self.bot, context)
+        async with party_lock(context):
+            await self._on_raw_reaction_add(payload)
+
+    async def _on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
         """Handle when users add reactions (cache-independent)."""
         resolved = await self._resolve_reaction(payload)
         if resolved is None:
@@ -233,28 +411,12 @@ class ReactionHandler(commands.Cog):
             f"Reaction added: {emoji} by {user.name} in channel {payload.channel_id}"
         )
 
-        # Handle thumbs up (solo queue)
-        if emoji == EMOJI["THUMBS_UP"]:
-            shooty_context.add_soloq_user(user)
-            logging.info(f"Added {user.name} to solo queue")
-            await self._track_session_participation(shooty_context, user)
+        if emoji in _PARTY_EMOJIS:
+            apply_party_reaction(shooty_context, user, emoji, True)
+            # Queue persistence/display must not depend on participation stats.
             await self._update_party_message(message, shooty_context)
             await self.bot.update_status_with_queue_count()
-
-        # Handle 5️⃣ (fullstack only)
-        elif emoji == EMOJI["FULL_STACK"]:
-            if not shooty_context.is_soloq_user(user):
-                shooty_context.add_fullstack_user(user)
-                logging.info(f"Added {user.name} to fullstack queue")
-                await self._track_session_participation(shooty_context, user)
-                await self._update_party_message(message, shooty_context)
-                await self.bot.update_status_with_queue_count()
-
-        # Handle ✅ (ready)
-        elif emoji == EMOJI["READY"]:
-            shooty_context.bot_ready_user_set.add(user)
-            logging.info(f"Marked {user.name} as ready")
-            await self._update_party_message(message, shooty_context)
+            await self._track_session_participation(shooty_context, user)
 
         # Handle 🔄 (refresh)
         elif emoji == EMOJI["REFRESH"]:
@@ -268,6 +430,15 @@ class ReactionHandler(commands.Cog):
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
+        ready = getattr(self.bot, "_party_state_ready", None)
+        if isinstance(ready, asyncio.Event):
+            await ready.wait()
+        context = context_manager.get_context(payload.channel_id)
+        await ensure_party_recovered(self.bot, context)
+        async with party_lock(context):
+            await self._on_raw_reaction_remove(payload)
+
+    async def _on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
         """Handle when users remove reactions (cache-independent)."""
         resolved = await self._resolve_reaction(payload)
         if resolved is None:
@@ -279,29 +450,10 @@ class ReactionHandler(commands.Cog):
             f"Reaction removed: {emoji} by {user.name} in channel {payload.channel_id}"
         )
 
-        # Handle thumbs up removal (solo queue)
-        if emoji == EMOJI["THUMBS_UP"] and shooty_context.is_soloq_user(user):
-            shooty_context.remove_soloq_user(user)
-            # Also remove plus ones when user leaves party
-            shooty_context.remove_plus_ones(user)
-            logging.info(f"Removed {user.name} from solo queue and cleared their plus ones")
+        if emoji in _PARTY_EMOJIS:
+            apply_party_reaction(shooty_context, user, emoji, False)
             await self._update_party_message(message, shooty_context)
             await self.bot.update_status_with_queue_count()
-
-        # Handle 5️⃣ removal (fullstack)
-        elif emoji == EMOJI["FULL_STACK"] and user in shooty_context.bot_fullstack_user_set:
-            shooty_context.remove_fullstack_user(user)
-            # Also remove plus ones when user leaves party
-            shooty_context.remove_plus_ones(user)
-            logging.info(f"Removed {user.name} from fullstack queue and cleared their plus ones")
-            await self._update_party_message(message, shooty_context)
-            await self.bot.update_status_with_queue_count()
-
-        # Handle ✅ removal (ready)
-        elif emoji == EMOJI["READY"] and user in shooty_context.bot_ready_user_set:
-            shooty_context.bot_ready_user_set.remove(user)
-            logging.info(f"Unmarked {user.name} as ready")
-            await self._update_party_message(message, shooty_context)
 
     @commands.Cog.listener()
     async def on_voice_state_update(
@@ -346,13 +498,9 @@ class ReactionHandler(commands.Cog):
 
     async def _refresh_status(self, message):
         """Refresh the party status message"""
-        # Create a fake context for the session status command
-        ctx = await self.bot.get_context(message)
-
-        # Get the session commands cog
-        session_cog = self.bot.get_cog('SessionCommands')
-        if session_cog:
-            await session_cog.session_status(ctx)
+        context = context_manager.get_context(message.channel.id)
+        await self._update_party_message(message, context)
+        await self.bot.update_status_with_queue_count()
 
     async def _mention_party(self, message):
         """Mention all party members"""
