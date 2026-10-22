@@ -25,6 +25,7 @@ class ShootyContext:
 
         # Message tracking
         self.current_st_message_id: Optional[int] = None
+        self.party_started_message_id: Optional[int] = None
         self.current_session_id: Optional[str] = None
         self.reaction_users: Dict[str, Set[int]] = {}
 
@@ -268,6 +269,7 @@ class ShootyContext:
         """Serializable queue state, distinct from historical participants."""
         return {
             'message_id': self.current_st_message_id,
+            'party_started_message_id': self.party_started_message_id,
             'session_id': self.current_session_id,
             'soloq': sorted(user.id for user in self.bot_soloq_user_set),
             'fullstack': sorted(user.id for user in self.bot_fullstack_user_set),
