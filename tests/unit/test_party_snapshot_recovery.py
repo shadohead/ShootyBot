@@ -230,6 +230,11 @@ async def test_failed_recovery_retries_before_accepting_next_event(world):
         yield
     w.message.reactions = [SimpleNamespace(emoji='👍', users=fail)]
     assert await reactions.restore_party_state_from_reactions(w.bot) == 0
+    # Closing the process or saving settings while recovery is pending must
+    # not replace the saved party with this process's empty context.
+    w.cm.save_all_contexts()
+    assert w.db.get_party_state(123)['soloq'] == [1]
+    assert w.db.get_party_state(123)['plus_ones'] == {'1': 2}
     w.message.reactions = [reaction('5️⃣', [w.people[2]])]
     handler = reactions.ReactionHandler(w.bot)
     handler._track_session_participation = AsyncMock()

@@ -351,7 +351,10 @@ class ContextManager:
                     context.party_max_size,
                     context.voice_channel_id,
                     context.current_st_message_id,
-                    party_state=context.party_snapshot()
+                    # A failed startup read leaves this context incomplete.
+                    # Config saves/shutdown must retain its durable snapshot.
+                    party_state=(None if context.__dict__.get('_party_recovery_pending')
+                                 else context.party_snapshot())
                 )
                 if success:
                     logging.info(f"Saved context for channel {channel_id} to database")
