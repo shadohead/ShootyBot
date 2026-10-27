@@ -3,7 +3,6 @@ import asyncio
 import copy
 from contextlib import asynccontextmanager
 from functools import wraps
-from datetime import timedelta
 from typing import Optional, Union
 import discord
 from discord.ext import commands
@@ -12,18 +11,10 @@ from handlers.message_formatter import party_status_message
 from data_manager import data_manager
 from database import database_manager
 from config import EMOJI, MESSAGES
-from utils import parse_henrik_timestamp
 
 # Emojis that join the party and therefore define membership when we rebuild
 # state from a message's reactions after a restart.
 _PARTY_EMOJIS = {EMOJI["THUMBS_UP"], EMOJI["FULL_STACK"], EMOJI["READY"]}
-
-# Only rebuild state from a *recent* session message on startup. A channel's
-# saved current_st_message_id can be days/weeks old (the DB keeps many sessions
-# that were never explicitly ended); reviving those would resurrect long-dead
-# parties and — because they'd report as "active" forever — permanently wedge
-# the auto-update session guard. 12h comfortably covers a real gaming night.
-RESTORE_MAX_AGE_HOURS = 12
 
 
 async def add_react_options(message: discord.Message) -> None:
@@ -40,7 +31,7 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
     Restore a matching SQLite snapshot, including the initiator, guests and
     manual edits; replay only reaction changes since that snapshot. Older
     installations without snapshots fall back to an atomic reaction rebuild.
-    An ended or stale session is never revived. All reads finish before live
+    An explicitly ended session is never revived. All reads finish before live
     state changes, so a failed recovery preserves memory and the saved queue.
 
     Returns the number of channels whose state was restored.
@@ -52,27 +43,11 @@ async def restore_party_state_from_reactions(bot: commands.Bot) -> int:
         if not message_id or not channel_id:
             continue
 
-        # Skip stale sessions (snowflake carries the message's creation time),
-        # so we don't revive long-dead parties or wedge the update guard.
-        age = discord.utils.utcnow() - discord.utils.snowflake_time(message_id)
-        if age > timedelta(hours=RESTORE_MAX_AGE_HOURS):
-            logging.info(
-                f"Restore: session message in channel {channel_id} is too old "
-                f"({age}) — skipping"
-            )
-            continue
-
-        # Ending a session leaves current_st_message_id (and the reactions) in
-        # place, so only rebuild when the channel still has a recent open
-        # session - otherwise an ended party would come back on every restart,
-        # or get re-linked to an ancient never-ended session.
+        # Session lifetime is explicit: an open session remains recoverable
+        # regardless of its start time or the age of its Discord post.
         open_session = database_manager.get_open_session_for_channel(channel_id)
-        session_start = parse_henrik_timestamp((open_session or {}).get("start_time"))
-        if session_start is None or (
-                discord.utils.utcnow() - session_start > timedelta(hours=RESTORE_MAX_AGE_HOURS)):
-            logging.info(
-                f"Restore: no recent open session in channel {channel_id} - skipping"
-            )
+        if open_session is None:
+            logging.info(f"Restore: no open session in channel {channel_id} - skipping")
             continue
 
         shooty_context = context_manager.get_context(channel_id)

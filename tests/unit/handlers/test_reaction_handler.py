@@ -494,21 +494,6 @@ class TestRestorePartyState:
 
     @pytest.mark.asyncio
     @patch('handlers.reaction_handler.database_manager')
-    async def test_restore_skips_stale_message(self, mock_db):
-        """A weeks-old session message must NOT be revived (would wedge updates)."""
-        bot = self._bot()
-        # Snowflake 777 -> ~2015, far older than RESTORE_MAX_AGE_HOURS
-        mock_db.get_all_channel_settings.return_value = [
-            {"channel_id": 555, "current_st_message_id": 777}
-        ]
-        bot.get_channel = Mock()
-
-        restored = await restore_party_state_from_reactions(bot)
-        assert restored == 0
-        bot.get_channel.assert_not_called()  # skipped before any fetch
-
-    @pytest.mark.asyncio
-    @patch('handlers.reaction_handler.database_manager')
     async def test_restore_skips_channels_without_message(self, mock_db):
         bot = self._bot()
         mock_db.get_all_channel_settings.return_value = [
@@ -539,20 +524,15 @@ class TestRestorePartyState:
         channel.fetch_message.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("open_session", [
-        None,                                   # session was ended (/stend or auto-end)
-        "ancient",                              # only an old never-ended session remains
-    ])
     @patch('handlers.reaction_handler.database_manager')
-    async def test_restore_skips_without_recent_open_session(self, mock_db, open_session):
+    async def test_restore_skips_ended_session(self, mock_db):
         """Ending a session leaves the message + reactions behind; a restart
         must not resurrect that party."""
         bot = self._bot()
         mock_db.get_all_channel_settings.return_value = [
             {"channel_id": 555, "current_st_message_id": self._recent_msg_id()}
         ]
-        mock_db.get_open_session_for_channel.return_value = (
-            self._open_session(hours_ago=24 * 30) if open_session else None)
+        mock_db.get_open_session_for_channel.return_value = None
         bot.get_channel = Mock()
 
         restored = await restore_party_state_from_reactions(bot)

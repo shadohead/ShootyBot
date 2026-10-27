@@ -172,10 +172,10 @@ in-progress session. Two cooperating mechanisms:
   Reinstalling units does NOT restart the bot, so it's safe mid-session.
 - **What counts as "in progress"** (`MatchTracker.is_stack_in_progress`): a queued
   stack where someone has Valorant open, or a game was detected within
-  `STACK_INACTIVITY_HOURS`. A queue that is only gathering, or was abandoned
+  `RESTART_ACTIVITY_WINDOW_HOURS`. A queue that is only gathering, or was abandoned
   without playing, does NOT defer updates (a restart rebuilds it from reactions).
-  Abandoned never-played stacks are closed quietly `STACK_UNPLAYED_END_HOURS`
-  after their `/st` message.
+  This activity window only controls update timing; it never ends a session.
+  Open queues remain saved until an explicit session or party command changes them.
 - **Tracker state is per session**: `MatchTracker.reset_stack_tracking()` wipes a
   channel's `has_played`/`last_activity` (memory + `stack_state` row) on every new
   `/st` and whenever a stack ends. On startup, `stack_state` rows are only loaded
@@ -193,7 +193,7 @@ in-progress session. Two cooperating mechanisms:
   session/message IDs, and the last processed reaction membership. Context
   settings and the snapshot commit in one SQLite transaction before message edits.
   This includes the auto-added session starter, who need not react to join.
-- **Recovery:** restore matching snapshots for recent open sessions and reconcile
+- **Recovery:** restore matching snapshots for open sessions of any age and reconcile
   only reaction deltas since the snapshot. Manual kicks, clears, and restores
   survive even when old reactions remain. Legacy installations without a snapshot
   fall back to rebuilding from reactions. Failed reads preserve existing state;
@@ -201,13 +201,13 @@ in-progress session. Two cooperating mechanisms:
   A deleted post (404) restores its matching saved snapshot without creating a
   replacement, so an explicit new `/st` remains available. A legacy deleted post
   with no snapshot also permits `/st`; permission/network errors remain pending.
-- **Concurrency:** queue commands, raw reactions and auto-end share a per-channel
+- **Concurrency:** queue commands and raw reactions share a per-channel
   lock. Message edits also serialize and render the latest state after acquiring
   their lock. The 🔄 control reposts the queue below newer chat with reaction
   controls and mentions disabled. It explicitly transfers the active message ID
   while retaining members, guests, readiness and session identity. Its fresh
   reaction baseline prevents a restart from treating old reactions as removals;
-  `party_started_message_id` keeps the original expiry clock across reposts.
+  `party_started_message_id` keeps the original session start across reposts.
   Repeated READY events neither rebuild live party state nor start another match tracker.
 - **End/restore:** ending retires the active message ID; later reactions cannot
   revive it. Restore copies the backup sets/dict so later mutations do not erase
@@ -445,13 +445,10 @@ ShootyBot uses a tiered approach to keep Henrik API usage cheap and fast:
   queued members (never `get_context()` per text channel), and persists its state only
   when it changed (`_state_dirty`) — an idle cycle does zero SQLite writes, with the
   30-day state cleanup running at most daily.
-- **Sessions end themselves — never rely on `/stend`** (it's almost never used in
-  practice). Once a stack has played and presence has shown members in-game, the
-  tracker auto-ends the session ~20 min after everyone closes Valorant
-  (`STACK_OFFLINE_END_MINUTES`); the 1.5h no-games timer is the fallback for
-  hidden/broken presence (the presence path only arms after presence has actually been
-  seen working for that stack). Both paths post the full session recap to the stack's
-  channel — auto-end does everything `/stend` does, just without the command.
+- **Sessions persist until explicitly ended**: idle time, offline presence and
+  queue age never end a session or clear its players. Startup recovery accepts open
+  sessions of any age, including their saved ready state and guests. `/stend` still
+  ends the session and posts its recap; an explicit new `/st` replaces the old one.
 - **4xx responses are returned, not retried** - only 429 (after waiting) and 5xx/network
   errors go through retry with backoff. Henrik's `x-ratelimit-remaining`/`x-ratelimit-reset`
   headers are honored before sending requests.

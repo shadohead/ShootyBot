@@ -76,7 +76,7 @@ async def test_reposted_queue_survives_restart_before_players_react_again(repost
 
 
 @pytest.mark.asyncio
-async def test_repost_does_not_restart_session_expiry_clock(repost):
+async def test_repost_preserves_original_session_start(repost):
     from match_tracker import MatchTracker
     w = repost
     started_at = MatchTracker._stack_started_at(w.context)
