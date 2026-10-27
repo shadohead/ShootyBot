@@ -44,17 +44,9 @@ class MatchTracker:
     LEG_SHOT_THRESHOLD_PERCENT = 15
     HEADSHOT_THRESHOLD_PERCENT = 30
     HIGH_DAMAGE_THRESHOLD = 3000
-    STACK_INACTIVITY_HOURS = 1.5  # Fallback: auto-end stacks after 1.5 hours of no games
-    # Preferred auto-end: once a stack has played and presence has shown members
-    # in-game, end the session this many minutes after everyone closed Valorant.
-    # Much faster than the 1.5h timer, and self-validating: it only arms after
-    # presence has actually been seen working for this stack, so broken/hidden
-    # presence can never end a session early — it just falls back to the timer.
-    STACK_OFFLINE_END_MINUTES = 20
-    # A stack that gathered but never got a game in (and nobody queued has
-    # Valorant open) is closed this long after its /st message - otherwise it
-    # stays "active" indefinitely and wedges the auto-update session guard.
-    STACK_UNPLAYED_END_HOURS = 3
+    # Only used by the updater to avoid restarting between games. This is
+    # an activity window, never a limit on how long a session may stay open.
+    RESTART_ACTIVITY_WINDOW_HOURS = 1.5
     # Henrik publishes each player's mmr-history row for a match independently,
     # often minutes apart, and the recap posts as soon as the FIRST squad
     # member's row appears. Members whose row hasn't landed yet are re-checked
@@ -116,10 +108,6 @@ class MatchTracker:
         self.recent_matches: Dict[int, Dict[str, Dict[str, Any]]] = {}   # {server_id: {match_id: {'timestamp': datetime, 'members': []}}}
         self.stack_last_activity: Dict[int, datetime] = {}  # {channel_id: last_match_timestamp}
         self.stack_has_played: Dict[int, bool] = {}  # {channel_id: has_had_games}
-        # Presence heuristics for ending sessions without /stend (memory-only;
-        # a restart just falls back to the inactivity timer, which is safe)
-        self.stack_seen_playing: Dict[int, bool] = {}  # {channel_id: presence ever showed a member in-game}
-        self.stack_offline_since: Dict[int, datetime] = {}  # {channel_id: when everyone stopped playing}
         self.check_interval: int = self.CHECK_INTERVAL_SECONDS
         self.running: bool = False
         self._state_loaded: bool = False
@@ -1873,67 +1861,17 @@ class MatchTracker:
                 logging.info(f"Updated activity for stack in channel {channel.id} - {len(stack_members_in_match)} members played")
     
     async def _check_inactive_stacks(self) -> None:
-        """Auto-end stacks whose session is over, without waiting for /stend.
+        """Discard tracking metadata only for queues users have emptied.
 
-        Two triggers, both of which post the session recap:
-
-        1. Presence-based (fast path): once the stack has played at least one
-           game and presence has shown members in-game, the session ends
-           STACK_OFFLINE_END_MINUTES after every member closed Valorant.
-        2. Inactivity timer (fallback): no detected games for
-           STACK_INACTIVITY_HOURS — covers members with hidden/broken presence.
-
-        Walks only the contexts already in memory instead of every text channel
-        in every guild — a channel with a live stack always has a context.
+        Open sessions and their queues have no age or presence expiry. Only
+        explicit session/party commands may end them or clear their members.
         """
-        current_time = datetime.now(timezone.utc)
-        inactivity_cutoff = timedelta(hours=self.STACK_INACTIVITY_HOURS)
-        offline_cutoff = timedelta(minutes=self.STACK_OFFLINE_END_MINUTES)
-
         for channel_id, context in list(context_manager.contexts.items()):
-            try:
-                all_stack_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
+            if context.bot_soloq_user_set or context.bot_fullstack_user_set:
+                continue
+            if channel_id in self.stack_has_played or channel_id in self.stack_last_activity:
+                self.reset_stack_tracking(channel_id)
 
-                # Skip if no one is in the stack
-                if not all_stack_users:
-                    # Clean up tracking data for empty stacks
-                    if channel_id in self.stack_has_played or channel_id in self.stack_last_activity:
-                        self.reset_stack_tracking(channel_id)
-                    continue
-
-                # Stacks that never got a game in only expire by age
-                if not self.stack_has_played.get(channel_id, False):
-                    await self._expire_unplayed_stack(
-                        channel_id, context, all_stack_users, current_time)
-                    continue
-
-                # Presence-based fast path: track when everyone stopped playing
-                anyone_playing = self._anyone_playing(all_stack_users)
-                if anyone_playing:
-                    self.stack_seen_playing[channel_id] = True
-                    self.stack_offline_since.pop(channel_id, None)
-                elif self.stack_seen_playing.get(channel_id, False):
-                    offline_since = self.stack_offline_since.setdefault(channel_id, current_time)
-                    if (current_time - offline_since) >= offline_cutoff:
-                        channel = self.bot.get_channel(channel_id)
-                        if channel is not None:
-                            await self._auto_end_inactive_stack(
-                                channel, context, current_time - offline_since,
-                                reason="everyone offline")
-                            continue
-
-                # Fallback: no detected games for a long time
-                last_activity = self.stack_last_activity.get(channel_id)
-                if last_activity and (current_time - last_activity) > inactivity_cutoff:
-                    channel = self.bot.get_channel(channel_id)
-                    if channel is not None:
-                        await self._auto_end_inactive_stack(
-                            channel, context, current_time - last_activity,
-                            reason="inactivity")
-
-            except Exception as e:
-                log_error(f"checking inactive stack for channel {channel_id}", e)
-    
     @staticmethod
     def _stack_started_at(context) -> Optional[datetime]:
         """When /st started the stack, unchanged by later refresh reposts."""
@@ -1965,8 +1903,6 @@ class MatchTracker:
         """
         self.stack_last_activity.pop(channel_id, None)
         self.stack_has_played.pop(channel_id, None)
-        self.stack_seen_playing.pop(channel_id, None)
-        self.stack_offline_since.pop(channel_id, None)
         self._stack_states_to_delete.add(channel_id)
         self._state_dirty = True
 
@@ -1974,9 +1910,9 @@ class MatchTracker:
         """Whether a queued stack is actually mid-session (worth not restarting).
 
         True while someone queued has Valorant open, or a game was detected
-        within STACK_INACTIVITY_HOURS (covers the gap between games and hidden
+        within RESTART_ACTIVITY_WINDOW_HOURS (covers the gap between games and hidden
         presence). A stack that is only gathering, or was abandoned without
-        playing, is not in progress - a restart rebuilds it from reactions.
+        playing, is not in progress - a restart restores its saved queue.
         """
         if not stack_users:
             return False
@@ -1986,134 +1922,8 @@ class MatchTracker:
         if last_activity is None:
             return False
         return (datetime.now(timezone.utc) - last_activity) <= timedelta(
-            hours=self.STACK_INACTIVITY_HOURS)
+            hours=self.RESTART_ACTIVITY_WINDOW_HOURS)
 
-    async def _expire_unplayed_stack(self, channel_id: int, context, stack_users,
-                                     current_time: datetime) -> None:
-        """Close a stack that never got a game in once it's clearly abandoned.
-
-        Ends the session quietly - there are no games to recap.
-        """
-        started_at = self._stack_started_at(context)
-        if started_at is None:
-            return
-        age = current_time - started_at
-        if age < timedelta(hours=self.STACK_UNPLAYED_END_HOURS):
-            return
-        if self._anyone_playing(stack_users):
-            return
-        channel = self.bot.get_channel(channel_id)
-        if channel is None:
-            return
-        await self._auto_end_inactive_stack(
-            channel, context, age, reason="never played", post_recap=False)
-
-    async def _auto_end_inactive_stack(self, channel: discord.TextChannel, context,
-                                       inactivity_duration: timedelta,
-                                       reason: str = "inactivity",
-                                       post_recap: bool = True) -> None:
-        """Automatically end an inactive stack and post the session recap.
-
-        /stend is rarely used in practice, so this is the path that actually
-        closes sessions — it must do everything /stend does, including the
-        recap, not just silently clear the stack. ``post_recap=False`` skips
-        the recap for stacks that never played a game.
-        """
-        from handlers.reaction_handler import party_lock
-        expected_session = getattr(context, 'current_session_id', None)
-        async with party_lock(context):
-            if getattr(context, 'current_session_id', None) != expected_session:
-                return
-            await self._auto_end_inactive_stack_locked(
-                channel, context, inactivity_duration, reason, post_recap)
-
-    async def _auto_end_inactive_stack_locked(self, channel, context, inactivity_duration,
-                                             reason, post_recap):
-        try:
-            # Capture before ending — _end_current_session resets the stack
-            session_id = getattr(context, 'current_session_id', None)
-            participants = [
-                user for user in
-                context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
-                if not getattr(user, 'bot', False)
-            ]
-
-            # Get the session commands cog to end the session properly
-            session_cog = self.bot.get_cog('SessionCommands')
-            if session_cog:
-                # Use the cog's method to properly end the session
-                await session_cog._end_current_session(context)
-            else:
-                # Fallback: end session manually using data manager
-                if hasattr(context, 'current_session_id') and context.current_session_id:
-                    from data_manager import data_manager
-                    session = data_manager.sessions.get(context.current_session_id)
-                    if session:
-                        # Add all current participants
-                        all_users = context.bot_soloq_user_set.union(context.bot_fullstack_user_set)
-                        for user in all_users:
-                            session.add_participant(user.id)
-                            user_data = data_manager.get_user(user.id)
-                            user_data.add_session_to_history(context.current_session_id)
-                            data_manager.save_user(user.id)
-                        
-                        # Check if party was full
-                        if len(all_users) >= context.party_max_size:
-                            session.was_full = True
-                        
-                        # End the session
-                        session.end_session()
-                        data_manager.save_session(context.current_session_id)
-                    
-                    # Clear session reference
-                    context.current_session_id = None
-            
-            # Clear users from the stack; the fallback must retire the message
-            # and persist just like the normal SessionCommands path.
-            context.reset_users()
-            if not session_cog:
-                from handlers.reaction_handler import retire_party_message
-                await retire_party_message(channel, context)
-
-            # Clean up tracking data (memory and the persisted row)
-            self.reset_stack_tracking(channel.id)
-
-            logging.info(
-                f"Auto-ended stack in channel {channel.id} ({reason}) after {inactivity_duration}"
-            )
-
-            # Post the recap so it never depends on someone running /stend
-            if post_recap:
-                await self._send_auto_end_recap(channel, session_id, participants)
-
-        except Exception as e:
-            log_error(f"auto-ending stack in channel {channel.id}", e)
-
-    async def _send_auto_end_recap(self, channel: discord.TextChannel,
-                                   session_id: Optional[str],
-                                   participants: List[discord.Member]) -> None:
-        """Build and post the session recap for an auto-ended stack (best-effort)."""
-        if not participants:
-            return
-        try:
-            from data_manager import data_manager, SessionData
-            session = None
-            if session_id:
-                session = data_manager.sessions.get(session_id)
-                if session is None:
-                    session = SessionData(session_id)
-            if session is None:
-                return
-
-            embed = await self.build_session_recap(channel.guild, participants, session)
-            if embed:
-                await channel.send(
-                    content="🌙 Squad's logged off — wrapping up the session!",
-                    embed=embed
-                )
-        except Exception as e:
-            log_error(f"sending auto-end recap for channel {channel.id}", e)
-    
     async def manual_check_recent_match(self, guild: discord.Guild, member: discord.Member = None, force_fresh: bool = False) -> Optional[discord.Embed]:
         """Manually check for a recent match and return embed if found"""
         if member:
@@ -2219,7 +2029,7 @@ class MatchTracker:
         """Save match tracker state to database when it has changed.
 
         The poll loop calls this every cycle, but writes only happen after a
-        real state change (new match id, stack activity, auto-end) — an idle
+        real state change (new match id, stack activity, explicit reset) — an idle
         cycle costs zero SQLite writes, which matters on the Pi's SD card.
         ``force=True`` (shutdown path) writes unconditionally.
         """
